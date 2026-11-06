@@ -426,11 +426,11 @@ function App() {
     lastSelected.current = index;
   }
   const viewerIndex = viewer ? galleryAssets.findIndex(item => item.id === viewer.id) : -1;
-  function renderMedia(asset: Asset) {
+  function renderMedia(asset: Asset, groupOpen?: boolean) {
     const index = galleryIndices.get(asset.id) ?? -1;
-    return <MediaCard key={asset.id} asset={asset} tagId={tagId} collectionId={collectionId} selected={selected.has(asset.id)} selecting={selecting || !!selected.size} open={event => { if (selecting || selected.size || event.ctrlKey || event.metaKey || event.shiftKey) select(asset, index, event.shiftKey); else setViewer(asset); }} select={range => select(asset, index, range)} />;
+    return <MediaCard key={asset.id} asset={asset} tagId={tagId} collectionId={collectionId} selected={selected.has(asset.id)} selecting={selecting || !!selected.size} active={groupOpen !== false} loading={groupOpen ? "eager" : "lazy"} open={event => { if (selecting || selected.size || event.ctrlKey || event.metaKey || event.shiftKey) select(asset, index, event.shiftKey); else setViewer(asset); }} select={range => select(asset, index, range)} />;
   }
-  const gallery = collectionId && groups.length ? <CollectionGallery entries={entries} expanded={expandedGroups} pages={groupPages} pending={pendingGroups} selected={selected} selecting={selecting || !!selected.size} busy={busy || loading || selectingAll} render={renderMedia} toggle={toggleGroup} load={group => void loadGroup(group)} selectGroup={selectGroup} add={group => void editGroup(group, "add")} dissolve={group => void editGroup(group, "dissolve")} /> : <div className={`gallery ${selecting ? "selecting" : ""}`}>{assets.map(renderMedia)}</div>;
+  const gallery = collectionId && groups.length ? <CollectionGallery entries={entries} expanded={expandedGroups} pages={groupPages} pending={pendingGroups} selected={selected} selecting={selecting || !!selected.size} busy={busy || loading || selectingAll} render={renderMedia} toggle={toggleGroup} load={group => void loadGroup(group)} selectGroup={selectGroup} add={group => void editGroup(group, "add")} dissolve={group => void editGroup(group, "dissolve")} /> : <div className={`gallery ${selecting ? "selecting" : ""}`}>{assets.map(asset => renderMedia(asset))}</div>;
   return <div className={`app ${scope === "hidden" ? "hidden-mode" : ""} ${assetView && (selecting || selected.size) ? "has-selection" : ""}`}>
     <input className="file-input" ref={picker} type="file" multiple accept="image/*,video/*,.svg,.ico,.apng,.mkv,.webm" onChange={event => { receiveFiles(Array.from(event.target.files || [])); event.target.value = ""; }} />
     <input className="file-input" ref={folderPicker} type="file" multiple {...{ webkitdirectory: "" }} onChange={event => { receiveFiles(Array.from(event.target.files || [])); event.target.value = ""; }} />
