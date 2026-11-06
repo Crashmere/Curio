@@ -125,12 +125,13 @@ function App() {
     const timer = setTimeout(() => setToast(""), 4500);
     return () => clearTimeout(timer);
   }, [toast]);
-  function receiveFiles(files: File[]) {
-    const skipped = importer.addFiles(files, scope, tagId ? [tagId] : [], collectionId ? [collectionId] : []);
+  function receiveFiles(files: File[], target = { scope, tagId, collectionId }) {
+    const skipped = importer.addFiles(files, target.scope, target.tagId ? [target.tagId] : [], target.collectionId ? [target.collectionId] : []);
     setModal({ type: "upload" });
     if (skipped) notify(`已跳过 ${skipped} 个空文件或不支持的文件`);
   }
   const receiveFilesEvent = useEffectEvent(receiveFiles);
+  const dropTargetEvent = useEffectEvent(() => ({ scope, tagId, collectionId }));
   useEffect(() => {
     let depth = 0;
     let internalDrag = false;
@@ -145,6 +146,7 @@ function App() {
       if (!event.dataTransfer?.types.includes("Files")) return;
       event.preventDefault(); resetDrag();
       if (internalDrag) return;
+      const target = dropTargetEvent();
       const items = Array.from(event.dataTransfer.items);
       const entries = items.map(item => item.webkitGetAsEntry?.()).filter((entry): entry is FileSystemEntry => !!entry);
       if (entries.some(entry => entry.isDirectory)) {
@@ -162,9 +164,9 @@ function App() {
             }
           }
         };
-        try { for (const entry of entries) await walk(entry, ""); receiveFilesEvent(files); }
+        try { for (const entry of entries) await walk(entry, ""); receiveFilesEvent(files, target); }
         catch (error) { notify(error instanceof Error ? error.message : "文件夹读取失败"); }
-      } else receiveFilesEvent(Array.from(event.dataTransfer.files));
+      } else receiveFilesEvent(Array.from(event.dataTransfer.files), target);
     };
     const paste = (event: ClipboardEvent) => { if (event.clipboardData?.files.length) { event.preventDefault(); receiveFilesEvent(Array.from(event.clipboardData.files)); } };
     window.addEventListener("dragstart", start, true); window.addEventListener("dragend", end); window.addEventListener("dragenter", enter); window.addEventListener("dragover", over); window.addEventListener("dragleave", leave); window.addEventListener("drop", drop); window.addEventListener("paste", paste);

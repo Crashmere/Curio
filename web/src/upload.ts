@@ -43,10 +43,12 @@ export function subscribe(listener: () => void) {
 }
 export function addFiles(files: File[], scope: Scope, tagIds: string[] = [], collectionIds: string[] = []) {
   let skipped = 0;
-  const seen = new Set(state.items.map(item => `${item.name}|${item.file.size}|${item.file.lastModified}|${item.scope}`));
+  const keyFor = (file: File, scope: Scope, tagIds: string[], collectionIds: string[]) =>
+    JSON.stringify([file.webkitRelativePath || file.name, file.size, file.lastModified, scope, [...tagIds].sort(), [...collectionIds].sort()]);
+  const seen = new Set(state.items.map(item => keyFor(item.file, item.scope, item.tagIds, item.collectionIds)));
   for (const file of files) {
     if (!file.size || (!supported.test(file.name) && !/^(image|video)\//.test(file.type))) { skipped++; continue; }
-    const key = `${file.name}|${file.size}|${file.lastModified}|${scope}`;
+    const key = keyFor(file, scope, tagIds, collectionIds);
     if (seen.has(key)) continue;
     state.items.push({ id: crypto.randomUUID(), file, name: file.webkitRelativePath || file.name, scope, tagIds: [...tagIds], collectionIds: [...collectionIds], state: "waiting", progress: 0 });
     seen.add(key);
