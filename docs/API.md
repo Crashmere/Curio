@@ -1,0 +1,113 @@
+# API
+
+Curio is mounted at `/curio/` on `nas`; `ali` and `vps` forward the same application. The routes below are application-relative: a browser calls `/curio/api/assets`, while a loopback check can call `http://127.0.0.1:18088/api/assets`. Business requests use the existing ServerPortal device cookie; Curio adds no second authentication system.
+
+JSON responses are not cached. Errors use `{"error":"message"}` with an appropriate HTTP status. JSON control requests are limited to 1 MiB. Media IDs are complete lowercase SHA-256 hashes; tag and collection IDs are generated lowercase 32-character hexadecimal identifiers. Source links must be HTTP or HTTPS URLs.
+
+## Shared Query Scope
+
+Browsing requests accept `scope=normal` or `scope=hidden`; omitted or unrecognized values use normal scope. Effective hiding is the logical OR of the media's own hidden flag, any associated hidden tag and any associated hidden collection. Normal selects its complement; hidden selects effectively hidden media.
+
+The same endpoints serve both scopes. Counts, search, tags, collection covers, inbox, stars, trash and jobs use the common scope predicate. Hiding is a display rule, not an authorization boundary; already known media and download URLs retain ordinary Portal authentication without a separate scope check.
+
+## Browsing and Metadata
+
+| Method and path | Result |
+| --- | --- |
+| `GET /healthz` | Database connection health, with `status: "ok"` and service name |
+| `GET /api/info` | Name, version, chunk maximum, workers/GPU slots and scoped `total`, `starred`, `unorganized`, `trash`, `queued`, `errors` and `bytes` |
+| `GET /api/assets` | `items`, filtered `total` and nullable `nextOffset` |
+| `GET /api/assets/{id}` | Scoped asset details, memberships and hidden reasons |
+| `GET /api/tags` | Scoped tag `items`, counts and covers |
+| `GET /api/collections` | Scoped collection `items`, counts and covers |
+| `GET /api/jobs` | Up to 120 current/recent scoped processing or deletion tasks, with stage, engine, progress and error |
+| `GET /api/uploads` | Up to 120 incomplete uploads, filtered by their upload scope and associated hidden tags/collections before pagination |
+
+An asset includes `id`, original `name`, editable `title`, `notes`, `sourceUrl`, `author`, `kind`, `format`, `mime`, `size`, `width`, `height`, `duration`, `hasAlpha`, `hidden`, `effectiveHidden`, `hiddenReasons`, `organized`, `starred`, `trashedAt`, timestamps, processing fields, `tags`, `collections` and media/download URLs. `hidden` is only its own flag; `effectiveHidden` includes membership inheritance. Each hidden reason identifies its `kind`, `id` and `name`.
+
+Asset list filters are parallel query parameters:
+
+| Parameter | Values or units |
+| --- | --- |
+| `q` | Name, title, notes, source, author, tag or collection keyword |
+| `ids` | Optional comma-separated selection of up to 2000 media IDs for scoped status refresh |
+| `kind` | `image`, `animation`, `video` |
+| `tag`, `collection` | One container ID each |
+| `format` | Lowercase original extension, such as `png` or `mp4` |
+| `starred`, `unorganized`, `trash` | `1` enables the corresponding selection; ordinary lists exclude trash |
+| `aspect` | `square`, `landscape`, `portrait` |
+| `minWidth`, `maxWidth`, `minHeight`, `maxHeight` | Pixels |
+| `minDuration`, `maxDuration` | Seconds |
+| `minSize`, `maxSize` | Bytes |
+| `sort` | `newest` (default), `oldest`, `name`, `size` |
+| `limit`, `offset` | Default limit 120, maximum 240 (2000 with `ids`); next request uses `nextOffset` |
+
+## Editing and Organization
+
+`PATCH /api/assets/{id}` changes one asset. `PATCH /api/assets` uses the same fields plus `ids` for an atomic batch of 1-2000 assets:
+
+```json
+{
+  "ids": ["<asset-sha256>"],
+  "starred": true,
+  "organized": true,
+  "hidden": false,
+  "addTagIds": ["<tag-id>"],
+  "addCollectionIds": ["<collection-id>"]
+}
+```
+
+Optional text fields are `title`, `notes`, `sourceUrl` and `author`. `hidden`, `organized` and `starred` are independent booleans. `trash:true` moves the selection to trash; `trash:false` restores it. A tag or collection marked hidden can still keep an asset effectively hidden after its own flag is cleared.
+
+`tagIds` and `collectionIds` replace complete membership sets when present. `addTagIds`, `removeTagIds`, `addCollectionIds` and `removeCollectionIds` apply incremental membership changes. An empty replacement list removes all memberships of that kind. Batches fail atomically when selected assets or required containers are unavailable.
+
+Both container types use the same contract:
+
+| Method and path | Behavior |
+| --- | --- |
+| `POST /api/tags` or `/api/collections` | Create using required `name` and optional `hidden`; omission defaults to the request scope |
+| `PATCH /api/tags/{id}` or `/api/collections/{id}` | Change `name`, `hidden`, or both |
+| `DELETE /api/tags/{id}` or `/api/collections/{id}` | Delete only the container and membership links, preserving assets and originals |
+
+Tag names are globally case-insensitive unique. Creating an existing same-visibility tag can reuse its ID; visibility is not changed by that reuse. Collection names do not identify physical storage or duplicate originals.
+
+`POST /api/assets/retry` takes `{"ids":["<asset-sha256>"]}` and requeues derived processing without changing originals. `POST /api/assets/purge` takes the same selection plus `confirm:true`, accepts only trash assets and returns HTTP 202 after persisting the selected cleanup intent. Cleanup resumes after interruption; it does not affect unrelated originals or existing backups.
+
+## Resumable Uploads
+
+Uploads use raw bytes, not base64 or multipart encoding. A session is identified by the complete file SHA-256 and accepts a positive file size up to 1 TiB. Accepted extensions cover common still images, SVG/ICO, animated GIF/WebP/APNG and common video containers; preview support depends on installed decoders. Upload acceptance does not promise that every original codec is browser-playable.
+
+1. Incrementally calculate the file SHA-256 without loading the whole original into browser memory.
+2. Prepare or resume using `POST /api/uploads` with the complete expected size and source hints.
+3. Send bounded chunks from the server's acknowledged offset.
+4. Complete with `POST /api/uploads/{id}/complete`; the server verifies the complete file before publishing it.
+
+Preparation body:
+
+```json
+{
+  "hash": "<complete-lowercase-sha256>",
+  "name": "wallpaper.png",
+  "size": 123456,
+  "mime": "image/png",
+  "scope": "normal",
+  "tagIds": [],
+  "collectionIds": []
+}
+```
+
+The filename is treated as a basename. `scope` defaults to the request query scope when omitted; it determines only the default hidden flag for a newly committed asset. Optional memberships are applied to the collected asset. Preparation returns `id`, `offset`, `size`, `complete` and `chunkSize`; complete results also include `assetId`. An existing byte-identical asset with its original present returns `complete:true` and `duplicate:true`, records new source observations/memberships and preserves its existing manual flags, metadata and trash state.
+
+`GET /api/uploads/{id}` is the authoritative upload status. `PUT /api/uploads/{id}` sends `Content-Type: application/octet-stream` and an integer `Upload-Offset` header; an `offset` query parameter is accepted when the header is absent. Each body must fit both the advertised 128 MiB maximum and the remaining original length.
+
+After flushing accepted bytes and committing the durable offset, PUT returns `{"offset":<next-byte>}` and the same value in `Upload-Offset`. An offset conflict returns HTTP 409 with the accepted offset. Only successfully received and flushed chunks advance that offset; unacknowledged tails are truncated before continuation. Read status after any uncertain response and resume from its offset. Do not advance solely from a browser's transmitted-byte counter.
+
+Chunk body reads have a 600-second absolute deadline. The browser allows 660 seconds per PUT; Curio's Nginx upstream read/send timeouts are 660-second idle timeouts. The shared HTTP/2 receive window remains 4 MiB and the application request limit is 129 MiB. These values control different stages and do not impose a byte-per-second cap.
+
+Completion verifies both total size and server-computed SHA-256. HTTP 422 indicates a hash mismatch and resets the partial upload for a fresh transfer. A successful commit leaves the immutable original available and queues derived processing; preview completion is separate. Repeating completion of an already committed original is safe. A cataloged but missing original can be repaired by reselecting and uploading the matching source while preserving its existing catalog identity and flags; malformed existing objects are never overwritten.
+
+## Media and Downloads
+
+`GET /media/{id}/{kind}` serves `thumbnail`, `preview` or `original`, with ordinary HEAD and Range support. Thumbnails are static; animation uses its original playback resource. SVG originals are attachment downloads, never executable inline views. `GET /api/assets/{id}/download` downloads the exact original bytes with the stored original filename.
+
+`GET /api/download?ids=<comma-separated-asset-hashes>` streams an uncompressed ZIP containing 1-2000 selected originals without creating a server archive file. Duplicate filenames are disambiguated within the ZIP. These downloads do not export a complete recoverable catalog; full `nas` / `vps` backup and recovery remain server-operations agent responsibilities.

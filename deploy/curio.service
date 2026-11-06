@@ -1,0 +1,31 @@
+[Unit]
+Description=Curio personal visual collection library
+After=network.target
+
+[Service]
+Type=simple
+User=curio
+Group=curio
+WorkingDirectory=/opt/curio
+ExecStart=/opt/curio/bin/curio serve --data /opt/curio/data --listen 127.0.0.1:18088 --workers 2 --gpu-slots 1
+Environment=TZ=Asia/Shanghai
+Environment=VIPS_CONCURRENCY=2
+Environment=MALLOC_ARENA_MAX=2
+Environment=OMP_NUM_THREADS=1
+Environment=OPENBLAS_NUM_THREADS=1
+Environment=MAGICK_THREAD_LIMIT=1
+Environment=CURIO_IMAGE_PYTHON=/opt/aura/bin/image-gpu/bin/python
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/curio/data
+Nice=5
+TasksMax=1024
+
+[Install]
+WantedBy=multi-user.target

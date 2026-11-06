@@ -1,0 +1,16 @@
+.DS_Store
+._*
+.local/
+data/
+web/node_modules/
+web/dist/
+/curio
+/curio-linux-amd64
+*.tsbuildinfo
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.log
+.env
+.env.*
+!*.example

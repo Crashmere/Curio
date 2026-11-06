@@ -1,0 +1,1 @@
+{"app":"curio","build":["make","linux"],"binary":"bin/curio-linux-amd64","portal":true,"restricted":true,"gzip":false}

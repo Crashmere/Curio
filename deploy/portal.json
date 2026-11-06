@@ -1,0 +1,123 @@
+{
+  "id": "curio",
+  "name": "Curio",
+  "description": "个人视觉收藏库，保存图标、头像、壁纸、截图、录像、动画和梗图。",
+  "icon": "/curio/apple-touch-icon.png",
+  "url": "/curio/",
+  "repo": "https://github.com/Crashmere/Curio",
+  "root": "/opt/curio",
+  "port": 18088,
+  "user": "curio",
+  "units": ["curio.service"],
+  "database": "/opt/curio/data/curio.sqlite",
+  "resources": [
+    {
+      "id": "data",
+      "name": "业务数据",
+      "path": "/opt/curio/data",
+      "purpose": "媒体目录、标签、收藏集与关联，标题、来源和备注，普通与隐藏展示标记，星标、待整理、回收站、持久上传、处理和永久删除意图。",
+      "kind": "data",
+      "browse": true,
+      "cleanup": false
+    },
+    {
+      "id": "originals",
+      "name": "媒体原件",
+      "path": "/opt/curio/data/assets",
+      "purpose": "按 SHA-256 寻址的图片、动图、图标和视频原件，保持上传字节；仅明确确认永久删除所选回收站项目时清理，不影响 Aura 或已有备份。",
+      "kind": "media",
+      "browse": true,
+      "cleanup": false
+    },
+    {
+      "id": "derived",
+      "name": "预览缓存",
+      "path": "/opt/curio/data/derived",
+      "purpose": "可再生静态缩略图、保留透明通道的图片预览、安全 SVG 栅格预览和兼容播放视频；nas 手工全量备份收录已存派生文件。",
+      "kind": "cache",
+      "browse": false,
+      "cleanup": false
+    },
+    {
+      "id": "incoming",
+      "name": "上传暂存",
+      "path": "/opt/curio/data/incoming",
+      "purpose": "已写入并确认偏移但尚未提交的原件分段，供中断后续传；nas 手工全量备份完整收录。",
+      "kind": "cache",
+      "browse": false,
+      "cleanup": false
+    },
+    {
+      "id": "work",
+      "name": "处理暂存",
+      "path": "/opt/curio/data/work",
+      "purpose": "媒体解码和派生文件处理工作区，任务完成后清理；保留中断任务所需现用状态。",
+      "kind": "cache",
+      "browse": false,
+      "cleanup": false
+    },
+    {
+      "id": "releases",
+      "name": "部署版本",
+      "path": "/opt/curio/releases",
+      "purpose": "程序、哈希、发布结果与回退记录；nas 不定时轮转，清理由 agent 确认具体范围并保留当前程序与失败保护。",
+      "kind": "releases",
+      "browse": true,
+      "cleanup": true
+    },
+    {
+      "id": "config",
+      "name": "运行配置",
+      "path": "/opt/curio/config",
+      "purpose": "Curio systemd、Nginx、Portal 资源声明与发布来源；网关和共享隧道由 server-operations 维护。",
+      "kind": "config",
+      "browse": false,
+      "cleanup": false
+    },
+    {
+      "id": "bin",
+      "name": "服务程序",
+      "path": "/opt/curio/bin",
+      "purpose": "服务程序和固定发布入口；嵌入独立媒体工作器，NVIDIA 图像运行环境只读复用 nas 上的已固定版本安装，不属于业务数据。",
+      "kind": "binaries",
+      "browse": false,
+      "cleanup": false
+    },
+    {
+      "id": "docs",
+      "name": "维护文档",
+      "path": "/opt/curio/docs",
+      "purpose": "架构、API、上传、隐藏模式、部署和恢复契约。",
+      "kind": "documents",
+      "browse": true,
+      "cleanup": false
+    }
+  ],
+  "apis": [
+    {"method": "GET", "path": "/healthz", "description": "数据库连接健康"},
+    {"method": "GET", "path": "/api/info", "description": "当前展示范围的数量、体积、任务状态和上传能力"},
+    {"method": "GET", "path": "/api/assets", "description": "按范围、关键词、标签、收藏集、类型、格式、尺寸、时长和大小分页查询媒体"},
+    {"method": "PATCH", "path": "/api/assets", "description": "原子批量修改元数据、标签与收藏集关联、星标、隐藏、整理状态和回收站"},
+    {"method": "POST", "path": "/api/assets/purge", "description": "明确确认永久删除所选回收站媒体；持久化意图后清理，任务中断后继续"},
+    {"method": "POST", "path": "/api/assets/retry", "description": "重新排队所选媒体的派生处理，不修改原件"},
+    {"method": "GET", "path": "/api/assets/{id}", "description": "当前范围的媒体详情、关联和隐藏来源"},
+    {"method": "PATCH", "path": "/api/assets/{id}", "description": "修改单个媒体的标题、来源、备注、标记和分类关联"},
+    {"method": "GET", "path": "/api/assets/{id}/download", "description": "以原始文件名下载未经改写的原件"},
+    {"method": "GET", "path": "/api/tags", "description": "当前范围的标签、数量和封面"},
+    {"method": "POST", "path": "/api/tags", "description": "创建标签，默认采用当前模式的隐藏属性"},
+    {"method": "PATCH", "path": "/api/tags/{id}", "description": "修改标签名称或隐藏属性，继承影响其关联媒体"},
+    {"method": "DELETE", "path": "/api/tags/{id}", "description": "移除标签及其关联，保留媒体原件"},
+    {"method": "GET", "path": "/api/collections", "description": "当前范围的收藏集、媒体数量和封面"},
+    {"method": "POST", "path": "/api/collections", "description": "创建收藏集，默认采用当前模式的隐藏属性"},
+    {"method": "PATCH", "path": "/api/collections/{id}", "description": "修改收藏集名称或隐藏属性，继承影响其中媒体"},
+    {"method": "DELETE", "path": "/api/collections/{id}", "description": "移除收藏集及其关联，保留媒体原件"},
+    {"method": "GET", "path": "/api/jobs", "description": "当前范围的处理及删除任务、引擎、进度和错误"},
+    {"method": "GET", "path": "/api/uploads", "description": "当前范围的持久未完成上传和可继续偏移"},
+    {"method": "POST", "path": "/api/uploads", "description": "按完整 SHA-256 和大小准备原件分段上传，检测全库相同原件"},
+    {"method": "GET", "path": "/api/uploads/{id}", "description": "查询上传的服务端持久偏移和完成状态"},
+    {"method": "PUT", "path": "/api/uploads/{id}", "description": "接收最多 128 MiB 原始分段，落盘后确认偏移"},
+    {"method": "POST", "path": "/api/uploads/{id}/complete", "description": "校验完整大小和服务端 SHA-256，提交不可变原件并排队预览"},
+    {"method": "GET", "path": "/api/download", "description": "流式打包所选媒体原件，不创建服务器压缩暂存"},
+    {"method": "GET", "path": "/media/{id}/{kind}", "description": "读取静态缩略图、图片预览、兼容播放或原件，支持 Range；SVG 原件只作为下载"}
+  ]
+}
