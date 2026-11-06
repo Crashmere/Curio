@@ -10,7 +10,11 @@ Effective hiding is the logical OR of an asset's own flag, any associated hidden
 
 Normal scope contains only effectively non-hidden assets; hidden scope contains only effectively hidden assets. Lists, keyword search, inbox, stars, trash, jobs, membership counts and collection covers use the same scope predicate. Non-hidden containers can mix both kinds of assets and display the corresponding subset in each mode. A hidden container never appears in normal container choices.
 
-The browser stores the selected mode only in memory. New loads and reloads start in normal mode; in-application navigation retains the mode. Three non-repeated consecutive `k` key presses within 1.5 seconds toggle it globally, including text fields. Composition and Ctrl/Command/Alt combinations do not count, and the shortcut does not swallow normal text input. Mode switches invalidate old view state and selection. Uploaded originals and known media URLs keep the ordinary shared device-authentication contract; hidden mode adds no access-control layer.
+The browser stores the selected mode only in memory. New loads and reloads start in normal mode; in-application navigation retains the mode. Two non-repeated consecutive `q` key presses within 1.5 seconds toggle it globally, including text fields. Composition and Ctrl/Command/Alt combinations do not count, and the shortcut does not swallow normal text input. Mode switches invalidate old view state and selection. Uploaded originals and known media URLs keep the ordinary shared device-authentication contract; hidden mode adds no access-control layer.
+
+In media views, Ctrl/Command+A enters selection mode and selects the complete current filter result, including unloaded pages, up to the API's 2000-item batch maximum. Repeating the shortcut retains the selection; the toolbar button toggles select-all. Text fields retain native text selection, and dialogs and previews take precedence over gallery shortcuts. Escape closes the active overlay first; otherwise it cancels pending select-all requests and exits selection mode.
+
+Within a tag or collection, media cards annotate their other tag and collection memberships, omitting the currently open container. The selection toolbar can remove only the current membership from selected media through the existing incremental batch edit. Original bytes, other memberships and manual flags remain unchanged; removing the last hidden membership can move an asset into normal scope according to effective hiding.
 
 ## Durable Uploads
 

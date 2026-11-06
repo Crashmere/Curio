@@ -1,8 +1,8 @@
 import { CSSProperties, StrictMode, useDeferredValue, useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowDownWideNarrow, ArrowLeft, Check, ChevronDown, CircleAlert, Download, Eye, EyeOff, Folder, FolderPlus, Grid2X2, Image, Inbox, Layers3, Menu, MoreHorizontal, Plus, RefreshCw, RotateCw, Search, SlidersHorizontal, Star, Tag, Trash2, Upload, Video, X } from "lucide-react";
+import { ArrowDownWideNarrow, ArrowLeft, Check, ChevronDown, CircleAlert, Download, Eye, EyeOff, Folder, FolderPlus, Grid2X2, Image, Inbox, Layers3, Menu, MoreHorizontal, Plus, RefreshCw, RotateCw, Search, SlidersHorizontal, Star, Tag, Trash2, Unlink, Upload, Video, X } from "lucide-react";
 import { api, Asset, AssetPage, base, bytes, duration, Entity, Info, Job, Patch, Scope, scoped, View } from "./api";
-import { Dialog, Empty, kindNames, stateNames } from "./components";
+import { Dialog, Empty, isTextInput, kindNames, stateNames } from "./components";
 import { UploadPanel } from "./UploadPanel";
 import { Viewer } from "./Viewer";
 import * as importer from "./upload";
@@ -67,6 +67,11 @@ function App() {
     selectionRequest.current = null;
     setSelectingAll(false);
   }
+  function exitSelection() {
+    cancelSelectAll();
+    setSelected(new Set()); setSelecting(false);
+    lastSelected.current = -1;
+  }
   function navigate(next: View, tag = "", collection = "") {
     cancelSelectAll();
     setView(next); setTagId(tag); setCollectionId(collection); setSelected(new Set()); setSelecting(false); setSidebarOpen(false); setViewer(null);
@@ -78,19 +83,35 @@ function App() {
     setSelected(new Set()); setSelecting(false); setViewer(null); setModal(null); setTagId(""); setCollectionId(""); setQuery(""); setFilters(emptyFilter); setFilterOpen(false); setToast("");
   }
   const switchScopeEvent = useEffectEvent(switchScope);
+  const selectionKeyEvent = useEffectEvent((event: KeyboardEvent) => {
+    if (event.repeat || event.altKey || modal || viewer) return;
+    if (event.ctrlKey || event.metaKey) {
+      if (event.key.toLowerCase() === "a" && !event.shiftKey && assetView && !isTextInput(event.target)) {
+        event.preventDefault();
+        void selectAll(false);
+      }
+      return;
+    }
+    if (event.key === "Escape" && (selecting || selected.size || selectingAll)) {
+      event.preventDefault();
+      exitSelection();
+    }
+  });
   useEffect(() => {
     let count = 0;
     let started = 0;
     let pending: ReturnType<typeof setTimeout> | undefined;
     const key = (event: KeyboardEvent) => {
-      if (event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey) { count = 0; return; }
+      if (event.isComposing || event.keyCode === 229) { count = 0; return; }
+      selectionKeyEvent(event);
+      if (event.ctrlKey || event.metaKey || event.altKey) { count = 0; return; }
       if (event.key === "Tab") event.preventDefault();
       if (event.repeat) return;
       const now = performance.now();
-      if (event.key.toLowerCase() !== "k") { count = 0; return; }
+      if (event.key.toLowerCase() !== "q") { count = 0; return; }
       if (!count || now - started > 1500) { count = 0; started = now; }
       count++;
-      if (count === 3) {
+      if (count === 2) {
         count = 0;
         // Let native text input finish before clearing the previous scope's search.
         pending = setTimeout(() => switchScopeEvent(), 0);
@@ -241,13 +262,14 @@ function App() {
     } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
     finally { if (token === pageToken.current) setLoadingMore(false); }
   }
-  async function selectAll() {
+  async function selectAll(toggle = true) {
     if (loading || loadingMore || selectingAll || busy || !total || error) return;
-    if (allSelected) { setSelected(new Set()); return; }
+    if (allSelected) { if (toggle) setSelected(new Set()); else setSelecting(true); return; }
     if (total > 2000) { notify("每次最多选择 2000 项，请缩小筛选范围后全选"); return; }
     const controller = new AbortController();
     selectionRequest.current = controller;
     const token = pageToken.current;
+    setSelecting(true);
     setSelectingAll(true);
     try {
       const items: Asset[] = [];
@@ -301,8 +323,8 @@ function App() {
         <Nav icon={<Inbox size={18} />} label="未整理" active={view === "inbox"} count={info?.unorganized} click={() => navigate("inbox")} />
         <Nav icon={<Star size={18} />} label="星标" active={view === "starred"} count={info?.starred} click={() => navigate("starred")} />
       </nav>
-      <div className="sidebar-section"><div className="sidebar-section-heading"><button onClick={() => navigate("collections")}>收藏集</button><button className="icon-button" aria-label="新建收藏集" onClick={() => setModal({ type: "entity", kind: "collections" })}><Plus size={14} /></button></div><div className="sidebar-entities">{collections.slice(0, 7).map(collection => <button key={collection.id} className={collectionId === collection.id ? "active" : ""} onClick={() => navigate("all", "", collection.id)}><Folder size={15} /><span>{collection.name}</span>{collection.hidden && <EyeOff size={11} />}<small>{collection.count}</small></button>)}{!collections.length && <button className="sidebar-placeholder" onClick={() => setModal({ type: "entity", kind: "collections" })}>新建一个主题收藏集</button>}{collections.length > 7 && <button className="sidebar-more" onClick={() => navigate("collections")}>查看全部 <ChevronDown size={12} /></button>}</div></div>
-      <div className="sidebar-section"><div className="sidebar-section-heading"><button onClick={() => navigate("tags")}>标签</button><button className="icon-button" aria-label="新建标签" onClick={() => setModal({ type: "entity", kind: "tags" })}><Plus size={14} /></button></div><div className="sidebar-tag-list">{tags.slice(0, 10).map(tag => <button className={tagId === tag.id ? "active" : ""} key={tag.id} onClick={() => navigate("all", tag.id)}>{tag.hidden && <EyeOff size={10} />}<span>{tag.name}</span></button>)}{!tags.length && <button className="sidebar-placeholder" onClick={() => setModal({ type: "entity", kind: "tags" })}>添加用途或主题标签</button>}{tags.length > 10 && <button className="sidebar-more" onClick={() => navigate("tags")}>全部标签</button>}</div></div>
+      <div className="sidebar-section"><div className="sidebar-section-heading"><button onClick={() => navigate("collections")}>收藏集</button><button className="icon-button" aria-label="新建收藏集" onClick={() => setModal({ type: "entity", kind: "collections" })}><Plus size={14} /></button></div><div className="sidebar-entities">{collections.slice(0, 7).map(collection => <button key={collection.id} className={collectionId === collection.id ? "active" : ""} onClick={() => navigate("all", "", collection.id)}><Folder size={15} /><span>{collection.name}</span><small>{collection.count}</small></button>)}{!collections.length && <button className="sidebar-placeholder" onClick={() => setModal({ type: "entity", kind: "collections" })}>新建一个主题收藏集</button>}{collections.length > 7 && <button className="sidebar-more" onClick={() => navigate("collections")}>查看全部 <ChevronDown size={12} /></button>}</div></div>
+      <div className="sidebar-section"><div className="sidebar-section-heading"><button onClick={() => navigate("tags")}>标签</button><button className="icon-button" aria-label="新建标签" onClick={() => setModal({ type: "entity", kind: "tags" })}><Plus size={14} /></button></div><div className="sidebar-tag-list">{tags.slice(0, 10).map(tag => <button className={tagId === tag.id ? "active" : ""} key={tag.id} onClick={() => navigate("all", tag.id)}><span>{tag.name}</span></button>)}{!tags.length && <button className="sidebar-placeholder" onClick={() => setModal({ type: "entity", kind: "tags" })}>添加用途或主题标签</button>}{tags.length > 10 && <button className="sidebar-more" onClick={() => navigate("tags")}>全部标签</button>}</div></div>
       <div className="sidebar-bottom">{!!uploading && <button className="transfer-mini" onClick={() => setModal({ type: "upload" })}><Upload size={18} /><div><strong>{uploadState.paused ? "收集已暂停" : "正在收集素材"}</strong><small>{uploading} 个文件待完成</small></div></button>}<nav className="navigation secondary"><Nav icon={<Layers3 size={17} />} label="任务中心" active={view === "jobs"} count={(info?.queued || 0) + (info?.errors || 0) || undefined} click={() => navigate("jobs")} /><Nav icon={<Trash2 size={17} />} label="回收站" active={view === "trash"} count={info?.trash || undefined} click={() => navigate("trash")} /></nav><div className="sidebar-storage"><span className="mode-dot" /><span>{info ? `${info.total.toLocaleString()} 个素材 · ${bytes(info.bytes)}` : "连接素材库…"}</span></div><a className="portal-link" href="/portal/"><ArrowLeft size={13} />返回门户</a></div>
     </aside>
     <main className="main"><header className="topbar"><div className="breadcrumb"><button className="icon-button mobile-menu" aria-label="打开导航" onClick={() => setSidebarOpen(true)}><Menu size={22} /></button><span className="desktop-label">视觉收藏库</span><span className="crumb-separator">/</span><span>{title}</span></div><div className="top-actions"><label className="search"><Search size={16} /><input type="search" value={query} onChange={event => { setQuery(event.target.value); if (!assetView) navigate("all"); }} placeholder="搜索名称、标签、备注" aria-label="搜索素材" />{query && <button className="icon-button" aria-label="清空搜索" onClick={() => setQuery("")}><X size={14} /></button>}</label><button className="button primary collect-button" onClick={() => setModal({ type: "upload" })}><Plus size={17} /><span>收集素材</span></button></div></header>
@@ -312,14 +334,14 @@ function App() {
           {filterOpen && <FilterPanel value={filters} change={setFilters} clear={() => setFilters(emptyFilter)} />}
           {!!activeFilters.filter(([key]) => key !== "kind").length && <div className="active-filters">{activeFilters.filter(([key]) => key !== "kind").map(([key, value]) => <button key={key} onClick={() => setFilters({ ...filters, [key]: "" })}>{filterLabel(key, value)}<X size={11} /></button>)}<button className="clear" onClick={() => setFilters({ ...emptyFilter, kind: filters.kind })}>清除筛选</button></div>}
         </>}
-        {error ? <Empty icon={<CircleAlert size={30} />} title="暂时无法读取素材库" description={error}><button className="button" onClick={changed}><RotateCw size={15} />重试</button></Empty> : loading && !assets.length && assetView ? <div className="skeleton-gallery" style={{ "--tile-width": `${density}px` } as CSSProperties}>{Array.from({ length: 12 }, (_, index) => <div key={index} style={{ aspectRatio: [0.85, 1.25, 1, 0.68][index % 4] }} />)}</div> : assetView ? assets.length ? <><div className={`gallery ${selecting ? "selecting" : ""}`} style={{ "--tile-width": `${density}px` } as CSSProperties}>{assets.map((asset, index) => <MediaCard key={asset.id} asset={asset} selected={selected.has(asset.id)} selecting={selecting || !!selected.size} open={event => { if (selecting || selected.size || event.ctrlKey || event.metaKey || event.shiftKey) select(asset, index, event.shiftKey); else setViewer(asset); }} select={range => select(asset, index, range)} />)}</div>{nextOffset !== null && nextOffset !== undefined && nextOffset < total && <div className="load-more"><button className="button" onClick={() => void loadMore()} disabled={loadingMore}>{loadingMore && <RotateCw size={15} className="spin" />}加载更多 <span>{assets.length} / {total}</span></button></div>}</> : <Empty icon={view === "trash" ? <Trash2 size={30} /> : search || activeFilters.length ? <Search size={30} /> : view === "inbox" ? <Inbox size={30} /> : view === "starred" ? <Star size={30} /> : <Image size={32} strokeWidth={1.3} />} title={search || activeFilters.length ? "没有找到匹配的素材" : view === "trash" ? "回收站是空的" : view === "inbox" ? "没有待整理的素材" : view === "starred" ? "还没有星标素材" : scope === "hidden" ? "隐藏模式暂无素材" : activeEntity ? "这里还没有素材" : "开始你的视觉收藏"} description={search || activeFilters.length ? "试试其他关键词，或减少筛选条件。" : view === "trash" ? "移除的素材会先保留在这里，可以随时恢复。" : view === "starred" ? "给常用或喜欢的素材添加星标，方便再次找到。" : view === "inbox" ? "新收集的素材会进入未整理，整理后可标记完成。" : "图标、头像、壁纸、梗图、截图和录像，都可以收集到这里。"}>{!["trash", "starred"].includes(view) && !search && !activeFilters.length && <button className="button primary" onClick={() => setModal({ type: "upload" })}><Plus size={17} />收集素材</button>}</Empty> : view === "collections" || view === "tags" ? <EntityGrid items={view === "collections" ? collections : tags} kind={view} open={entity => navigate("all", view === "tags" ? entity.id : "", view === "collections" ? entity.id : "")} edit={entity => setModal({ type: "entity", kind: view, entity })} remove={entity => setModal({ type: "remove-entity", kind: view, entity })} create={() => setModal({ type: "entity", kind: view })} /> : <Jobs items={jobs} retry={retry} open={async id => { try { setViewer(await api<Asset>(scoped(`assets/${id}`, scope))); } catch (error) { notify(error instanceof Error ? error.message : String(error)); } }} />}
+        {error ? <Empty icon={<CircleAlert size={30} />} title="暂时无法读取素材库" description={error}><button className="button" onClick={changed}><RotateCw size={15} />重试</button></Empty> : loading && !assets.length && assetView ? <div className="skeleton-gallery" style={{ "--tile-width": `${density}px` } as CSSProperties}>{Array.from({ length: 12 }, (_, index) => <div key={index} style={{ aspectRatio: [0.85, 1.25, 1, 0.68][index % 4] }} />)}</div> : assetView ? assets.length ? <><div className={`gallery ${selecting ? "selecting" : ""}`} style={{ "--tile-width": `${density}px` } as CSSProperties}>{assets.map((asset, index) => <MediaCard key={asset.id} asset={asset} tagId={tagId} collectionId={collectionId} selected={selected.has(asset.id)} selecting={selecting || !!selected.size} open={event => { if (selecting || selected.size || event.ctrlKey || event.metaKey || event.shiftKey) select(asset, index, event.shiftKey); else setViewer(asset); }} select={range => select(asset, index, range)} />)}</div>{nextOffset !== null && nextOffset !== undefined && nextOffset < total && <div className="load-more"><button className="button" onClick={() => void loadMore()} disabled={loadingMore}>{loadingMore && <RotateCw size={15} className="spin" />}加载更多 <span>{assets.length} / {total}</span></button></div>}</> : <Empty icon={view === "trash" ? <Trash2 size={30} /> : search || activeFilters.length ? <Search size={30} /> : view === "inbox" ? <Inbox size={30} /> : view === "starred" ? <Star size={30} /> : <Image size={32} strokeWidth={1.3} />} title={search || activeFilters.length ? "没有找到匹配的素材" : view === "trash" ? "回收站是空的" : view === "inbox" ? "没有待整理的素材" : view === "starred" ? "还没有星标素材" : scope === "hidden" ? "隐藏模式暂无素材" : activeEntity ? "这里还没有素材" : "开始你的视觉收藏"} description={search || activeFilters.length ? "试试其他关键词，或减少筛选条件。" : view === "trash" ? "移除的素材会先保留在这里，可以随时恢复。" : view === "starred" ? "给常用或喜欢的素材添加星标，方便再次找到。" : view === "inbox" ? "新收集的素材会进入未整理，整理后可标记完成。" : "图标、头像、壁纸、梗图、截图和录像，都可以收集到这里。"}>{!["trash", "starred"].includes(view) && !search && !activeFilters.length && <button className="button primary" onClick={() => setModal({ type: "upload" })}><Plus size={17} />收集素材</button>}</Empty> : view === "collections" || view === "tags" ? <EntityGrid items={view === "collections" ? collections : tags} kind={view} open={entity => navigate("all", view === "tags" ? entity.id : "", view === "collections" ? entity.id : "")} edit={entity => setModal({ type: "entity", kind: view, entity })} remove={entity => setModal({ type: "remove-entity", kind: view, entity })} create={() => setModal({ type: "entity", kind: view })} /> : <Jobs items={jobs} retry={retry} open={async id => { try { setViewer(await api<Asset>(scoped(`assets/${id}`, scope))); } catch (error) { notify(error instanceof Error ? error.message : String(error)); } }} />}
       </div>
     </main>
     {assetView && (selecting || !!selected.size) && <div className="selection-bar">
-      <button className="icon-button" aria-label="退出选择" onClick={() => { cancelSelectAll(); setSelected(new Set()); setSelecting(false); }}><X size={17} /></button>
+      <button className="icon-button" aria-label="退出选择" title="退出选择 (Esc)" onClick={exitSelection}><X size={17} /></button>
       <strong>已选 {selected.size} 项</strong>
       <button className="button subtle" title="全选当前筛选结果，包含尚未加载的素材" disabled={loading || loadingMore || selectingAll || busy || !total || !!error} onClick={() => void selectAll()}>{selectingAll ? <><RotateCw size={14} className="spin" />正在全选</> : allSelected ? "取消全选" : "全选"}</button>
-      {!!selected.size && !selectingAll && <><span className="selection-divider" />{view !== "trash" ? <><button className="button" disabled={busy} onClick={() => setModal({ type: "organize", ids: [...selected] })}><Tag size={15} /><span>整理</span></button><button className="icon-button" title={selectedAssets.every(asset => asset.starred) ? "取消星标" : "添加星标"} aria-label={selectedAssets.every(asset => asset.starred) ? "取消星标" : "添加星标"} disabled={busy} onClick={() => void patch([...selected], { starred: !selectedAssets.every(asset => asset.starred) }, "星标已更新")}><Star size={17} /></button><button className="icon-button" title="单独隐藏" aria-label="单独隐藏" disabled={busy} onClick={() => void patch([...selected], { hidden: true }, "已标记隐藏")}><EyeOff size={17} /></button><button className="icon-button" title="取消单独隐藏" aria-label="取消单独隐藏" disabled={busy} onClick={() => void patch([...selected], { hidden: false }, "已取消单独隐藏；标签或收藏集的隐藏仍会生效")}><Eye size={17} /></button><a className="icon-button" title="打包下载" aria-label="打包下载" href={`${base}api/download?ids=${[...selected].join(",")}`}><Download size={17} /></a><button className="icon-button danger" title="移入回收站" aria-label="移入回收站" disabled={busy} onClick={() => void patch([...selected], { trash: true }, "已移入回收站")}><Trash2 size={17} /></button></> : <><button className="button" disabled={busy} onClick={() => void patch([...selected], { trash: false }, "素材已恢复")}><RotateCw size={15} />恢复</button><button className="button danger" disabled={busy} onClick={() => setModal({ type: "purge", ids: [...selected] })}><Trash2 size={15} />永久删除</button></>}</>}
+      {!!selected.size && !selectingAll && <><span className="selection-divider" />{view !== "trash" ? <><button className="button" disabled={busy} onClick={() => setModal({ type: "organize", ids: [...selected] })}><Tag size={15} /><span>整理</span></button>{(collectionId || tagId) && <button className="button" title="仅移除当前关联，保留素材与其他标签、收藏集" disabled={busy} onClick={() => void patch([...selected], collectionId ? { removeCollectionIds: [collectionId] } : { removeTagIds: [tagId] }, collectionId ? "已移出当前收藏集" : "已移出当前标签")}><Unlink size={15} />{collectionId ? "移出当前收藏集" : "移出当前标签"}</button>}<button className="icon-button" title={selectedAssets.every(asset => asset.starred) ? "取消星标" : "添加星标"} aria-label={selectedAssets.every(asset => asset.starred) ? "取消星标" : "添加星标"} disabled={busy} onClick={() => void patch([...selected], { starred: !selectedAssets.every(asset => asset.starred) }, "星标已更新")}><Star size={17} /></button><button className="icon-button" title="单独隐藏" aria-label="单独隐藏" disabled={busy} onClick={() => void patch([...selected], { hidden: true }, "已标记隐藏")}><EyeOff size={17} /></button><button className="icon-button" title="取消单独隐藏" aria-label="取消单独隐藏" disabled={busy} onClick={() => void patch([...selected], { hidden: false }, "已取消单独隐藏；标签或收藏集的隐藏仍会生效")}><Eye size={17} /></button><a className="icon-button" title="打包下载" aria-label="打包下载" href={`${base}api/download?ids=${[...selected].join(",")}`}><Download size={17} /></a><button className="icon-button danger" title="移入回收站" aria-label="移入回收站" disabled={busy} onClick={() => void patch([...selected], { trash: true }, "已移入回收站")}><Trash2 size={17} /></button></> : <><button className="button" disabled={busy} onClick={() => void patch([...selected], { trash: false }, "素材已恢复")}><RotateCw size={15} />恢复</button><button className="button danger" disabled={busy} onClick={() => setModal({ type: "purge", ids: [...selected] })}><Trash2 size={15} />永久删除</button></>}</>}
     </div>}
     {viewer && <Viewer asset={viewer} scope={scope} tags={tags} collections={collections} close={() => setViewer(null)} previous={viewerIndex > 0 ? () => setViewer(assets[viewerIndex - 1]) : undefined} next={viewerIndex >= 0 && viewerIndex < assets.length - 1 ? () => setViewer(assets[viewerIndex + 1]) : undefined} changed={changed} notify={notify} />}
     {modal?.type === "upload" && <UploadPanel scope={scope} close={() => setModal(null)} pick={() => picker.current?.click()} folder={() => folderPicker.current?.click()} />}
@@ -334,11 +356,13 @@ function App() {
 function Nav({ icon, label, count, active, click }: { icon: React.ReactNode; label: string; count?: number; active: boolean; click: () => void }) {
   return <button className={active ? "active" : ""} onClick={click}>{icon}<span>{label}</span>{count !== undefined && <small>{count.toLocaleString()}</small>}</button>;
 }
-function MediaCard({ asset, selected, selecting, open, select }: { asset: Asset; selected: boolean; selecting: boolean; open: (event: React.MouseEvent) => void; select: (range: boolean) => void }) {
+function MediaCard({ asset, tagId, collectionId, selected, selecting, open, select }: { asset: Asset; tagId: string; collectionId: string; selected: boolean; selecting: boolean; open: (event: React.MouseEvent) => void; select: (range: boolean) => void }) {
   const [hover, setHover] = useState(false);
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [asset.thumbnailUrl, asset.status]);
   const src = hover && asset.kind === "animation" && asset.size < 30 * 1024 * 1024 ? asset.previewUrl || asset.thumbnailUrl : asset.thumbnailUrl;
+  const otherCollections = tagId || collectionId ? asset.collections.filter(collection => collection.id !== collectionId) : [];
+  const otherTags = tagId || collectionId ? asset.tags.filter(tag => tag.id !== tagId) : [];
   return <article className={`media-card ${selected ? "selected" : ""} ${asset.hasAlpha ? "has-alpha" : ""}`} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
     <button className="media-open" onClick={open} style={{ aspectRatio: asset.width && asset.height ? Math.min(2.3, Math.max(0.45, asset.width / asset.height)) : 1 }} aria-label={`查看 ${asset.title || asset.name}`}>
       {src && !failed ? <img src={src} alt={asset.title || asset.name} loading="lazy" decoding="async" onError={() => { if (src !== asset.thumbnailUrl) setHover(false); else setFailed(true); }} /> : <div className="media-placeholder">{asset.status === "error" ? <CircleAlert size={27} /> : asset.kind === "video" ? <Video size={30} /> : <Image size={30} strokeWidth={1.3} />}<span>{asset.status === "error" ? "预览失败" : asset.status === "ready" ? kindNames[asset.kind] : "预览准备中"}</span></div>}
@@ -348,6 +372,10 @@ function MediaCard({ asset, selected, selecting, open, select }: { asset: Asset;
     </button>
     <button className={`select-media ${selected ? "checked" : ""} ${selecting ? "show" : ""}`} aria-label={selected ? "取消选择" : "选择素材"} aria-pressed={selected} onClick={event => select(event.shiftKey)}>{selected && <Check size={13} />}</button>
     <div className="media-caption"><span title={asset.title || asset.name}>{asset.title || asset.name}</span>{asset.effectiveHidden && <EyeOff size={11} />}</div>
+    {!!(otherCollections.length || otherTags.length) && <div className="media-memberships" aria-label="其他收藏集和标签">
+      {otherCollections.map(collection => <span className="media-membership collection" key={collection.id} title={`收藏集：${collection.name}`}><Folder size={10} /><span>{collection.name}</span></span>)}
+      {otherTags.map(tag => <span className="media-membership tag" key={tag.id} title={`标签：${tag.name}`}><Tag size={10} /><span>{tag.name}</span></span>)}
+    </div>}
   </article>;
 }
 function filterLabel(key: string, value: string) {
@@ -361,7 +389,7 @@ function FilterPanel({ value, change, clear }: { value: Filter; change: (next: F
 }
 function EntityGrid({ items, kind, open, edit, remove, create }: { items: Entity[]; kind: "tags" | "collections"; open: (entity: Entity) => void; edit: (entity: Entity) => void; remove: (entity: Entity) => void; create: () => void }) {
   if (!items.length) return <Empty icon={kind === "collections" ? <Folder size={32} strokeWidth={1.3} /> : <Tag size={32} strokeWidth={1.3} />} title={kind === "collections" ? "还没有收藏集" : "还没有标签"} description={kind === "collections" ? "把同一个游戏、角色或主题的素材放在一起。" : "用头像、壁纸、梗图等标签标记用途，同一素材可以有多个标签。"}><button className="button primary" onClick={create}><Plus size={15} />新建{kind === "collections" ? "收藏集" : "标签"}</button></Empty>;
-  return <div className={`entity-grid ${kind}`}>{items.map(entity => <article className="entity-card" key={entity.id}><button className="entity-open" onClick={() => open(entity)}><div className="entity-cover">{entity.coverUrl ? <img src={entity.coverUrl} alt="" loading="lazy" /> : kind === "collections" ? <Folder size={35} strokeWidth={1.2} /> : <Tag size={30} strokeWidth={1.2} />}</div><div className="entity-card-info"><h2>{entity.name}{entity.hidden && <EyeOff size={13} />}</h2><span>{entity.count} 个素材</span></div></button><div className="entity-actions"><button className="icon-button" aria-label={`编辑 ${entity.name}`} title="编辑" onClick={() => edit(entity)}><MoreHorizontal size={17} /></button><button className="icon-button" aria-label={`移除 ${entity.name}`} title="移除" onClick={() => remove(entity)}><Trash2 size={15} /></button></div></article>)}</div>;
+  return <div className={`entity-grid ${kind}`}>{items.map(entity => <article className="entity-card" key={entity.id}><button className="entity-open" onClick={() => open(entity)}><div className="entity-cover">{entity.coverUrl ? <img src={entity.coverUrl} alt="" loading="lazy" /> : kind === "collections" ? <Folder size={35} strokeWidth={1.2} /> : <Tag size={30} strokeWidth={1.2} />}</div><div className="entity-card-info"><h2>{entity.name}</h2><span>{entity.count} 个素材</span></div></button><div className="entity-actions"><button className="icon-button" aria-label={`编辑 ${entity.name}`} title="编辑" onClick={() => edit(entity)}><MoreHorizontal size={17} /></button><button className="icon-button" aria-label={`移除 ${entity.name}`} title="移除" onClick={() => remove(entity)}><Trash2 size={15} /></button></div></article>)}</div>;
 }
 function EntityEditor({ kind, entity, scope, close, saved }: { kind: "tags" | "collections"; entity?: Entity; scope: Scope; close: () => void; saved: () => void }) {
   const [name, setName] = useState(entity?.name || "");
@@ -385,7 +413,7 @@ function Organize({ ids, tags, collections, close, save }: { ids: string[]; tags
   const [organized, setOrganized] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  function choices(items: Entity[], selected: string[], update: (value: string[]) => void) { return <div className="choice-chips">{items.map(item => <button type="button" key={item.id} className={selected.includes(item.id) ? "selected" : ""} onClick={() => update(selected.includes(item.id) ? selected.filter(id => id !== item.id) : [...selected, item.id])}>{selected.includes(item.id) && <Check size={12} />}{item.hidden && <EyeOff size={11} />}{item.name}</button>)}</div>; }
+  function choices(items: Entity[], selected: string[], update: (value: string[]) => void) { return <div className="choice-chips">{items.map(item => <button type="button" key={item.id} className={selected.includes(item.id) ? "selected" : ""} onClick={() => update(selected.includes(item.id) ? selected.filter(id => id !== item.id) : [...selected, item.id])}>{selected.includes(item.id) && <Check size={12} />}{item.name}</button>)}</div>; }
   async function submit() {
     setBusy(true); setError("");
     const value: Patch = { organized };

@@ -131,6 +131,10 @@ input[type="search"]::-webkit-search-cancel-button { display: none; }
 .media-caption { display: flex; align-items: center; gap: 6px; color: #8b9480; font-size: 10px; padding: 9px 2px 0; }
 .media-caption > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .media-caption > svg { color: #a7a18e; }
+.media-memberships { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+.media-membership { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; padding: 4px 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--sidebar); color: #6d7b59; font-size: 9px; }
+.media-membership.collection { background: var(--accent-soft); color: var(--accent-dark); }
+.media-membership > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .select-media { position: absolute; left: 9px; top: 9px; width: 23px; height: 23px; border: 1.5px solid #fff9; border-radius: 50%; display: flex; justify-content: center; align-items: center; color: white; background: #1b26142b; opacity: 0; }
 .media-card:hover .select-media, .select-media.show, .select-media.checked { opacity: 1; }
 .select-media.checked { background: #788e60; border-color: white; }
@@ -172,7 +176,7 @@ input[type="search"]::-webkit-search-cancel-button { display: none; }
 .job-description > div:not(.progress-track) { display: flex; gap: 11px; flex-wrap: wrap; color: #a2ad93; font-size: 10px; margin-top: 7px; }
 .job-description p { color: #b58d61; font-size: 10px; line-height: 1.8; margin-top: 8px; overflow-wrap: anywhere; }
 .job-description .progress-track { max-width: 400px; margin-top: 11px; }
-.selection-bar { position: fixed; bottom: 22px; left: calc(50% + 116px); transform: translateX(-50%); display: flex; align-items: center; gap: 6px; padding: 10px 12px; border: 1px solid #dfe5d1; border-radius: 13px; background: #f7f9eeef; backdrop-filter: blur(16px); box-shadow: 0 8px 32px #4659331c; z-index: 30; width: max-content; max-width: calc(100vw - 280px); animation: selection-in 220ms var(--ease); }
+.selection-bar { position: fixed; bottom: 22px; left: calc(50% + 116px); transform: translateX(-50%); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 12px; border: 1px solid #dfe5d1; border-radius: 13px; background: #f7f9eeef; backdrop-filter: blur(16px); box-shadow: 0 8px 32px #4659331c; z-index: 30; width: max-content; max-width: calc(100vw - 280px); animation: selection-in 220ms var(--ease); }
 .selection-bar strong { font-weight: 500; font-size: 11px; color: #657d4f; white-space: nowrap; margin-right: 6px; }
 .selection-divider { height: 19px; width: 1px; background: #dce4cf; margin: 0 4px; }
 .selection-bar .button { min-height: 33px; }
