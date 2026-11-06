@@ -133,12 +133,18 @@ function App() {
   const receiveFilesEvent = useEffectEvent(receiveFiles);
   useEffect(() => {
     let depth = 0;
-    const enter = (event: DragEvent) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); depth++; setDragging(true); } };
-    const over = (event: DragEvent) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); if (event.dataTransfer) event.dataTransfer.dropEffect = "copy"; } };
+    let internalDrag = false;
+    const resetDrag = () => { depth = 0; setDragging(false); };
+    // Browsers can expose page images as files during a native drag.
+    const start = () => { internalDrag = true; resetDrag(); };
+    const end = () => { internalDrag = false; resetDrag(); };
+    const enter = (event: DragEvent) => { if (!internalDrag && event.dataTransfer?.types.includes("Files")) { event.preventDefault(); depth++; setDragging(true); } };
+    const over = (event: DragEvent) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); event.dataTransfer.dropEffect = internalDrag ? "none" : "copy"; } };
     const leave = (event: DragEvent) => { if (event.dataTransfer?.types.includes("Files")) { depth = Math.max(0, depth - 1); if (!depth) setDragging(false); } };
     const drop = async (event: DragEvent) => {
       if (!event.dataTransfer?.types.includes("Files")) return;
-      event.preventDefault(); depth = 0; setDragging(false);
+      event.preventDefault(); resetDrag();
+      if (internalDrag) return;
       const items = Array.from(event.dataTransfer.items);
       const entries = items.map(item => item.webkitGetAsEntry?.()).filter((entry): entry is FileSystemEntry => !!entry);
       if (entries.some(entry => entry.isDirectory)) {
@@ -161,8 +167,8 @@ function App() {
       } else receiveFilesEvent(Array.from(event.dataTransfer.files));
     };
     const paste = (event: ClipboardEvent) => { if (event.clipboardData?.files.length) { event.preventDefault(); receiveFilesEvent(Array.from(event.clipboardData.files)); } };
-    window.addEventListener("dragenter", enter); window.addEventListener("dragover", over); window.addEventListener("dragleave", leave); window.addEventListener("drop", drop); window.addEventListener("paste", paste);
-    return () => { window.removeEventListener("dragenter", enter); window.removeEventListener("dragover", over); window.removeEventListener("dragleave", leave); window.removeEventListener("drop", drop); window.removeEventListener("paste", paste); };
+    window.addEventListener("dragstart", start, true); window.addEventListener("dragend", end); window.addEventListener("dragenter", enter); window.addEventListener("dragover", over); window.addEventListener("dragleave", leave); window.addEventListener("drop", drop); window.addEventListener("paste", paste);
+    return () => { window.removeEventListener("dragstart", start, true); window.removeEventListener("dragend", end); window.removeEventListener("dragenter", enter); window.removeEventListener("dragover", over); window.removeEventListener("dragleave", leave); window.removeEventListener("drop", drop); window.removeEventListener("paste", paste); };
   }, []);
   useEffect(() => {
     window.addEventListener("curio-library-changed", changed);
