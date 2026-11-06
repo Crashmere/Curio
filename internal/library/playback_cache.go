@@ -19,7 +19,7 @@ const (
 	playbackReservation    = 2 * playbackSegmentLimit
 	playbackCacheTTL       = 20 * time.Minute
 	playbackDeadline       = 75 * time.Second
-	playbackRecipe         = "h264-ts-sdr-v1"
+	playbackRecipe         = "h264-ts-sdr-v2"
 )
 
 var errPlaybackClosed = errors.New("视频播放暂不可用")

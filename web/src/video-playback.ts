@@ -52,7 +52,8 @@ export class VideoPlayback {
     const type = source?.codecs
       ? `${source.mime}; codecs="${source.codecs}"`
       : source?.mime || "";
-    if (!this.sourceFailed && source && type && this.video.canPlayType(type)) {
+    // Incomplete codec hints can be rejected even when the native decoder supports the file.
+    if (!this.sourceFailed && source && type && (this.video.canPlayType(type) || this.video.canPlayType(source.mime))) {
       this.mode = "source";
       this.video.src = source.url;
     } else {
@@ -229,6 +230,11 @@ export class VideoPlayback {
 
   private restorePosition = (): void => {
     if (this.disposed) return;
+    // A supported container can silently play only audio when its video codec is unavailable.
+    if (this.mode === "source" && this.video.videoWidth === 0) {
+      this.handleMediaError();
+      return;
+    }
     this.video.playbackRate = this.rate;
     const duration = this.video.duration;
     const target = Number.isFinite(duration)
