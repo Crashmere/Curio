@@ -46,13 +46,13 @@ export function CollectionGallery({ entries, expanded, pages, pending, selected,
       {!!selected.size && <button className="icon-button" title="将所选素材加入这组" aria-label="将所选素材加入这组" disabled={busy || [...selected].every(id => group.assetIds.includes(id))} onClick={() => add(group)}><Plus size={16} /></button>}
       <button className="icon-button group-dissolve" title="解散分组，保留全部素材" aria-label="解散分组" disabled={busy} onClick={() => dissolve(group)}><Ungroup size={14} /></button>
     </div>;
-    if (!open) return [<article key={group.id} className={`media-group collapsed ${selectedCount ? "has-selected" : ""}`} data-group={group.id} style={{ viewTransitionName: `group-${group.id}` }} aria-label={`${count} 个素材的分组`} onClick={event => clickGroup(event, group)}>
+    if (!open) return [<article key={group.id} className={`media-group collapsed ${selectedCount ? "has-selected" : ""}`} data-group={group.id} aria-label={`${count} 个素材的分组`} onClick={event => clickGroup(event, group)}>
       <button className="group-preview" onClick={() => toggle(group)} aria-label={`展开分组，${count} 个素材`} aria-expanded={false}>
         <div className="group-stack" aria-hidden="true">{group.assetIds.slice(0, 3).reverse().map((id, index, ids) => <span className="group-sheet" key={id} style={{ "--sheet": ids.length - index - 1 } as CSSProperties}><Image size={24} strokeWidth={1.2} /><img src={`${base}media/${id}/thumbnail`} alt="" loading="lazy" decoding="async" onError={event => { event.currentTarget.style.opacity = "0"; }} /></span>)}</div>
       </button>
       <div className="group-trace" title="点击展开分组"><Layers3 size={12} /><span>{count} 个素材</span>{actions}</div>
     </article>];
-    const cards: ReactNode[] = items.map((asset, index) => <div className={`group-member ${selectedCount ? "has-selected" : ""}`} key={`${group.id}-${asset.id}`} data-group={group.id} style={{ "--reveal-delay": `${Math.min(index, 6) * 18}ms`, viewTransitionName: index === 0 ? `group-${group.id}` : undefined } as CSSProperties} onClick={event => clickGroup(event, group)}>
+    const cards: ReactNode[] = items.map((asset, index) => <div className={`group-member ${selectedCount ? "has-selected" : ""}`} key={`${group.id}-${asset.id}`} data-group={group.id} style={{ "--reveal-delay": `${Math.min(index, 6) * 18}ms` } as CSSProperties} onClick={event => clickGroup(event, group)}>
       {render(asset)}
       <div className="group-trace" title="点击标记或卡片文字收起分组"><Layers3 size={11} />{index === 0 && <span>{count} 个素材</span>}{index === 0 && actions}</div>
     </div>);

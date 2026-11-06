@@ -149,9 +149,6 @@ input[type="search"]::-webkit-search-cancel-button { display: none; }
 .selection-bar .group-create { background: var(--accent-soft); border-color: #d5c2a7; color: var(--accent-dark); }
 @keyframes group-reveal { from { opacity: 0; transform: translateY(9px) scale(.98); } to { opacity: 1; transform: none; } }
 @keyframes group-fold { from { opacity: 0; transform: translateY(4px) scale(.96); } to { opacity: 1; transform: none; } }
-::view-transition-group(*) { animation-duration: 300ms; animation-timing-function: cubic-bezier(.22, 1, .36, 1); }
-::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
-::view-transition-old(root) { display: none; }
 .media-card { position: relative; break-inside: avoid; margin-bottom: 15px; border-radius: 9px; contain-intrinsic-size: auto 250px; content-visibility: auto; }
 .media-open { display: block; width: 100%; overflow: hidden; border-radius: 9px; background: #e9eade; position: relative; }
 .media-open img { width: 100%; height: 100%; display: block; object-fit: contain; }

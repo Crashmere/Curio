@@ -1,6 +1,5 @@
 import { CSSProperties, StrictMode, useDeferredValue, useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
-import { flushSync } from "react-dom";
 import { ArrowDownWideNarrow, Check, ChevronDown, CircleAlert, Download, Eye, EyeOff, Folder, Grid2X2, Group, Image, Inbox, Layers3, Menu, MoreHorizontal, Plus, RefreshCw, RotateCw, Search, SlidersHorizontal, Star, Tag, Trash2, Ungroup, Unlink, Upload, X } from "lucide-react";
 import { api, Asset, AssetPage, base, bytes, Entity, Info, Job, MediaGroup, Patch, Scope, scoped, View } from "./api";
 import { Dialog, Empty, isTextInput, stateNames } from "./components";
@@ -57,7 +56,6 @@ function App() {
   const pageToken = useRef(0);
   const selectionRequest = useRef<AbortController | null>(null);
   const groupRequests = useRef(new Map<string, AbortController>());
-  const groupTransition = useRef<ViewTransition | null>(null);
   const polling = useRef(false);
   const uploadState = useSyncExternalStore(importer.subscribe, importer.snapshot);
   const uploads = uploadState.items.filter(item => item.scope === scope);
@@ -323,16 +321,8 @@ function App() {
   });
   useEffect(() => { loadExpandedGroups(); }, [groups, expandedGroups, loading]);
   function toggleGroup(group: MediaGroup) {
-    groupTransition.current?.skipTransition();
-    const update = () => {
-      lastSelected.current = -1;
-      setExpandedGroups(previous => { const next = new Set(previous); if (next.has(group.id)) next.delete(group.id); else next.add(group.id); return next; });
-    };
-    if (document.startViewTransition && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      const transition = document.startViewTransition(() => flushSync(update));
-      groupTransition.current = transition;
-      void transition.finished.catch(() => {}).finally(() => { if (groupTransition.current === transition) groupTransition.current = null; });
-    } else update();
+    lastSelected.current = -1;
+    setExpandedGroups(previous => { const next = new Set(previous); if (next.has(group.id)) next.delete(group.id); else next.add(group.id); return next; });
   }
   async function selectGroup(group: MediaGroup) {
     if (busy || loading || selectingAll) return;
