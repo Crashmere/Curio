@@ -1,9 +1,10 @@
 import { createSHA256 } from "hash-wasm";
 
+let hasher: Awaited<ReturnType<typeof createSHA256>> | undefined;
 self.onmessage = async (event: MessageEvent<File>) => {
   try {
     const file = event.data;
-    const hash = await createSHA256();
+    const hash = hasher ||= await createSHA256();
     hash.init();
     const block = 8 * 1024 * 1024;
     for (let offset = 0; offset < file.size; offset += block) {

@@ -52,7 +52,7 @@ function App() {
   const polling = useRef(false);
   const uploadState = useSyncExternalStore(importer.subscribe, importer.snapshot);
   const uploads = uploadState.items.filter(item => item.scope === scope);
-  const uploading = uploads.filter(item => ["waiting", "reading", "uploading"].includes(item.state)).length;
+  const uploading = uploads.filter(item => ["waiting", "reading", "uploading", "verifying"].includes(item.state)).length;
   const notify = (message: string) => setToast(message);
   const changed = () => setRefresh(value => value + 1);
   const assetView = !["tags", "collections", "jobs"].includes(view);
