@@ -47,6 +47,7 @@ export type Info = {
   chunkSize: number;
 };
 export type AssetPage = { items: Asset[]; total: number; nextOffset: number | null };
+export type MediaGroup = { id: string; assetIds: string[] };
 export type Patch = {
   title?: string; notes?: string; author?: string; sourceUrl?: string;
   hidden?: boolean; starred?: boolean; trash?: boolean;

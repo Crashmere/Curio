@@ -87,6 +87,11 @@ func (l *Library) Handler(frontend fs.FS) http.Handler {
 	r.Post("/api/assets/retry", l.retryAssets)
 	r.Get("/api/assets/{id}", l.assetDetail)
 	r.Patch("/api/assets/{id}", l.updateAsset)
+	r.Get("/api/collections/{id}/groups", l.listGroups)
+	r.Post("/api/collections/{id}/groups", l.createGroup)
+	r.Patch("/api/collections/{id}/groups", l.updateGroup)
+	r.Patch("/api/collections/{id}/groups/{group}", l.updateGroup)
+	r.Delete("/api/collections/{id}/groups/{group}", l.deleteGroup)
 	r.Get("/api/assets/{id}/download", l.downloadAsset)
 	for _, kind := range []string{"tags", "collections"} {
 		kind := kind
@@ -221,6 +226,13 @@ func assetFilter(q url.Values) (string, []any, error) {
 			args = append(args, value)
 		}
 	}
+	if value := q.Get("group"); value != "" {
+		if !validID.MatchString(value) {
+			return "", nil, fmt.Errorf("分组编号无效")
+		}
+		where += " AND EXISTS(SELECT 1 FROM collection_group_assets g WHERE g.asset_id=a.id AND g.group_id=?)"
+		args = append(args, value)
+	}
 	for _, entry := range []struct{ param, column, operator string }{{"minWidth", "width", ">="}, {"maxWidth", "width", "<="}, {"minHeight", "height", ">="}, {"maxHeight", "height", "<="}, {"minDuration", "duration", ">="}, {"maxDuration", "duration", "<="}, {"minSize", "size", ">="}, {"maxSize", "size", "<="}} {
 		if raw := q.Get(entry.param); raw != "" {
 			value, err := strconv.ParseFloat(raw, 64)
@@ -253,6 +265,21 @@ func pageNumber(q url.Values, key string, defaultValue, minValue, maxValue int) 
 	return max(minValue, min(maxValue, value))
 }
 
+func assetOrder(q url.Values) (string, error) {
+	switch q.Get("sort") {
+	case "oldest":
+		return "a.created_at ASC,a.id ASC", nil
+	case "name":
+		return "COALESCE(NULLIF(a.title,''),a.name) COLLATE NOCASE,a.id", nil
+	case "size":
+		return "a.size DESC,a.id DESC", nil
+	case "newest", "":
+		return "a.created_at DESC,a.id DESC", nil
+	default:
+		return "", fmt.Errorf("排序方式无效")
+	}
+}
+
 func (l *Library) listAssets(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	where, args, err := assetFilter(q)
@@ -278,18 +305,25 @@ func (l *Library) listAssets(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, err)
 		return
 	}
-	order := "a.created_at DESC,a.id DESC"
-	switch q.Get("sort") {
-	case "oldest":
-		order = "a.created_at ASC,a.id ASC"
-	case "name":
-		order = "COALESCE(NULLIF(a.title,''),a.name) COLLATE NOCASE,a.id"
-	case "size":
-		order = "a.size DESC,a.id DESC"
-	case "newest", "":
-	default:
-		fail(w, 400, "排序方式无效")
+	order, err := assetOrder(q)
+	if err != nil {
+		fail(w, 400, err)
 		return
+	}
+	entryTotal := total
+	if q.Get("grouped") == "1" && q.Get("collection") != "" && q.Get("group") == "" && q.Get("ids") == "" {
+		// Page by gallery entries, not by the hidden cards inside collapsed groups.
+		filterWhere := where
+		filterArgs := append([]any{}, args...)
+		where += ` AND (NOT EXISTS(SELECT 1 FROM collection_group_assets g WHERE g.asset_id=a.id AND g.collection_id=?)
+ OR a.id IN (SELECT id FROM (SELECT a.id,ROW_NUMBER() OVER(PARTITION BY g.group_id ORDER BY ` + order + `) AS group_rank
+ FROM assets a JOIN collection_group_assets g ON g.asset_id=a.id AND g.collection_id=?` + filterWhere + `) WHERE group_rank=1))`
+		args = append(args, q.Get("collection"), q.Get("collection"))
+		args = append(args, filterArgs...)
+		if err = l.DB.QueryRow("SELECT count(*) FROM assets a"+where, args...).Scan(&entryTotal); err != nil {
+			fail(w, 500, err)
+			return
+		}
 	}
 	limit := pageNumber(q, "limit", 120, 1, maximum)
 	offset := pageNumber(q, "offset", 0, 0, 100000000)
@@ -319,7 +353,7 @@ func (l *Library) listAssets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var next any = nil
-	if int64(offset+len(items)) < total {
+	if int64(offset+len(items)) < entryTotal {
 		next = offset + len(items)
 	}
 	writeJSON(w, 200, map[string]any{"items": items, "total": total, "nextOffset": next})

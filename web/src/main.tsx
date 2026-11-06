@@ -1,8 +1,11 @@
 import { CSSProperties, StrictMode, useDeferredValue, useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowDownWideNarrow, Check, ChevronDown, CircleAlert, Download, Eye, EyeOff, Folder, FolderPlus, Grid2X2, Image, Inbox, Layers3, Menu, MoreHorizontal, Plus, RefreshCw, RotateCw, Search, SlidersHorizontal, Star, Tag, Trash2, Unlink, Upload, Video, X } from "lucide-react";
-import { api, Asset, AssetPage, base, bytes, duration, Entity, Info, Job, Patch, Scope, scoped, View } from "./api";
-import { Dialog, Empty, isTextInput, kindNames, stateNames } from "./components";
+import { flushSync } from "react-dom";
+import { ArrowDownWideNarrow, Check, ChevronDown, CircleAlert, Download, Eye, EyeOff, Folder, Grid2X2, Group, Image, Inbox, Layers3, Menu, MoreHorizontal, Plus, RefreshCw, RotateCw, Search, SlidersHorizontal, Star, Tag, Trash2, Ungroup, Unlink, Upload, X } from "lucide-react";
+import { api, Asset, AssetPage, base, bytes, Entity, Info, Job, MediaGroup, Patch, Scope, scoped, View } from "./api";
+import { Dialog, Empty, isTextInput, stateNames } from "./components";
+import { MediaCard } from "./MediaCard";
+import { CollectionGallery, collectionEntries } from "./CollectionGallery";
 import { UploadPanel } from "./UploadPanel";
 import { Viewer } from "./Viewer";
 import * as importer from "./upload";
@@ -24,6 +27,10 @@ function App() {
   const [sort, setSort] = useState("newest");
   const [density, setDensity] = useState(225);
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [groups, setGroups] = useState<MediaGroup[]>([]);
+  const [groupPages, setGroupPages] = useState<Record<string, AssetPage>>({});
+  const [expandedGroups, setExpandedGroups] = useState(new Set<string>());
+  const [pendingGroups, setPendingGroups] = useState(new Set<string>());
   const [total, setTotal] = useState(0);
   const [nextOffset, setNextOffset] = useState<number | null>(null);
   const [info, setInfo] = useState<Info>();
@@ -49,6 +56,8 @@ function App() {
   const lastSelected = useRef<number>(-1);
   const pageToken = useRef(0);
   const selectionRequest = useRef<AbortController | null>(null);
+  const groupRequests = useRef(new Map<string, AbortController>());
+  const groupTransition = useRef<ViewTransition | null>(null);
   const polling = useRef(false);
   const uploadState = useSyncExternalStore(importer.subscribe, importer.snapshot);
   const uploads = uploadState.items.filter(item => item.scope === scope);
@@ -56,8 +65,13 @@ function App() {
   const notify = (message: string) => setToast(message);
   const changed = () => setRefresh(value => value + 1);
   const assetView = !["tags", "collections", "jobs"].includes(view);
-  const selectedAssets = assets.filter(asset => selected.has(asset.id));
-  const allSelected = total > 0 && nextOffset == null && selected.size === assets.length;
+  const entries = collectionEntries(assets, collectionId ? groups : [], groupPages);
+  const galleryAssets = entries.flatMap(entry => entry.asset ? [entry.asset] : expandedGroups.has(entry.group.id) ? entry.items : []);
+  const galleryIndices = new Map(galleryAssets.map((asset, index) => [asset.id, index]));
+  const selectedAssets = entries.flatMap(entry => entry.asset ? [entry.asset] : entry.items).filter(asset => selected.has(asset.id));
+  const selectedAreStarred = selectedAssets.length === selected.size && selectedAssets.every(asset => asset.starred);
+  const selectedInGroups = groups.some(group => group.assetIds.some(id => selected.has(id)));
+  const allSelected = total > 0 && selected.size === total;
   const activeEntity = collectionId ? collections.find(item => item.id === collectionId) : tagId ? tags.find(item => item.id === tagId) : undefined;
   const title = activeEntity?.name || viewLabels[view];
   const activeFilters = Object.entries(filters).filter(([, value]) => value);
@@ -79,7 +93,7 @@ function App() {
   function switchScope() {
     cancelSelectAll();
     setScope(value => value === "normal" ? "hidden" : "normal");
-    setAssets([]); setInfo(undefined); setTags([]); setCollections([]); setJobs([]); setTotal(0); setNextOffset(null);
+    setAssets([]); setGroups([]); setGroupPages({}); setInfo(undefined); setTags([]); setCollections([]); setJobs([]); setTotal(0); setNextOffset(null);
     setSelected(new Set()); setSelecting(false); setViewer(null); setModal(null); setTagId(""); setCollectionId(""); setQuery(""); setFilters(emptyFilter); setFilterOpen(false); setToast("");
   }
   const switchScopeEvent = useEffectEvent(switchScope);
@@ -176,21 +190,26 @@ function App() {
     window.addEventListener("curio-library-changed", changed);
     return () => window.removeEventListener("curio-library-changed", changed);
   }, []);
-  function assetPath(offset = 0, limit = 100) {
+  function assetPath(offset = 0, limit = 100, grouped = true) {
     const params = new URLSearchParams({ scope, limit: String(limit), offset: String(offset), sort });
     if (search.trim()) params.set("q", search.trim());
     if (tagId) params.set("tag", tagId);
-    if (collectionId) params.set("collection", collectionId);
+    if (collectionId) { params.set("collection", collectionId); if (grouped) params.set("grouped", "1"); }
     if (view === "starred") params.set("starred", "1");
     if (view === "inbox") params.set("unorganized", "1");
     if (view === "trash") params.set("trash", "1");
     for (const [key, value] of Object.entries(filters)) if (value) params.set(key, key === "minSize" || key === "maxSize" ? String(Number(value) * 1024 * 1024) : value);
     return `assets?${params}`;
   }
+  function groupsPath() { return assetPath().replace("assets?", `collections/${collectionId}/groups?`); }
   useEffect(() => {
     const controller = new AbortController();
     cancelSelectAll();
     pageToken.current++;
+    groupRequests.current.forEach(controller => controller.abort());
+    groupRequests.current.clear();
+    setGroupPages({}); setPendingGroups(new Set());
+    lastSelected.current = -1;
     setLoading(true); setLoadingMore(false); setError("");
     const loadPages = async () => {
       const wanted = Math.max(100, assets.length);
@@ -205,17 +224,20 @@ function App() {
     };
     const load = async () => {
       try {
-        const [information, tagList, collectionList, content] = await Promise.all([
+        const [information, tagList, collectionList, content, groupList] = await Promise.all([
           api<Info>(scoped("info", scope), undefined, undefined, controller.signal),
           api<{ items: Entity[] }>(scoped("tags", scope), undefined, undefined, controller.signal),
           api<{ items: Entity[] }>(scoped("collections", scope), undefined, undefined, controller.signal),
-          assetView ? loadPages() : view === "jobs" ? api<{ items: Job[] }>(scoped("jobs", scope), undefined, undefined, controller.signal) : Promise.resolve(null)
+          assetView ? loadPages() : view === "jobs" ? api<{ items: Job[] }>(scoped("jobs", scope), undefined, undefined, controller.signal) : Promise.resolve(null),
+          collectionId ? api<{ items: MediaGroup[] }>(groupsPath(), undefined, undefined, controller.signal) : Promise.resolve({ items: [] })
         ]);
         if (controller.signal.aborted) return;
         setInfo(information); setTags(tagList.items || []); setCollections(collectionList.items || []);
+        setGroups(groupList.items);
         if (assetView && content && "total" in content) {
           setAssets(content.items); setTotal(content.total); setNextOffset(content.nextOffset);
-          setSelected(previous => new Set([...previous].filter(id => content.items.some(asset => asset.id === id))));
+          const available = new Set([...content.items.map(asset => asset.id), ...groupList.items.flatMap(group => group.assetIds)]);
+          setSelected(previous => new Set([...previous].filter(id => available.has(id))));
         }
         if (view === "jobs" && content && !("total" in content)) setJobs(content.items);
         if (viewer) {
@@ -226,27 +248,30 @@ function App() {
       finally { if (!controller.signal.aborted) setLoading(false); }
     };
     void load();
-    return () => { controller.abort(); selectionRequest.current?.abort(); };
+    return () => { controller.abort(); selectionRequest.current?.abort(); groupRequests.current.forEach(request => request.abort()); };
   }, [scope, view, tagId, collectionId, search, filters, sort, refresh]);
   const poll = useEffectEvent(async () => {
     if (polling.current) return;
     polling.current = true;
     const token = pageToken.current;
-    const polledIds = assets.slice(0, 2000).map(asset => asset.id);
+    const polledIds = [...new Set([...assets, ...Object.values(groupPages).flatMap(page => page.items)].map(asset => asset.id))].slice(0, 2000);
     const signal = AbortSignal.timeout(15000);
     try {
-      const [information, tagList, collectionList, content, currentViewer] = await Promise.all([
+      const [information, tagList, collectionList, content, currentViewer, groupList] = await Promise.all([
         api<Info>(scoped("info", scope), undefined, undefined, signal),
         api<{ items: Entity[] }>(scoped("tags", scope), undefined, undefined, signal),
         api<{ items: Entity[] }>(scoped("collections", scope), undefined, undefined, signal),
         assetView && polledIds.length ? api<AssetPage>(`${assetPath(0, 2000)}&ids=${polledIds.join(",")}`, undefined, undefined, signal) : view === "jobs" ? api<{ items: Job[] }>(scoped("jobs", scope), undefined, undefined, signal) : Promise.resolve(null),
-        viewer ? api<Asset>(scoped(`assets/${viewer.id}`, scope), undefined, undefined, signal).catch(() => null) : Promise.resolve(null)
+        viewer ? api<Asset>(scoped(`assets/${viewer.id}`, scope), undefined, undefined, signal).catch(() => null) : Promise.resolve(null),
+        collectionId ? api<{ items: MediaGroup[] }>(groupsPath(), undefined, undefined, signal) : Promise.resolve({ items: [] })
       ]);
       if (token !== pageToken.current) return;
       setInfo(information); setTags(tagList.items || []); setCollections(collectionList.items || []);
+      setGroups(groupList.items);
       if (assetView && content && "total" in content) {
         const updated = new Map(content.items.map(item => [item.id, item]));
         setAssets(previous => previous.filter(asset => !polledIds.includes(asset.id) || updated.has(asset.id)).map(asset => updated.get(asset.id) || asset));
+        setGroupPages(previous => Object.fromEntries(Object.entries(previous).map(([id, page]) => [id, { ...page, items: page.items.filter(asset => !polledIds.includes(asset.id) || updated.has(asset.id)).map(asset => updated.get(asset.id) || asset) }])));
         setSelected(previous => new Set([...previous].filter(id => !polledIds.includes(id) || updated.has(id))));
       } else if (view === "jobs" && content && !("total" in content)) setJobs(content.items);
       if (viewer) setViewer(currentViewer);
@@ -270,6 +295,96 @@ function App() {
     } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
     finally { if (token === pageToken.current) setLoadingMore(false); }
   }
+  async function loadGroup(group: MediaGroup) {
+    if (loading || groupRequests.current.has(group.id)) return;
+    const page = groupPages[group.id];
+    if (page && page.nextOffset == null) return;
+    const controller = new AbortController();
+    groupRequests.current.set(group.id, controller);
+    setPendingGroups(previous => new Set(previous).add(group.id));
+    const token = pageToken.current;
+    try {
+      const result = await api<AssetPage>(`${assetPath(page?.nextOffset ?? 0, 100, false)}&group=${group.id}`, undefined, undefined, controller.signal);
+      if (controller.signal.aborted || token !== pageToken.current) return;
+      setGroupPages(previous => ({ ...previous, [group.id]: { ...result, items: [...(previous[group.id]?.items || []), ...result.items] } }));
+      lastSelected.current = -1;
+    } catch (error) { if (!controller.signal.aborted && token === pageToken.current) notify(error instanceof Error ? error.message : String(error)); }
+    finally {
+      if (groupRequests.current.get(group.id) === controller) {
+        groupRequests.current.delete(group.id);
+        setPendingGroups(previous => { const next = new Set(previous); next.delete(group.id); return next; });
+      }
+    }
+  }
+  const loadExpandedGroups = useEffectEvent(() => {
+    if (loading) return;
+    const loaded = new Set(assets.map(asset => asset.id));
+    for (const group of groups) if (expandedGroups.has(group.id) && !groupPages[group.id] && group.assetIds.some(id => !loaded.has(id))) void loadGroup(group);
+  });
+  useEffect(() => { loadExpandedGroups(); }, [groups, expandedGroups, loading]);
+  function toggleGroup(group: MediaGroup) {
+    groupTransition.current?.skipTransition();
+    const update = () => {
+      lastSelected.current = -1;
+      setExpandedGroups(previous => { const next = new Set(previous); if (next.has(group.id)) next.delete(group.id); else next.add(group.id); return next; });
+    };
+    if (document.startViewTransition && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      const transition = document.startViewTransition(() => flushSync(update));
+      groupTransition.current = transition;
+      void transition.finished.catch(() => {}).finally(() => { if (groupTransition.current === transition) groupTransition.current = null; });
+    } else update();
+  }
+  async function selectGroup(group: MediaGroup) {
+    if (busy || loading || selectingAll) return;
+    if (group.assetIds.length > 2000) { notify("每次最多选择 2000 项，请展开后选择部分素材"); return; }
+    cancelSelectAll();
+    setSelecting(true);
+    lastSelected.current = -1;
+    if (group.assetIds.every(id => selected.has(id))) {
+      setSelected(previous => new Set([...previous].filter(id => !group.assetIds.includes(id))));
+      return;
+    }
+    if (new Set([...selected, ...group.assetIds]).size > 2000) { notify("每次最多选择 2000 项"); return; }
+    const controller = new AbortController();
+    selectionRequest.current = controller;
+    setSelectingAll(true);
+    const token = pageToken.current;
+    try {
+      const items: Asset[] = [];
+      let page: AssetPage;
+      let offset = 0;
+      do {
+        page = await api<AssetPage>(`${assetPath(offset, 240, false)}&group=${group.id}`, undefined, undefined, controller.signal);
+        if (controller.signal.aborted || token !== pageToken.current) return;
+        if (page.total > 2000) throw new Error("每次最多选择 2000 项，请展开后选择部分素材");
+        items.push(...page.items);
+        offset = page.nextOffset ?? 0;
+      } while (page.nextOffset != null);
+      setGroupPages(previous => ({ ...previous, [group.id]: { ...page, items } }));
+      setSelected(previous => new Set([...previous, ...items.map(asset => asset.id)]));
+    } catch (error) { if (!controller.signal.aborted) notify(error instanceof Error ? error.message : String(error)); }
+    finally { if (selectionRequest.current === controller) { selectionRequest.current = null; setSelectingAll(false); } }
+  }
+  async function editGroup(group: MediaGroup | null, action: "create" | "add" | "remove" | "dissolve") {
+    if (busy || loading || selectingAll) return;
+    const ids = [...selected];
+    if (action !== "dissolve" && (!ids.length || ids.length > 2000)) return;
+    if (action === "create" && ids.length < 2) return;
+    setBusy(true);
+    const token = pageToken.current;
+    try {
+      const path = `collections/${collectionId}/groups${group ? `/${group.id}` : ""}`;
+      const body = action === "create" ? { ids } : action === "add" ? { addIds: ids } : action === "remove" ? { removeIds: ids } : undefined;
+      const result = await api<{ id?: string }>(scoped(path, scope), body, action === "create" ? "POST" : action === "dissolve" ? "DELETE" : "PATCH");
+      if (token === pageToken.current) {
+        exitSelection();
+        if (result.id || action === "add") setExpandedGroups(previous => new Set(previous).add(result.id || group!.id));
+        notify(({ create: "已组成一组", add: "已加入这组", remove: "已移出分组，素材仍在收藏集中", dissolve: "分组已解散，全部素材已保留" })[action]);
+      }
+      changed();
+    } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
+    finally { setBusy(false); }
+  }
   async function selectAll(toggle = true) {
     if (loading || loadingMore || selectingAll || busy || !total || error) return;
     if (allSelected) { if (toggle) setSelected(new Set()); else setSelecting(true); return; }
@@ -284,7 +399,7 @@ function App() {
       let offset = 0;
       let page: AssetPage;
       do {
-        page = await api<AssetPage>(assetPath(offset, 240), undefined, undefined, controller.signal);
+        page = await api<AssetPage>(assetPath(offset, 240, false), undefined, undefined, controller.signal);
         if (controller.signal.aborted || token !== pageToken.current) return;
         if (page.total > 2000) throw new Error("每次最多选择 2000 项，请缩小筛选范围后全选");
         items.push(...page.items);
@@ -314,13 +429,18 @@ function App() {
     cancelSelectAll();
     setSelected(previous => {
       const next = new Set(previous);
-      if (range && lastSelected.current >= 0) for (let i = Math.min(index, lastSelected.current); i <= Math.max(index, lastSelected.current); i++) next.add(assets[i].id);
+      if (range && lastSelected.current >= 0) for (let i = Math.min(index, lastSelected.current); i <= Math.max(index, lastSelected.current); i++) next.add(galleryAssets[i].id);
       else if (next.has(asset.id)) next.delete(asset.id); else next.add(asset.id);
       return next;
     });
     lastSelected.current = index;
   }
-  const viewerIndex = viewer ? assets.findIndex(item => item.id === viewer.id) : -1;
+  const viewerIndex = viewer ? galleryAssets.findIndex(item => item.id === viewer.id) : -1;
+  function renderMedia(asset: Asset) {
+    const index = galleryIndices.get(asset.id) ?? -1;
+    return <MediaCard key={asset.id} asset={asset} tagId={tagId} collectionId={collectionId} selected={selected.has(asset.id)} selecting={selecting || !!selected.size} open={event => { if (selecting || selected.size || event.ctrlKey || event.metaKey || event.shiftKey) select(asset, index, event.shiftKey); else setViewer(asset); }} select={range => select(asset, index, range)} />;
+  }
+  const gallery = collectionId && groups.length ? <CollectionGallery entries={entries} expanded={expandedGroups} pages={groupPages} pending={pendingGroups} selected={selected} selecting={selecting || !!selected.size} busy={busy || loading || selectingAll} render={renderMedia} toggle={toggleGroup} load={group => void loadGroup(group)} selectGroup={selectGroup} add={group => void editGroup(group, "add")} dissolve={group => void editGroup(group, "dissolve")} /> : <div className={`gallery ${selecting ? "selecting" : ""}`}>{assets.map(renderMedia)}</div>;
   return <div className={`app ${scope === "hidden" ? "hidden-mode" : ""} ${assetView && (selecting || selected.size) ? "has-selection" : ""}`}>
     <input className="file-input" ref={picker} type="file" multiple accept="image/*,video/*,.svg,.ico,.apng,.mkv,.webm" onChange={event => { receiveFiles(Array.from(event.target.files || [])); event.target.value = ""; }} />
     <input className="file-input" ref={folderPicker} type="file" multiple {...{ webkitdirectory: "" }} onChange={event => { receiveFiles(Array.from(event.target.files || [])); event.target.value = ""; }} />
@@ -342,16 +462,22 @@ function App() {
           {filterOpen && <FilterPanel value={filters} change={setFilters} clear={() => setFilters(emptyFilter)} />}
           {!!activeFilters.filter(([key]) => key !== "kind").length && <div className="active-filters">{activeFilters.filter(([key]) => key !== "kind").map(([key, value]) => <button key={key} onClick={() => setFilters({ ...filters, [key]: "" })}>{filterLabel(key, value)}<X size={11} /></button>)}<button className="clear" onClick={() => setFilters({ ...emptyFilter, kind: filters.kind })}>清除筛选</button></div>}
         </>}
-        {error ? <Empty icon={<CircleAlert size={30} />} title="暂时无法读取素材库" description={error}><button className="button" onClick={changed}><RotateCw size={15} />重试</button></Empty> : loading && !assets.length && assetView ? <div className="skeleton-gallery" style={{ "--tile-width": `${density}px` } as CSSProperties}>{Array.from({ length: 12 }, (_, index) => <div key={index} style={{ aspectRatio: [0.85, 1.25, 1, 0.68][index % 4] }} />)}</div> : assetView ? assets.length ? <><div className={`gallery ${selecting ? "selecting" : ""}`} style={{ "--tile-width": `${density}px` } as CSSProperties}>{assets.map((asset, index) => <MediaCard key={asset.id} asset={asset} tagId={tagId} collectionId={collectionId} selected={selected.has(asset.id)} selecting={selecting || !!selected.size} open={event => { if (selecting || selected.size || event.ctrlKey || event.metaKey || event.shiftKey) select(asset, index, event.shiftKey); else setViewer(asset); }} select={range => select(asset, index, range)} />)}</div>{nextOffset !== null && nextOffset !== undefined && nextOffset < total && <div className="load-more"><button className="button" onClick={() => void loadMore()} disabled={loadingMore}>{loadingMore && <RotateCw size={15} className="spin" />}加载更多 <span>{assets.length} / {total}</span></button></div>}</> : <Empty icon={view === "trash" ? <Trash2 size={30} /> : search || activeFilters.length ? <Search size={30} /> : view === "inbox" ? <Inbox size={30} /> : view === "starred" ? <Star size={30} /> : <Image size={32} strokeWidth={1.3} />} title={search || activeFilters.length ? "没有找到匹配的素材" : view === "trash" ? "回收站是空的" : view === "inbox" ? "没有待整理的素材" : view === "starred" ? "还没有星标素材" : scope === "hidden" ? "隐藏模式暂无素材" : activeEntity ? "这里还没有素材" : "开始你的视觉收藏"} description={search || activeFilters.length ? "试试其他关键词，或减少筛选条件。" : view === "trash" ? "移除的素材会先保留在这里，可以随时恢复。" : view === "starred" ? "给常用或喜欢的素材添加星标，方便再次找到。" : view === "inbox" ? "没有标签或收藏集的素材会显示在这里，添加任意一个即可完成整理。" : "图标、头像、壁纸、梗图、截图和录像，都可以收集到这里。"}>{!["trash", "starred"].includes(view) && !search && !activeFilters.length && <button className="button primary" onClick={() => setModal({ type: "upload" })}><Plus size={17} />收集素材</button>}</Empty> : view === "collections" || view === "tags" ? <EntityGrid items={view === "collections" ? collections : tags} kind={view} open={entity => navigate("all", view === "tags" ? entity.id : "", view === "collections" ? entity.id : "")} edit={entity => setModal({ type: "entity", kind: view, entity })} remove={entity => setModal({ type: "remove-entity", kind: view, entity })} create={() => setModal({ type: "entity", kind: view })} /> : <Jobs items={jobs} retry={retry} open={async id => { try { setViewer(await api<Asset>(scoped(`assets/${id}`, scope))); } catch (error) { notify(error instanceof Error ? error.message : String(error)); } }} />}
+        {error ? <Empty icon={<CircleAlert size={30} />} title="暂时无法读取素材库" description={error}><button className="button" onClick={changed}><RotateCw size={15} />重试</button></Empty> : loading && !assets.length && assetView ? <div className="skeleton-gallery" style={{ "--tile-width": `${density}px` } as CSSProperties}>{Array.from({ length: 12 }, (_, index) => <div key={index} style={{ aspectRatio: [0.85, 1.25, 1, 0.68][index % 4] }} />)}</div> : assetView ? assets.length ? <>
+          {collectionId && !groups.length && <p className="group-help"><Layers3 size={13} />选中多个素材，即可组成一组，无需命名。</p>}
+          <div style={{ "--tile-width": `${density}px` } as CSSProperties}>{gallery}</div>
+          {nextOffset !== null && nextOffset !== undefined && nextOffset < total && <div className="load-more"><button className="button" onClick={() => void loadMore()} disabled={loadingMore}>{loadingMore && <RotateCw size={15} className="spin" />}加载更多 {!collectionId && <span>{assets.length} / {total}</span>}</button></div>}
+        </> : <Empty icon={view === "trash" ? <Trash2 size={30} /> : search || activeFilters.length ? <Search size={30} /> : view === "inbox" ? <Inbox size={30} /> : view === "starred" ? <Star size={30} /> : <Image size={32} strokeWidth={1.3} />} title={search || activeFilters.length ? "没有找到匹配的素材" : view === "trash" ? "回收站是空的" : view === "inbox" ? "没有待整理的素材" : view === "starred" ? "还没有星标素材" : scope === "hidden" ? "隐藏模式暂无素材" : activeEntity ? "这里还没有素材" : "开始你的视觉收藏"} description={search || activeFilters.length ? "试试其他关键词，或减少筛选条件。" : view === "trash" ? "移除的素材会先保留在这里，可以随时恢复。" : view === "starred" ? "给常用或喜欢的素材添加星标，方便再次找到。" : view === "inbox" ? "没有标签或收藏集的素材会显示在这里，添加任意一个即可完成整理。" : "图标、头像、壁纸、梗图、截图和录像，都可以收集到这里。"}>{!["trash", "starred"].includes(view) && !search && !activeFilters.length && <button className="button primary" onClick={() => setModal({ type: "upload" })}><Plus size={17} />收集素材</button>}</Empty> : view === "collections" || view === "tags" ? <EntityGrid items={view === "collections" ? collections : tags} kind={view} open={entity => navigate("all", view === "tags" ? entity.id : "", view === "collections" ? entity.id : "")} edit={entity => setModal({ type: "entity", kind: view, entity })} remove={entity => setModal({ type: "remove-entity", kind: view, entity })} create={() => setModal({ type: "entity", kind: view })} /> : <Jobs items={jobs} retry={retry} open={async id => { try { setViewer(await api<Asset>(scoped(`assets/${id}`, scope))); } catch (error) { notify(error instanceof Error ? error.message : String(error)); } }} />}
       </div>
     </main>
     {assetView && (selecting || !!selected.size) && <div className="selection-bar">
       <button className="icon-button" aria-label="退出选择" title="退出选择 (Esc)" onClick={exitSelection}><X size={17} /></button>
       <strong>已选 {selected.size} 项</strong>
       <button className="button subtle" title="全选当前筛选结果，包含尚未加载的素材" disabled={loading || loadingMore || selectingAll || busy || !total || !!error} onClick={() => void selectAll()}>{selectingAll ? <><RotateCw size={14} className="spin" />正在全选</> : allSelected ? "取消全选" : "全选"}</button>
-      {!!selected.size && !selectingAll && <><span className="selection-divider" />{view !== "trash" ? <><button className="button" disabled={busy} onClick={() => setModal({ type: "organize", ids: [...selected] })}><Tag size={15} /><span>整理</span></button>{(collectionId || tagId) && <button className="button" title="仅移除当前关联，保留素材与其他标签、收藏集" disabled={busy} onClick={() => void patch([...selected], collectionId ? { removeCollectionIds: [collectionId] } : { removeTagIds: [tagId] }, collectionId ? "已移出当前收藏集" : "已移出当前标签")}><Unlink size={15} />{collectionId ? "移出当前收藏集" : "移出当前标签"}</button>}<button className="icon-button" title={selectedAssets.every(asset => asset.starred) ? "取消星标" : "添加星标"} aria-label={selectedAssets.every(asset => asset.starred) ? "取消星标" : "添加星标"} disabled={busy} onClick={() => void patch([...selected], { starred: !selectedAssets.every(asset => asset.starred) }, "星标已更新")}><Star size={17} /></button><button className="icon-button" title="单独隐藏" aria-label="单独隐藏" disabled={busy} onClick={() => void patch([...selected], { hidden: true }, "已标记隐藏")}><EyeOff size={17} /></button><button className="icon-button" title="取消单独隐藏" aria-label="取消单独隐藏" disabled={busy} onClick={() => void patch([...selected], { hidden: false }, "已取消单独隐藏；标签或收藏集的隐藏仍会生效")}><Eye size={17} /></button><a className="icon-button" title="打包下载" aria-label="打包下载" href={`${base}api/download?ids=${[...selected].join(",")}`}><Download size={17} /></a><button className="icon-button danger" title="移入回收站" aria-label="移入回收站" disabled={busy} onClick={() => void patch([...selected], { trash: true }, "已移入回收站")}><Trash2 size={17} /></button></> : <><button className="button" disabled={busy} onClick={() => void patch([...selected], { trash: false }, "素材已恢复")}><RotateCw size={15} />恢复</button><button className="button danger" disabled={busy} onClick={() => setModal({ type: "purge", ids: [...selected] })}><Trash2 size={15} />永久删除</button></>}</>}
+      {!!selected.size && !selectingAll && <><span className="selection-divider" />{view !== "trash" ? <>
+        {collectionId && <><button className="button group-create" title="将所选素材组成无名称的分组" disabled={busy || loading || selected.size < 2 || selected.size > 2000} onClick={() => void editGroup(null, "create")}><Group size={15} />组成一组</button>{selectedInGroups && <button className="button" disabled={busy || loading} onClick={() => void editGroup(null, "remove")}><Ungroup size={15} />移出分组</button>}</>}
+        <button className="button" disabled={busy} onClick={() => setModal({ type: "organize", ids: [...selected] })}><Tag size={15} /><span>整理</span></button>{(collectionId || tagId) && <button className="button" title="仅移除当前关联，保留素材与其他标签、收藏集" disabled={busy} onClick={() => void patch([...selected], collectionId ? { removeCollectionIds: [collectionId] } : { removeTagIds: [tagId] }, collectionId ? "已移出当前收藏集" : "已移出当前标签")}><Unlink size={15} />{collectionId ? "移出当前收藏集" : "移出当前标签"}</button>}<button className="icon-button" title={selectedAreStarred ? "取消星标" : "添加星标"} aria-label={selectedAreStarred ? "取消星标" : "添加星标"} disabled={busy} onClick={() => void patch([...selected], { starred: !selectedAreStarred }, "星标已更新")}><Star size={17} /></button><button className="icon-button" title="单独隐藏" aria-label="单独隐藏" disabled={busy} onClick={() => void patch([...selected], { hidden: true }, "已标记隐藏")}><EyeOff size={17} /></button><button className="icon-button" title="取消单独隐藏" aria-label="取消单独隐藏" disabled={busy} onClick={() => void patch([...selected], { hidden: false }, "已取消单独隐藏；标签或收藏集的隐藏仍会生效")}><Eye size={17} /></button><a className="icon-button" title="打包下载" aria-label="打包下载" href={`${base}api/download?ids=${[...selected].join(",")}`}><Download size={17} /></a><button className="icon-button danger" title="移入回收站" aria-label="移入回收站" disabled={busy} onClick={() => void patch([...selected], { trash: true }, "已移入回收站")}><Trash2 size={17} /></button></> : <><button className="button" disabled={busy} onClick={() => void patch([...selected], { trash: false }, "素材已恢复")}><RotateCw size={15} />恢复</button><button className="button danger" disabled={busy} onClick={() => setModal({ type: "purge", ids: [...selected] })}><Trash2 size={15} />永久删除</button></>}</>}
     </div>}
-    {viewer && <Viewer asset={viewer} scope={scope} tags={tags} collections={collections} close={() => setViewer(null)} previous={viewerIndex > 0 ? () => setViewer(assets[viewerIndex - 1]) : undefined} next={viewerIndex >= 0 && viewerIndex < assets.length - 1 ? () => setViewer(assets[viewerIndex + 1]) : undefined} changed={changed} notify={notify} />}
+    {viewer && <Viewer asset={viewer} scope={scope} tags={tags} collections={collections} close={() => setViewer(null)} previous={viewerIndex > 0 ? () => setViewer(galleryAssets[viewerIndex - 1]) : undefined} next={viewerIndex >= 0 && viewerIndex < galleryAssets.length - 1 ? () => setViewer(galleryAssets[viewerIndex + 1]) : undefined} changed={changed} notify={notify} />}
     {modal?.type === "upload" && <UploadPanel scope={scope} close={() => setModal(null)} pick={() => picker.current?.click()} folder={() => folderPicker.current?.click()} />}
     {modal?.type === "entity" && <EntityEditor kind={modal.kind} entity={modal.entity} scope={scope} close={() => setModal(null)} saved={() => { changed(); setModal(null); notify("已保存"); }} />}
     {modal?.type === "organize" && <Organize ids={modal.ids} tags={tags} collections={collections} close={() => setModal(null)} save={async value => { await api(scoped("assets", scope), { ids: modal.ids, ...value }, "PATCH"); setModal(null); setSelected(new Set()); changed(); notify("标签与收藏集已更新"); }} />}
@@ -363,28 +489,6 @@ function App() {
 }
 function Nav({ icon, label, count, active, click }: { icon: React.ReactNode; label: string; count?: number; active: boolean; click: () => void }) {
   return <button className={active ? "active" : ""} onClick={click}>{icon}<span>{label}</span>{count !== undefined && <small>{count.toLocaleString()}</small>}</button>;
-}
-function MediaCard({ asset, tagId, collectionId, selected, selecting, open, select }: { asset: Asset; tagId: string; collectionId: string; selected: boolean; selecting: boolean; open: (event: React.MouseEvent) => void; select: (range: boolean) => void }) {
-  const [hover, setHover] = useState(false);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [asset.thumbnailUrl, asset.status]);
-  const src = hover && asset.kind === "animation" && asset.size < 30 * 1024 * 1024 ? asset.previewUrl || asset.thumbnailUrl : asset.thumbnailUrl;
-  const otherCollections = tagId || collectionId ? asset.collections.filter(collection => collection.id !== collectionId) : [];
-  const otherTags = tagId || collectionId ? asset.tags.filter(tag => tag.id !== tagId) : [];
-  return <article className={`media-card ${selected ? "selected" : ""} ${asset.hasAlpha ? "has-alpha" : ""}`} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
-    <button className="media-open" onClick={open} style={{ aspectRatio: asset.width && asset.height ? Math.min(2.3, Math.max(0.45, asset.width / asset.height)) : 1 }} aria-label={`查看 ${asset.title || asset.name}`}>
-      {src && !failed ? <img src={src} alt={asset.title || asset.name} loading="lazy" decoding="async" onError={() => { if (src !== asset.thumbnailUrl) setHover(false); else setFailed(true); }} /> : <div className="media-placeholder">{asset.status === "error" ? <CircleAlert size={27} /> : asset.kind === "video" ? <Video size={30} /> : <Image size={30} strokeWidth={1.3} />}<span>{asset.status === "error" ? "预览失败" : asset.status === "ready" ? kindNames[asset.kind] : "预览准备中"}</span></div>}
-      <div className="media-shade" />
-      {(asset.kind !== "image" || asset.status !== "ready") && <span className="media-kind">{asset.kind === "video" ? <Video size={11} /> : asset.kind === "animation" ? <Layers3 size={11} /> : <RotateCw size={11} />}{asset.kind === "video" && asset.duration > 0 ? duration(asset.duration) : asset.kind === "animation" ? "动图" : asset.status === "error" ? "失败" : "处理中"}</span>}
-      {asset.starred && <span className="media-star"><Star size={13} fill="currentColor" /></span>}
-    </button>
-    <button className={`select-media ${selected ? "checked" : ""} ${selecting ? "show" : ""}`} aria-label={selected ? "取消选择" : "选择素材"} aria-pressed={selected} onClick={event => select(event.shiftKey)}>{selected && <Check size={13} />}</button>
-    <div className="media-caption"><span title={asset.title || asset.name}>{asset.title || asset.name}</span>{asset.effectiveHidden && <EyeOff size={11} />}</div>
-    {!!(otherCollections.length || otherTags.length) && <div className="media-memberships" aria-label="其他收藏集和标签">
-      {otherCollections.map(collection => <span className="media-membership collection" key={collection.id} title={`收藏集：${collection.name}`}><Folder size={10} /><span>{collection.name}</span></span>)}
-      {otherTags.map(tag => <span className="media-membership tag" key={tag.id} title={`标签：${tag.name}`}><Tag size={10} /><span>{tag.name}</span></span>)}
-    </div>}
-  </article>;
 }
 function filterLabel(key: string, value: string) {
   const names: Record<string, string> = { format: "格式", aspect: "比例", minWidth: "最小宽度", minHeight: "最小高度", maxWidth: "最大宽度", maxHeight: "最大高度", minDuration: "最短时长", maxDuration: "最长时长", minSize: "最小大小", maxSize: "最大大小" };

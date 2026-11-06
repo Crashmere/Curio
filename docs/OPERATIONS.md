@@ -11,7 +11,7 @@ The runtime identity is `curio`; restricted local releases use `curio-deploy`. S
 | `/opt/curio/bin/curio` | Locally built Go program with embedded frontend and image worker |
 | `/opt/curio/bin/deploy-{ssh,release}.sh` | Root-maintained restricted publication entry points |
 | `/opt/curio/config/` | Curio systemd unit, Nginx location, Portal declaration and source receipt |
-| `/opt/curio/data/curio.sqlite` | Catalog, tags, collections, memberships, source observations, upload hints, jobs and deletion intent |
+| `/opt/curio/data/curio.sqlite` | Catalog, tags, collections, unnamed collection groups, memberships, source observations, upload hints, jobs and deletion intent |
 | `/opt/curio/data/assets/` | Immutable SHA-256 originals until confirmed permanent deletion |
 | `/opt/curio/data/derived/` | Rebuildable still thumbnails, transparent image previews and safe SVG raster previews |
 | `/run/curio/playback/` | Bounded tmpfs scratch and CUDA kernel cache; no stored whole-video playback copies or recovery coverage |

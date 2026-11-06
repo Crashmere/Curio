@@ -2,7 +2,7 @@
 
 Curio is mounted at `/curio/` on `nas`; `ali` and `vps` forward the same application. The routes below are application-relative: a browser calls `/curio/api/assets`, while a loopback check can call `http://127.0.0.1:18088/api/assets`. Business requests use the existing ServerPortal device cookie; Curio adds no second authentication system.
 
-JSON responses are not cached. Errors use `{"error":"message"}` with an appropriate HTTP status. JSON control requests are limited to 1 MiB. Media IDs are complete lowercase SHA-256 hashes; tag and collection IDs are generated lowercase 32-character hexadecimal identifiers. Source links must be HTTP or HTTPS URLs.
+JSON responses are not cached. Errors use `{"error":"message"}` with an appropriate HTTP status. JSON control requests are limited to 1 MiB. Media IDs are complete lowercase SHA-256 hashes; tag, collection and group IDs are generated lowercase 32-character hexadecimal identifiers. Source links must be HTTP or HTTPS URLs.
 
 ## Shared Query Scope
 
@@ -33,6 +33,8 @@ Asset list filters are parallel query parameters:
 | `ids` | Optional comma-separated selection of up to 2000 media IDs for scoped status refresh |
 | `kind` | `image`, `animation`, `video` |
 | `tag`, `collection` | One container ID each |
+| `group` | One collection group ID; all other media filters still apply |
+| `grouped` | `1` with `collection` pages by ungrouped media and one anchor per matching group; ignored with `group` or `ids` |
 | `format` | Lowercase original extension, such as `png` or `mp4` |
 | `starred`, `unorganized`, `trash` | `1` enables the corresponding selection; ordinary lists exclude trash |
 | `aspect` | `square`, `landscape`, `portrait` |
@@ -41,6 +43,8 @@ Asset list filters are parallel query parameters:
 | `minSize`, `maxSize` | Bytes |
 | `sort` | `newest` (default), `oldest`, `name`, `size` |
 | `limit`, `offset` | Default limit 120, maximum 240 (2000 with `ids`); next request uses `nextOffset` |
+
+With `grouped=1`, `total` remains the number of matching media, while `limit`, `offset` and `nextOffset` count gallery entries. Each group's anchor is its first matching media in the selected sort order. Requests selecting every media item must omit `grouped`.
 
 ## Editing and Organization
 
@@ -69,6 +73,22 @@ Both container types use the same contract:
 | `DELETE /api/tags/{id}` or `/api/collections/{id}` | Delete only the container and membership links, preserving assets and originals |
 
 Tag names are globally case-insensitive unique. Creating an existing same-visibility tag can reuse its ID; visibility is not changed by that reuse. Collection names do not identify physical storage or duplicate originals.
+
+### Collection Groups
+
+Groups are unnamed and local to one collection. Each media item can belong to one group in that collection, independently of its grouping in other collections.
+
+| Method and path | Behavior |
+| --- | --- |
+| `GET /api/collections/{id}/groups` | `items` containing group `id` and ordered `assetIds`; applies the media list's scope, search, filters and sorting before forming groups, without pagination |
+| `POST /api/collections/{id}/groups` | Create with `{"ids":["<asset-sha256>","<asset-sha256>"]}`; requires at least two distinct media and returns `{"id":"<group-id>"}` |
+| `PATCH /api/collections/{id}/groups/{group}` | Incrementally change members using `addIds` and/or `removeIds` |
+| `PATCH /api/collections/{id}/groups` | Remove selected media from any groups in this collection using `removeIds` |
+| `DELETE /api/collections/{id}/groups/{group}` | Dissolve the entire group, preserving media, collection memberships, metadata and originals |
+
+Group edits accept up to 2000 media per request and validate live membership in the collection and requested scope atomically. Adding media already grouped elsewhere in the same collection moves only those selected media. A group's matched subset can contain one media after filtering or visibility changes. Groups with no matching live members are omitted from browsing; groups with no remaining membership links are removed during group edits.
+
+Fetch a group's media through `GET /api/assets?collection=<id>&group=<group-id>` with the same scope and filters. Group membership survives trash and restore, but removing a collection membership removes its group link. Replacing `collectionIds` retains group links for collections that remain present.
 
 `POST /api/assets/retry` takes `{"ids":["<asset-sha256>"]}` and requeues derived processing without changing originals. `POST /api/assets/purge` takes the same selection plus `confirm:true`, accepts only trash assets and returns HTTP 202 after persisting the selected cleanup intent. Cleanup resumes after interruption; it does not affect unrelated originals or existing backups.
 

@@ -130,6 +130,14 @@ CREATE TABLE IF NOT EXISTS tags (id TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE
 CREATE TABLE IF NOT EXISTS collections (id TEXT PRIMARY KEY, name TEXT NOT NULL, hidden INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS asset_tags (asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE, tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE, PRIMARY KEY(asset_id,tag_id));
 CREATE TABLE IF NOT EXISTS asset_collections (asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE, collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE, PRIMARY KEY(asset_id,collection_id));
+CREATE TABLE IF NOT EXISTS collection_groups (id TEXT PRIMARY KEY, collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE, created_at TEXT NOT NULL, UNIQUE(id,collection_id));
+CREATE TABLE IF NOT EXISTS collection_group_assets (
+ group_id TEXT NOT NULL, collection_id TEXT NOT NULL, asset_id TEXT NOT NULL,
+ PRIMARY KEY(collection_id,asset_id),
+ FOREIGN KEY(group_id,collection_id) REFERENCES collection_groups(id,collection_id) ON DELETE CASCADE,
+ FOREIGN KEY(asset_id,collection_id) REFERENCES asset_collections(asset_id,collection_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS collection_group_assets_group ON collection_group_assets(group_id,asset_id);
 CREATE TABLE IF NOT EXISTS uploads (id TEXT PRIMARY KEY, hints TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'uploading', offset INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sources (id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE, name TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(asset_id,name));
 CREATE INDEX IF NOT EXISTS asset_tags_tag ON asset_tags(tag_id,asset_id);

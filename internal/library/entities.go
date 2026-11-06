@@ -146,7 +146,16 @@ func relation(kind string) (table, column string) {
 func changeMemberships(tx *sql.Tx, hash, kind string, replace *[]string, add, remove []string) error {
 	table, column := relation(kind)
 	if replace != nil {
-		if _, err := tx.Exec("DELETE FROM "+table+" WHERE asset_id=?", hash); err != nil {
+		// Retained collection memberships must keep their group links.
+		query := "DELETE FROM " + table + " WHERE asset_id=?"
+		args := []any{hash}
+		if len(*replace) > 0 {
+			query += " AND " + column + " NOT IN (" + strings.TrimSuffix(strings.Repeat("?,", len(*replace)), ",") + ")"
+			for _, value := range *replace {
+				args = append(args, value)
+			}
+		}
+		if _, err := tx.Exec(query, args...); err != nil {
 			return err
 		}
 		add = append(add, (*replace)...)

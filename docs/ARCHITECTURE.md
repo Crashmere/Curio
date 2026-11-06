@@ -20,6 +20,16 @@ In the media viewer, A/Left Arrow and D/Right Arrow navigate to the previous and
 
 Within a tag or collection, media cards annotate their other tag and collection memberships, omitting the currently open container. The selection toolbar can remove only the current membership from selected media through the existing incremental batch edit. Original bytes, other memberships and manual flags remain unchanged; removing the last hidden membership can move an asset into normal scope according to effective hiding.
 
+### Collection Groups
+
+Collections support unnamed groups of media. A media item belongs to at most one group within each collection and can be grouped independently in other collections. Selecting at least two items creates a group; adding selected items to an existing group moves only their grouping in that collection. Removing items from a group or dissolving a group keeps the media in the collection. Groups have no separate visibility flag or effect on organization status.
+
+Group membership is stored in additive catalog tables with foreign keys to both the group and the asset's collection membership. Removing that collection membership or permanently deleting an asset removes its corresponding group link. Replacing a membership set preserves links for retained collections. Trash changes only asset state, so restoring an asset restores its group placement. Opening an existing catalog creates the new tables without rewriting existing tables or media.
+
+The same scope, search and filter predicates select group members, preview covers and counts. A mixed-visibility group appears with its matching subset in each mode; filtering down to one item retains the group. Collection pagination counts each group once, anchored by its first matching member in the selected sort order. Expanded groups page their members separately; select-all still loads and selects every matching media item rather than group anchors.
+
+New page loads start with groups collapsed. Expansion state stays in memory through SPA navigation. Collapsed groups use stacked safe thumbnails; expanded groups mark their shared boundary and use the same media cards, selection and viewer as ungrouped items. View transitions animate the group boundary on supported browsers, with a short member reveal and a reduced-motion path.
+
 ## Durable Uploads
 
 Dropping external files inside a tag or collection captures the current scope and container at drop time, before any asynchronous folder traversal. Each queue entry retains that target through navigation and retries. Queue deduplication includes scope and memberships, so a file already queued for one container can also be imported into another. Upload preparation adds the requested memberships to exact duplicates without replacing their existing memberships or manual hidden flag.
