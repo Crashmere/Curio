@@ -120,9 +120,12 @@ input[type="search"]::-webkit-search-cancel-button { display: none; }
 .active-filters > button { display: inline-flex; align-items: center; gap: 7px; font-size: 10px; color: #74875d; background: #ebf0df; border-radius: 5px; padding: 7px 9px; }
 .active-filters > button.clear { background: none; color: #969f87; }
 .gallery, .skeleton-gallery { column-width: var(--tile-width); column-gap: 14px; }
+.gallery.collection-gallery { position: relative; column-width: auto; column-count: auto; --masonry-gap: 14px; }
+.collection-gallery > :not([hidden]) { position: absolute; margin: 0; }
+.collection-gallery > .media-card { content-visibility: visible; }
 .collection-gallery > [hidden] { display: none; }
 .group-help { display: flex; align-items: center; gap: 7px; color: #999581; font-size: 10px; margin: -7px 0 18px; }
-.media-group, .group-member { position: relative; width: 92%; margin: 0 auto 15px; break-inside: avoid; }
+.media-group, .group-member { position: relative; width: 92%; margin: 0 auto 15px; break-inside: avoid; --tile-scale: .92; }
 .group-preview { display: block; width: 100%; padding: 6px 8px 0; animation: group-fold 260ms var(--ease); }
 .group-stack { position: relative; width: 100%; aspect-ratio: 1.15; isolation: isolate; }
 .group-sheet { display: grid; place-items: center; position: absolute; inset: 7% 4% 5%; padding: 4px; border: 1px solid #d1c3ac; border-radius: 7px; color: #b8aa91; background: #fffdf6; box-shadow: 0 3px 8px #5e4b2b14; transform: translate(calc(var(--sheet) * 3px), calc(var(--sheet) * -4px)) rotate(calc(var(--sheet) * 4deg - 2deg)); transition: transform 260ms var(--ease); }
@@ -137,18 +140,15 @@ input[type="search"]::-webkit-search-cancel-button { display: none; }
 .group-actions .icon-button.is-active { color: #657d4f; background: #e5e9d9; }
 .group-dissolve { opacity: .5; }
 .media-group:hover .group-dissolve, .group-member:hover .group-dissolve { opacity: 1; }
-.group-member { animation: group-reveal 260ms var(--ease) both; animation-delay: var(--reveal-delay); }
+.group-member { animation: group-reveal 220ms var(--ease); }
 .group-member .media-card { margin-bottom: 0; content-visibility: visible; }
 .group-member .media-open { box-shadow: 0 0 0 1px #b89a7038, 0 3px 12px #9c794c12; }
 .group-member.has-selected .media-open { box-shadow: 0 0 0 1px #8b9b7350, 0 3px 12px #7f956014; }
 .group-member .media-card.selected .media-open { box-shadow: 0 0 0 2px #819568; }
 .group-member .media-caption, .group-member .media-memberships { cursor: pointer; }
 .group-member::before { content: ""; position: absolute; inset: -2px auto auto -2px; width: 14px; height: 14px; border-top: 1px solid #b99c7270; border-left: 1px solid #b99c7270; border-radius: 8px 0 0; pointer-events: none; }
-.group-load { break-inside: avoid; width: 92%; margin: 0 auto 15px; padding: 6px 0; }
-.group-load .button { color: #a18c6d; font-size: 10px; }
-.group-load span { margin-left: 7px; color: #b1a18a; font-variant-numeric: tabular-nums; }
 .selection-bar .group-create { background: var(--accent-soft); border-color: #d5c2a7; color: var(--accent-dark); }
-@keyframes group-reveal { from { opacity: .55; transform: translateY(9px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes group-reveal { from { transform: translateY(6px) scale(.99); } to { transform: none; } }
 @keyframes group-fold { from { opacity: 0; transform: translateY(4px) scale(.96); } to { opacity: 1; transform: none; } }
 .media-card { position: relative; break-inside: avoid; margin-bottom: 15px; border-radius: 9px; contain-intrinsic-size: auto 250px; content-visibility: auto; }
 .media-open { display: block; width: 100%; overflow: hidden; border-radius: 9px; background: #e9eade; position: relative; }
@@ -392,6 +392,7 @@ input[type="search"]::-webkit-search-cancel-button { display: none; }
   .filter-toggle { font-size: 0; gap: 0; padding: 7px; }
   .toolbar-right .icon-button { width: 27px; height: 27px; }
   .gallery, .skeleton-gallery { column-width: calc((100vw - 46px) / 2); column-count: 2; column-gap: 10px; }
+  .gallery.collection-gallery { --masonry-columns: 2; --masonry-gap: 10px; }
   .media-group, .group-member { margin-bottom: 12px; }
   .group-preview { padding: 5px 6px 0; }
   .group-trace { font-size: 8px; }

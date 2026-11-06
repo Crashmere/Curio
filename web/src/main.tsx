@@ -5,6 +5,7 @@ import { api, Asset, AssetPage, base, bytes, Entity, Info, Job, MediaGroup, Patc
 import { Dialog, Empty, isTextInput, stateNames } from "./components";
 import { MediaCard } from "./MediaCard";
 import { CollectionGallery, collectionEntries } from "./CollectionGallery";
+import { prepareGroupMedia } from "./groupMedia";
 import { UploadPanel } from "./UploadPanel";
 import { Viewer } from "./Viewer";
 import * as importer from "./upload";
@@ -29,7 +30,6 @@ function App() {
   const [groups, setGroups] = useState<MediaGroup[]>([]);
   const [groupPages, setGroupPages] = useState<Record<string, AssetPage>>({});
   const [expandedGroups, setExpandedGroups] = useState(new Set<string>());
-  const [pendingGroups, setPendingGroups] = useState(new Set<string>());
   const [total, setTotal] = useState(0);
   const [nextOffset, setNextOffset] = useState<number | null>(null);
   const [info, setInfo] = useState<Info>();
@@ -55,7 +55,6 @@ function App() {
   const lastSelected = useRef<number>(-1);
   const pageToken = useRef(0);
   const selectionRequest = useRef<AbortController | null>(null);
-  const groupRequests = useRef(new Map<string, AbortController>());
   const polling = useRef(false);
   const uploadState = useSyncExternalStore(importer.subscribe, importer.snapshot);
   const uploads = uploadState.items.filter(item => item.scope === scope);
@@ -204,9 +203,6 @@ function App() {
     const controller = new AbortController();
     cancelSelectAll();
     pageToken.current++;
-    groupRequests.current.forEach(controller => controller.abort());
-    groupRequests.current.clear();
-    setGroupPages({}); setPendingGroups(new Set());
     lastSelected.current = -1;
     setLoading(true); setLoadingMore(false); setError("");
     const loadPages = async () => {
@@ -229,9 +225,11 @@ function App() {
           assetView ? loadPages() : view === "jobs" ? api<{ items: Job[] }>(scoped("jobs", scope), undefined, undefined, controller.signal) : Promise.resolve(null),
           collectionId ? api<{ items: MediaGroup[] }>(groupsPath(), undefined, undefined, controller.signal) : Promise.resolve({ items: [] })
         ]);
+        const prepared = assetView && content && "total" in content ? await prepareGroupMedia(content.items, groupList.items, assetPath(), controller.signal) : {};
         if (controller.signal.aborted) return;
         setInfo(information); setTags(tagList.items || []); setCollections(collectionList.items || []);
         setGroups(groupList.items);
+        setGroupPages(prepared);
         if (assetView && content && "total" in content) {
           setAssets(content.items); setTotal(content.total); setNextOffset(content.nextOffset);
           const available = new Set([...content.items.map(asset => asset.id), ...groupList.items.flatMap(group => group.assetIds)]);
@@ -246,7 +244,7 @@ function App() {
       finally { if (!controller.signal.aborted) setLoading(false); }
     };
     void load();
-    return () => { controller.abort(); selectionRequest.current?.abort(); groupRequests.current.forEach(request => request.abort()); };
+    return () => { controller.abort(); selectionRequest.current?.abort(); };
   }, [scope, view, tagId, collectionId, search, filters, sort, refresh]);
   const poll = useEffectEvent(async () => {
     if (polling.current) return;
@@ -263,13 +261,14 @@ function App() {
         viewer ? api<Asset>(scoped(`assets/${viewer.id}`, scope), undefined, undefined, signal).catch(() => null) : Promise.resolve(null),
         collectionId ? api<{ items: MediaGroup[] }>(groupsPath(), undefined, undefined, signal) : Promise.resolve({ items: [] })
       ]);
+      const prepared = await prepareGroupMedia(content && "total" in content ? content.items : [...assets, ...Object.values(groupPages).flatMap(page => page.items)], groupList.items, assetPath(), signal);
       if (token !== pageToken.current) return;
       setInfo(information); setTags(tagList.items || []); setCollections(collectionList.items || []);
       setGroups(groupList.items);
+      setGroupPages(prepared);
       if (assetView && content && "total" in content) {
         const updated = new Map(content.items.map(item => [item.id, item]));
         setAssets(previous => previous.filter(asset => !polledIds.includes(asset.id) || updated.has(asset.id)).map(asset => updated.get(asset.id) || asset));
-        setGroupPages(previous => Object.fromEntries(Object.entries(previous).map(([id, page]) => [id, { ...page, items: page.items.filter(asset => !polledIds.includes(asset.id) || updated.has(asset.id)).map(asset => updated.get(asset.id) || asset) }])));
         setSelected(previous => new Set([...previous].filter(id => !polledIds.includes(id) || updated.has(id))));
       } else if (view === "jobs" && content && !("total" in content)) setJobs(content.items);
       if (viewer) setViewer(currentViewer);
@@ -293,33 +292,6 @@ function App() {
     } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
     finally { if (token === pageToken.current) setLoadingMore(false); }
   }
-  async function loadGroup(group: MediaGroup) {
-    if (loading || groupRequests.current.has(group.id)) return;
-    const page = groupPages[group.id];
-    if (page && page.nextOffset == null) return;
-    const controller = new AbortController();
-    groupRequests.current.set(group.id, controller);
-    setPendingGroups(previous => new Set(previous).add(group.id));
-    const token = pageToken.current;
-    try {
-      const result = await api<AssetPage>(`${assetPath(page?.nextOffset ?? 0, 100, false)}&group=${group.id}`, undefined, undefined, controller.signal);
-      if (controller.signal.aborted || token !== pageToken.current) return;
-      setGroupPages(previous => ({ ...previous, [group.id]: { ...result, items: [...(previous[group.id]?.items || []), ...result.items] } }));
-      lastSelected.current = -1;
-    } catch (error) { if (!controller.signal.aborted && token === pageToken.current) notify(error instanceof Error ? error.message : String(error)); }
-    finally {
-      if (groupRequests.current.get(group.id) === controller) {
-        groupRequests.current.delete(group.id);
-        setPendingGroups(previous => { const next = new Set(previous); next.delete(group.id); return next; });
-      }
-    }
-  }
-  const loadExpandedGroups = useEffectEvent(() => {
-    if (loading) return;
-    const loaded = new Set(assets.map(asset => asset.id));
-    for (const group of groups) if (expandedGroups.has(group.id) && !groupPages[group.id] && group.assetIds.some(id => !loaded.has(id))) void loadGroup(group);
-  });
-  useEffect(() => { loadExpandedGroups(); }, [groups, expandedGroups, loading]);
   function toggleGroup(group: MediaGroup) {
     lastSelected.current = -1;
     setExpandedGroups(previous => { const next = new Set(previous); if (next.has(group.id)) next.delete(group.id); else next.add(group.id); return next; });
@@ -428,9 +400,9 @@ function App() {
   const viewerIndex = viewer ? galleryAssets.findIndex(item => item.id === viewer.id) : -1;
   function renderMedia(asset: Asset, groupOpen?: boolean) {
     const index = galleryIndices.get(asset.id) ?? -1;
-    return <MediaCard key={asset.id} asset={asset} tagId={tagId} collectionId={collectionId} selected={selected.has(asset.id)} selecting={selecting || !!selected.size} active={groupOpen !== false} loading={groupOpen ? "eager" : "lazy"} open={event => { if (selecting || selected.size || event.ctrlKey || event.metaKey || event.shiftKey) select(asset, index, event.shiftKey); else setViewer(asset); }} select={range => select(asset, index, range)} />;
+    return <MediaCard key={asset.id} asset={asset} tagId={tagId} collectionId={collectionId} selected={selected.has(asset.id)} selecting={selecting || !!selected.size} active={groupOpen !== false} loading={groupOpen === undefined ? "lazy" : "eager"} open={event => { if (selecting || selected.size || event.ctrlKey || event.metaKey || event.shiftKey) select(asset, index, event.shiftKey); else setViewer(asset); }} select={range => select(asset, index, range)} />;
   }
-  const gallery = collectionId && groups.length ? <CollectionGallery entries={entries} expanded={expandedGroups} pages={groupPages} pending={pendingGroups} selected={selected} selecting={selecting || !!selected.size} busy={busy || loading || selectingAll} render={renderMedia} toggle={toggleGroup} load={group => void loadGroup(group)} selectGroup={selectGroup} add={group => void editGroup(group, "add")} dissolve={group => void editGroup(group, "dissolve")} /> : <div className={`gallery ${selecting ? "selecting" : ""}`}>{assets.map(asset => renderMedia(asset))}</div>;
+  const gallery = collectionId && groups.length ? <CollectionGallery entries={entries} expanded={expandedGroups} selected={selected} selecting={selecting || !!selected.size} busy={busy || loading || selectingAll} render={renderMedia} toggle={toggleGroup} selectGroup={selectGroup} add={group => void editGroup(group, "add")} dissolve={group => void editGroup(group, "dissolve")} /> : <div className={`gallery ${selecting ? "selecting" : ""}`}>{assets.map(asset => renderMedia(asset))}</div>;
   return <div className={`app ${scope === "hidden" ? "hidden-mode" : ""} ${assetView && (selecting || selected.size) ? "has-selection" : ""}`}>
     <input className="file-input" ref={picker} type="file" multiple accept="image/*,video/*,.svg,.ico,.apng,.mkv,.webm" onChange={event => { receiveFiles(Array.from(event.target.files || [])); event.target.value = ""; }} />
     <input className="file-input" ref={folderPicker} type="file" multiple {...{ webkitdirectory: "" }} onChange={event => { receiveFiles(Array.from(event.target.files || [])); event.target.value = ""; }} />
@@ -452,7 +424,7 @@ function App() {
           {filterOpen && <FilterPanel value={filters} change={setFilters} clear={() => setFilters(emptyFilter)} />}
           {!!activeFilters.filter(([key]) => key !== "kind").length && <div className="active-filters">{activeFilters.filter(([key]) => key !== "kind").map(([key, value]) => <button key={key} onClick={() => setFilters({ ...filters, [key]: "" })}>{filterLabel(key, value)}<X size={11} /></button>)}<button className="clear" onClick={() => setFilters({ ...emptyFilter, kind: filters.kind })}>清除筛选</button></div>}
         </>}
-        {error ? <Empty icon={<CircleAlert size={30} />} title="暂时无法读取素材库" description={error}><button className="button" onClick={changed}><RotateCw size={15} />重试</button></Empty> : loading && !assets.length && assetView ? <div className="skeleton-gallery" style={{ "--tile-width": `${density}px` } as CSSProperties}>{Array.from({ length: 12 }, (_, index) => <div key={index} style={{ aspectRatio: [0.85, 1.25, 1, 0.68][index % 4] }} />)}</div> : assetView ? assets.length ? <>
+        {error ? <Empty icon={<CircleAlert size={30} />} title="暂时无法读取素材库" description={error}><button className="button" onClick={changed}><RotateCw size={15} />重试</button></Empty> : loading && (!assets.length || collectionId) && assetView ? <div className="skeleton-gallery" style={{ "--tile-width": `${density}px` } as CSSProperties}>{Array.from({ length: 12 }, (_, index) => <div key={index} style={{ aspectRatio: [0.85, 1.25, 1, 0.68][index % 4] }} />)}</div> : assetView ? assets.length ? <>
           {collectionId && !groups.length && <p className="group-help"><Layers3 size={13} />选中多个素材，即可组成一组，无需命名。</p>}
           <div style={{ "--tile-width": `${density}px` } as CSSProperties}>{gallery}</div>
           {nextOffset !== null && nextOffset !== undefined && nextOffset < total && <div className="load-more"><button className="button" onClick={() => void loadMore()} disabled={loadingMore}>{loadingMore && <RotateCw size={15} className="spin" />}加载更多 {!collectionId && <span>{assets.length} / {total}</span>}</button></div>}
