@@ -12,6 +12,7 @@ export type Asset = {
   sourceUrl: string;
   size: number;
   mime: string;
+  format: string;
   kind: "image" | "animation" | "video";
   width: number;
   height: number;

@@ -1,20 +1,16 @@
-import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, Copy, Download, EyeOff, Info, Minus, Pencil, Plus, RotateCw, Star, Trash2, X, ZoomIn } from "lucide-react";
+import { useEffect, useEffectEvent, useState } from "react";
+import { Check, ChevronLeft, ChevronRight, Copy, Download, EyeOff, Info, Pencil, Plus, RotateCw, Star, Trash2, X } from "lucide-react";
 import { api, Asset, bytes, duration, Entity, Patch, Scope, scoped } from "./api";
 import { Dialog, isTextInput, kindNames, stateNames } from "./components";
 import { VideoPlayer } from "./VideoPlayer";
+import { ImageViewer } from "./ImageViewer";
 
 type Props = { asset: Asset; scope: Scope; tags: Entity[]; collections: Entity[]; close: () => void; previous?: () => void; next?: () => void; changed: () => void; notify: (text: string) => void };
 export function Viewer({ asset, scope, tags, collections, close, previous, next, changed, notify }: Props) {
   const [details, setDetails] = useState(true);
   const [edit, setEdit] = useState(false);
-  const [scale, setScale] = useState(1);
-  const [background, setBackground] = useState("checker");
-  const [position, setPosition] = useState({ x: 0, y: 0 });
   const [busy, setBusy] = useState(false);
-  const stage = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ x: number; y: number; offsetX: number; offsetY: number } | null>(null);
-  useEffect(() => { setScale(1); setPosition({ x: 0, y: 0 }); setEdit(false); }, [asset.id]);
+  useEffect(() => { setEdit(false); }, [asset.id]);
   const keyboard = useEffectEvent((event: KeyboardEvent) => {
     if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey || isTextInput(event.target) || edit) return;
     if (event.key === "Escape") close();
@@ -58,11 +54,8 @@ export function Viewer({ asset, scope, tags, collections, close, previous, next,
     <header className="viewer-heading"><button className="icon-button" aria-label="关闭预览" onClick={close}><X size={21} /></button><div className="viewer-name"><strong>{asset.title || asset.name}</strong><span>{kindNames[asset.kind]}{asset.effectiveHidden && <> · <EyeOff size={11} /> 隐藏</>}</span></div><div className="viewer-actions"><button className={`icon-button ${asset.starred ? "is-active" : ""}`} title={asset.starred ? "取消星标" : "添加星标"} aria-label={asset.starred ? "取消星标" : "添加星标"} disabled={busy} onClick={() => void update({ starred: !asset.starred })}><Star size={18} fill={asset.starred ? "currentColor" : "none"} /></button><a className="icon-button" title="下载原件" aria-label="下载原件" href={asset.downloadUrl} download><Download size={18} /></a><button className={`icon-button ${details ? "is-active" : ""}`} title="素材信息" aria-label="素材信息" onClick={() => setDetails(!details)}><Info size={18} /></button></div></header>
     <div className={`viewer-body ${details ? "with-details" : ""}`}>
       <div className="viewer-canvas">
-        <div className={`media-stage ${image ? asset.hasAlpha ? background : "neutral" : "dark"} ${image ? "image-stage" : ""}`} ref={stage} onDoubleClick={() => { setScale(scale === 1 ? 2 : 1); setPosition({ x: 0, y: 0 }); }} onWheel={event => { if (!image) return; setScale(value => Math.min(8, Math.max(1, value - event.deltaY * 0.002))); }} onPointerDown={event => { if (!image || scale <= 1 || event.target !== stage.current && !(event.target instanceof HTMLImageElement)) return; drag.current = { x: event.clientX, y: event.clientY, offsetX: position.x, offsetY: position.y }; event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={event => { if (drag.current) setPosition({ x: drag.current.offsetX + event.clientX - drag.current.x, y: drag.current.offsetY + event.clientY - drag.current.y }); }} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
-          {!image ? <VideoPlayer key={asset.id} asset={asset} /> : asset.previewUrl ? <img key={asset.id} className="viewer-image" src={asset.previewUrl} alt={asset.title || asset.name} draggable={false} style={{ transform: `translate(${position.x}px, ${position.y}px) scale(${scale})` }} /> : <div className="preview-pending"><RotateCw size={30} className={asset.status === "error" ? "" : "spin"} /><strong>{asset.status === "error" ? "预览处理失败" : "预览正在准备"}</strong><span>原件已保存，可以先下载使用。</span></div>}
-        </div>
+        {image ? <ImageViewer key={asset.id} asset={asset} /> : <div className="media-stage dark"><VideoPlayer key={asset.id} asset={asset} /></div>}
         {previous && <button className="viewer-step previous" aria-label="上一项" onClick={previous}><ChevronLeft size={23} /></button>}{next && <button className="viewer-step next" aria-label="下一项" onClick={next}><ChevronRight size={23} /></button>}
-        {image && <div className="viewer-tools"><button className="icon-button" aria-label="缩小" onClick={() => { setScale(Math.max(1, scale - 0.5)); setPosition({ x: 0, y: 0 }); }}><Minus size={16} /></button><button className="zoom-label" onClick={() => { setScale(1); setPosition({ x: 0, y: 0 }); }}>{Math.round(scale * 100)}%</button><button className="icon-button" aria-label="放大" onClick={() => setScale(Math.min(8, scale + 0.5))}><Plus size={16} /></button>{asset.hasAlpha && <><span className="tool-divider" /><button className={`background-swatch checker ${background === "checker" ? "selected" : ""}`} aria-label="透明棋盘背景" onClick={() => setBackground("checker")} /><button className={`background-swatch light ${background === "light" ? "selected" : ""}`} aria-label="浅色背景" onClick={() => setBackground("light")} /><button className={`background-swatch dark ${background === "dark" ? "selected" : ""}`} aria-label="深色背景" onClick={() => setBackground("dark")} /></>}</div>}
       </div>
       {details && <aside className="viewer-details"><div className="details-title"><h2>素材信息</h2><button className="button subtle" onClick={() => setEdit(true)}><Pencil size={14} />编辑</button></div><dl className="metadata-grid"><dt>原文件名</dt><dd>{asset.name}</dd><dt>格式</dt><dd>{asset.mime || asset.name.split(".").pop()?.toUpperCase()}</dd><dt>尺寸</dt><dd>{asset.width && asset.height ? `${asset.width} × ${asset.height}` : "读取中"}</dd><dt>大小</dt><dd>{bytes(asset.size)}</dd>{asset.duration > 0 && <><dt>时长</dt><dd>{duration(asset.duration)}</dd></>}<dt>收集时间</dt><dd>{new Date(asset.createdAt).toLocaleString("zh-CN", { hour12: false })}</dd><dt>处理状态</dt><dd>{stateNames[asset.status] || asset.status}</dd></dl>
         {asset.error && <div className="inline-error">{asset.error}<button className="button subtle" onClick={() => void api("assets/retry", { ids: [asset.id] }).then(changed).catch(error => notify(error.message))}><RotateCw size={14} />重试处理</button></div>}

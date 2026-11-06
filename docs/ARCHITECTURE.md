@@ -38,6 +38,12 @@ Still-image previews preserve transparency. Animated GIF, WebP and APNG retain o
 
 On `nas`, JPEG processing uses Curio's embedded worker with the existing pinned NVIDIA image runtime selected by `CURIO_IMAGE_PYTHON`. Video processing probes FFmpeg CUDA/NVENC support, with software-decoded GPU and full CPU fallbacks. Transparent, animated, vector and fidelity-sensitive image paths retain explicit CPU fallbacks. Originals are never recompressed or rewritten by preview generation.
 
+### Image Viewing
+
+Images open fitted to the available canvas. Raster images are not enlarged on initial display; safe SVG raster previews can fill the canvas. The zoom percentage maps one original pixel to one CSS pixel at 100 percent, independently of the initial fit. Wheel zoom follows the cursor, and touch pinch follows the moving midpoint; panning is bounded to keep image edges from leaving empty space on an overflowing axis. Double-click enlarges from fit and restores fit when zoomed, while the toolbar provides separate actual-size and fit controls. Fit follows canvas resizing; changing media resets the transform.
+
+Browser-supported still formats load their immutable original on enlargement or when the preview lacks enough pixels for the display's pixel density. The existing preview stays visible until original decoding completes, and replacement preserves size and position. Leaving the image cancels its loader. Failed or unsupported original decoding retains the generated preview; SVGs always retain safe raster previews and never load their original into the viewer. Animations continue using their original playback resources. Viewing changes neither original bytes nor stored derivatives.
+
 ### On-Demand Video Playback
 
 The viewer retains native controls, autoplay and posters, while selecting suitable MP4/MOV and WebM originals through a capability descriptor. Native eligibility includes full-range 8-bit H.264 and H.264/HEVC with PCM16 audio, while retaining the near-zero source-timestamp requirement. The browser tries an original when its codec hint or container MIME is supported; incomplete hints alone do not force transcoding. An actual playback failure, or metadata with no video dimensions, switches to HLS. Start timestamps outside the 1 ms native tolerance retain a normalized compatibility timeline. Supported transparent WebM uses its original; detected alpha streams are not flattened into opaque H.264 when native playback is unavailable. [API](API.md#media-and-downloads) defines native eligibility.
