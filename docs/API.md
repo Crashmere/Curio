@@ -23,7 +23,7 @@ The same endpoints serve both scopes. Counts, search, tags, collection covers, i
 | `GET /api/jobs` | Up to 120 current/recent scoped processing or deletion tasks, with stage, engine, progress and error |
 | `GET /api/uploads` | Up to 120 incomplete uploads, filtered by their upload scope and associated hidden tags/collections before pagination |
 
-An asset includes `id`, original `name`, editable `title`, `notes`, `sourceUrl`, `author`, `kind`, `format`, `mime`, `size`, `width`, `height`, `duration`, `hasAlpha`, `hidden`, `effectiveHidden`, `hiddenReasons`, `organized`, `starred`, `trashedAt`, timestamps, processing fields, `tags`, `collections` and media/download URLs. `hidden` is only its own flag; `effectiveHidden` includes membership inheritance. Each hidden reason identifies its `kind`, `id` and `name`.
+An asset includes `id`, original `name`, editable `title`, `notes`, `sourceUrl`, `author`, `kind`, `format`, `mime`, `size`, `width`, `height`, `duration`, `hasAlpha`, `hidden`, `effectiveHidden`, `hiddenReasons`, `organized`, `starred`, `trashedAt`, timestamps, processing fields, `tags`, `collections` and media/download URLs. `hidden` is only its own flag; `effectiveHidden` includes membership inheritance. Each hidden reason identifies its `kind`, `id` and `name`. `organized` is read-only and true exactly when the asset has at least one tag or collection, including hidden containers. The `unorganized` filter and count use the opposite predicate within the requested scope.
 
 Asset list filters are parallel query parameters:
 
@@ -50,14 +50,13 @@ Asset list filters are parallel query parameters:
 {
   "ids": ["<asset-sha256>"],
   "starred": true,
-  "organized": true,
   "hidden": false,
   "addTagIds": ["<tag-id>"],
   "addCollectionIds": ["<collection-id>"]
 }
 ```
 
-Optional text fields are `title`, `notes`, `sourceUrl` and `author`. `hidden`, `organized` and `starred` are independent booleans. `trash:true` moves the selection to trash; `trash:false` restores it. A tag or collection marked hidden can still keep an asset effectively hidden after its own flag is cleared.
+Optional text fields are `title`, `notes`, `sourceUrl` and `author`. `hidden` and `starred` are independent booleans. Legacy `organized` input is ignored; organization status follows tag and collection memberships automatically. `trash:true` moves the selection to trash; `trash:false` restores it. A tag or collection marked hidden can still keep an asset effectively hidden after its own flag is cleared.
 
 `tagIds` and `collectionIds` replace complete membership sets when present. `addTagIds`, `removeTagIds`, `addCollectionIds` and `removeCollectionIds` apply incremental membership changes. An empty replacement list removes all memberships of that kind. Batches fail atomically when selected assets or required containers are unavailable.
 

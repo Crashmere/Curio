@@ -19,7 +19,6 @@ type assetPatch struct {
 	SourceURL           *string   `json:"sourceUrl"`
 	Author              *string   `json:"author"`
 	Hidden              *bool     `json:"hidden"`
-	Organized           *bool     `json:"organized"`
 	Starred             *bool     `json:"starred"`
 	Trash               *bool     `json:"trash"`
 	TagIDs              *[]string `json:"tagIds"`
@@ -109,7 +108,7 @@ func (l *Library) patch(p assetPatch) error {
 		for _, entry := range []struct {
 			column string
 			value  *bool
-		}{{"hidden", p.Hidden}, {"organized", p.Organized}, {"starred", p.Starred}} {
+		}{{"hidden", p.Hidden}, {"starred", p.Starred}} {
 			if entry.value != nil {
 				set = append(set, entry.column+"=?")
 				args = append(args, *entry.value)

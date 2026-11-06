@@ -48,7 +48,7 @@ export type Info = {
 export type AssetPage = { items: Asset[]; total: number; nextOffset: number | null };
 export type Patch = {
   title?: string; notes?: string; author?: string; sourceUrl?: string;
-  hidden?: boolean; organized?: boolean; starred?: boolean; trash?: boolean;
+  hidden?: boolean; starred?: boolean; trash?: boolean;
   addTagIds?: string[]; removeTagIds?: string[];
   addCollectionIds?: string[]; removeCollectionIds?: string[];
 };

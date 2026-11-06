@@ -4,7 +4,9 @@ Curio keeps a single catalog and immutable original store. Tags and collections 
 
 ## Collection and Visibility
 
-An asset is identified by the SHA-256 of its uploaded bytes. The catalog records the original name, editable title and notes, source URL, author, media properties, organization status, star, trash state and processing progress. Many-to-many memberships associate an asset with tags and collections. Global byte-identical deduplication reuses the asset and preserves new source observations without changing its existing manual hidden flag.
+An asset is identified by the SHA-256 of its uploaded bytes. The catalog records the original name, editable title and notes, source URL, author, media properties, star, trash state and processing progress. Many-to-many memberships associate an asset with tags and collections. Global byte-identical deduplication reuses the asset and preserves new source observations without changing its existing manual hidden flag.
+
+Organization status is derived from memberships: an asset with at least one tag or collection is organized; one with neither belongs to the scoped inbox when it is not trashed. Details, inbox filters and inbox counts use the same membership predicate, including hidden containers. Adding a membership removes an asset from the inbox, and removing or deleting its last associated container returns it to the inbox. Titles, notes and stars do not affect this status. The legacy database column is retained but neither read nor written; existing catalogs need no migration.
 
 Effective hiding is the logical OR of an asset's own flag, any associated hidden tag and any associated hidden collection. Membership inheritance is computed at query time instead of being copied into the asset flag. Removing one hidden source reveals an asset only when no other hidden source remains. Asset details expose those sources as hidden reasons.
 

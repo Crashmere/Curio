@@ -161,7 +161,7 @@ func (l *Library) info(w http.ResponseWriter, r *http.Request) {
 	scope := requestScope(r.URL.Query())
 	base := " FROM assets a WHERE a.purge_pending=0 AND " + scopeSQL(scope)
 	out := map[string]any{"name": "Curio", "version": Version, "chunkSize": ChunkSize, "workers": l.Workers, "gpuSlots": cap(l.GPU), "scope": scope}
-	for key, condition := range map[string]string{"total": "a.trashed_at=''", "starred": "a.trashed_at='' AND a.starred=1", "unorganized": "a.trashed_at='' AND a.organized=0", "trash": "a.trashed_at!=''", "queued": "a.status IN ('queued','processing')", "errors": "a.status='error'"} {
+	for key, condition := range map[string]string{"total": "a.trashed_at=''", "starred": "a.trashed_at='' AND a.starred=1", "unorganized": "a.trashed_at='' AND NOT " + organizedSQL, "trash": "a.trashed_at!=''", "queued": "a.status IN ('queued','processing')", "errors": "a.status='error'"} {
 		var n int64
 		if err := l.DB.QueryRow("SELECT count(*)" + base + " AND " + condition).Scan(&n); err != nil {
 			fail(w, 500, err)
@@ -190,7 +190,7 @@ func assetFilter(q url.Values) (string, []any, error) {
 		where += " AND a.starred=1"
 	}
 	if q.Get("unorganized") == "1" {
-		where += " AND a.organized=0"
+		where += " AND NOT " + organizedSQL
 	}
 	if value := q.Get("q"); value != "" {
 		if len(value) > 512 {

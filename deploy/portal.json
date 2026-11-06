@@ -15,7 +15,7 @@
       "id": "data",
       "name": "业务数据",
       "path": "/opt/curio/data",
-      "purpose": "媒体目录、标签、收藏集与关联，标题、来源和备注，普通与隐藏展示标记，星标、待整理、回收站、持久上传、处理和永久删除意图。",
+      "purpose": "媒体目录、标签、收藏集与关联，标题、来源和备注，普通与隐藏展示标记，星标、回收站、持久上传、处理和永久删除意图；未整理按标签与收藏集关联自动判断。",
       "kind": "data",
       "browse": true,
       "cleanup": false
@@ -98,7 +98,7 @@
     {"method": "GET", "path": "/api/info", "description": "当前展示范围的数量、体积、任务状态和上传能力"},
     {"method": "GET", "path": "/api/playback/{id}", "description": "视频原件播放能力、按需分段地址和透明视频兼容提示"},
     {"method": "GET", "path": "/api/assets", "description": "按范围、关键词、标签、收藏集、类型、格式、尺寸、时长和大小分页查询媒体"},
-    {"method": "PATCH", "path": "/api/assets", "description": "原子批量修改元数据、标签与收藏集关联、星标、隐藏、整理状态和回收站"},
+    {"method": "PATCH", "path": "/api/assets", "description": "原子批量修改元数据、标签与收藏集关联、星标、隐藏和回收站，整理状态由关联自动判断"},
     {"method": "POST", "path": "/api/assets/purge", "description": "明确确认永久删除所选回收站媒体；持久化意图后清理，任务中断后继续"},
     {"method": "POST", "path": "/api/assets/retry", "description": "重新排队所选媒体的派生处理，不修改原件"},
     {"method": "GET", "path": "/api/assets/{id}", "description": "当前范围的媒体详情、关联和隐藏来源"},

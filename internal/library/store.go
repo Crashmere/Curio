@@ -119,6 +119,7 @@ CREATE TABLE IF NOT EXISTS assets (
  kind TEXT NOT NULL DEFAULT 'image', format TEXT NOT NULL, mime TEXT NOT NULL DEFAULT '',
  size INTEGER NOT NULL, width INTEGER NOT NULL DEFAULT 0, height INTEGER NOT NULL DEFAULT 0,
  duration REAL NOT NULL DEFAULT 0, has_alpha INTEGER NOT NULL DEFAULT 0,
+ -- Keep the unused organized column for compatibility without rewriting existing catalogs.
  hidden INTEGER NOT NULL DEFAULT 0, organized INTEGER NOT NULL DEFAULT 0, starred INTEGER NOT NULL DEFAULT 0,
  trashed_at TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
  status TEXT NOT NULL DEFAULT 'queued', stage TEXT NOT NULL DEFAULT 'queued', error TEXT NOT NULL DEFAULT '',
@@ -247,7 +248,9 @@ func requestScope(q url.Values) string {
 	return "normal"
 }
 
-const assetColumns = `a.id,a.name,a.title,a.notes,a.source_url,a.author,a.kind,a.format,a.mime,a.size,a.width,a.height,a.duration,a.has_alpha,a.hidden,a.organized,a.starred,a.trashed_at,a.created_at,a.updated_at,a.status,a.stage,a.error,a.engine,a.progress,a.thumbnail_ext,a.preview_ext,a.purge_pending`
+const organizedSQL = `(EXISTS(SELECT 1 FROM asset_tags j WHERE j.asset_id=a.id) OR EXISTS(SELECT 1 FROM asset_collections j WHERE j.asset_id=a.id))`
+
+const assetColumns = `a.id,a.name,a.title,a.notes,a.source_url,a.author,a.kind,a.format,a.mime,a.size,a.width,a.height,a.duration,a.has_alpha,a.hidden,` + organizedSQL + `,a.starred,a.trashed_at,a.created_at,a.updated_at,a.status,a.stage,a.error,a.engine,a.progress,a.thumbnail_ext,a.preview_ext,a.purge_pending`
 
 type scanner interface{ Scan(...any) error }
 
