@@ -28,7 +28,7 @@ Group membership is stored in additive catalog tables with foreign keys to both 
 
 The same scope, search and filter predicates select group members, preview covers and counts. A mixed-visibility group appears with its matching subset in each mode; filtering down to one item retains the group. Collection pagination counts each group once, anchored by its first matching member in the selected sort order. Expanded groups page their members separately; select-all still loads and selects every matching media item rather than group anchors.
 
-New page loads start with groups collapsed. Expansion state stays in memory through SPA navigation. Collapsed groups use stacked safe thumbnails; expanded groups mark their shared boundary and use the same media cards, selection and viewer as ungrouped items. View transitions animate the group boundary on supported browsers, with a short member reveal and a reduced-motion path.
+New page loads start with groups collapsed. Expansion state stays in memory through SPA navigation. Collapsed groups use stacked safe thumbnails. Expanded members join the ordinary masonry gallery at a slightly smaller card width, with subtle individual edge accents and group marks instead of an enclosing panel. Clicking the stack expands the group; clicking an expanded member's group mark or caption folds it. Media previews, selection and group actions retain their own clicks. View transitions animate between the stack and first member on supported browsers, with short member reveals and a reduced-motion path.
 
 ## Durable Uploads
 
