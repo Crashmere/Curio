@@ -12,10 +12,10 @@ export function Viewer({ asset, scope, tags, collections, close, previous, next,
   const [busy, setBusy] = useState(false);
   useEffect(() => { setEdit(false); }, [asset.id]);
   const keyboard = useEffectEvent((event: KeyboardEvent) => {
-    if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey || isTextInput(event.target) || edit) return;
+    if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey || isTextInput(event.target) || edit) return;
     if (event.key === "Escape") close();
-    if (event.key === "ArrowLeft") { event.preventDefault(); previous?.(); }
-    if (event.key === "ArrowRight") { event.preventDefault(); next?.(); }
+    if (event.key === "ArrowLeft" || event.key.toLowerCase() === "a") { event.preventDefault(); previous?.(); }
+    if (event.key === "ArrowRight" || event.key.toLowerCase() === "d") { event.preventDefault(); next?.(); }
   });
   useEffect(() => {
     window.addEventListener("keydown", keyboard);

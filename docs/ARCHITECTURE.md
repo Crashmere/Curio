@@ -16,6 +16,8 @@ The browser stores the selected mode only in memory. New loads and reloads start
 
 In media views, Ctrl/Command+A enters selection mode and selects the complete current filter result, including unloaded pages, up to the API's 2000-item batch maximum. Repeating the shortcut retains the selection; the toolbar button toggles select-all. Text fields retain native text selection, and dialogs and previews take precedence over gallery shortcuts. Escape closes the active overlay first; otherwise it cancels pending select-all requests and exits selection mode.
 
+In the media viewer, A/Left Arrow and D/Right Arrow navigate to the previous and next media without wrapping at the ends. Text input, composition, Ctrl/Command/Alt combinations, handled key events and the metadata editor retain their own behavior.
+
 Within a tag or collection, media cards annotate their other tag and collection memberships, omitting the currently open container. The selection toolbar can remove only the current membership from selected media through the existing incremental batch edit. Original bytes, other memberships and manual flags remain unchanged; removing the last hidden membership can move an asset into normal scope according to effective hiding.
 
 ## Durable Uploads
