@@ -33,6 +33,13 @@ export type Asset = {
   status: string;
   error: string;
 };
+export type PlaybackDescriptor = {
+  source?: { url: string; mime: string; codecs?: string };
+  stream: { url: string; mime?: string };
+  duration?: number;
+  frameRate?: number;
+  fallbackError?: string;
+};
 export type Info = {
   name: string; version: string;
   total: number; starred: number; unorganized: number; trash: number; bytes: number; queued: number; errors: number;

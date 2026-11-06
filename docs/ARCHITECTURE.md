@@ -24,11 +24,19 @@ The shared `nas`, `ali` and `vps` Nginx servers retain the existing 4 MiB HTTP/2
 
 ## Media Processing
 
-Durable asset status drives a bounded background queue. NAS runs two processing jobs and permits one Curio GPU operation at a time, below ordinary service priority. Metadata extraction, native decoding, resizing and encoding write only Curio derivatives and work files. Worker failure records an error for retry rather than invalidating the accepted original; interrupted processing is requeued on restart.
+Durable asset status drives a bounded background queue. NAS runs two processing jobs and permits one Curio GPU operation at a time, below ordinary service priority. CPU media operations share a two-slot budget, with one slot reserved from background processing for online playback. Metadata extraction, native decoding, resizing and encoding write only Curio derivatives and work files. Worker failure records an error for retry rather than invalidating the accepted original; interrupted processing is requeued on restart.
 
-Still-image previews preserve transparency. Animated GIF, WebP and APNG retain original animation for playback while the gallery uses a still thumbnail. SVGs use safe raster previews rendered at the thumbnail and viewer sizes while retaining their original logical dimensions; originals are downloads rather than executable inline documents. ICO decoding selects one frame before the ordinary image pipeline, avoiding repeated generic decoder delegation. Video playback is distinct from original storage: a compatible MP4 derivative can be generated when the browser cannot directly play the source.
+Still-image previews preserve transparency. Animated GIF, WebP and APNG retain original animation for playback while the gallery uses a still thumbnail. SVGs use safe raster previews rendered at the thumbnail and viewer sizes while retaining their original logical dimensions; originals are downloads rather than executable inline documents. ICO decoding selects one frame before the ordinary image pipeline, avoiding repeated generic decoder delegation. Video imports generate metadata and a thumbnail, not a complete playback MP4; video readiness does not depend on an online cache.
 
 On `nas`, JPEG processing uses Curio's embedded worker with the existing pinned NVIDIA image runtime selected by `CURIO_IMAGE_PYTHON`. Video processing probes FFmpeg CUDA/NVENC support, with software-decoded GPU and full CPU fallbacks. Transparent, animated, vector and fidelity-sensitive image paths retain explicit CPU fallbacks. Originals are never recompressed or rewritten by preview generation.
+
+### On-Demand Video Playback
+
+The viewer retains native controls, autoplay and posters, while selecting suitable MP4/MOV and WebM originals through a capability descriptor. It checks the browser's MIME/codec hint and falls back after an actual source error. Nonzero source start timestamps use a normalized compatibility timeline. Supported transparent WebM uses its original; detected alpha streams are not flattened into opaque H.264 when native playback is unavailable.
+
+Compatibility playback uses a finite HLS playlist and request-triggered four-second H.264/AAC MPEG-TS segments. Native HLS browsers use their own pipeline; other supported browsers lazily load hls.js. A distant seek requests the target neighborhood rather than encoding all preceding footage; native HLS may request opening segments to discover metadata. Source orientation is applied to decoded pixels, HDR becomes SDR, and source frame rates are retained. GPU-supported stages prefer CUDA/NVENC; software decoding and color normalization use bounded CPU fallbacks.
+
+Identical fragment requests share a cancellable job. Two generators and eight total queued/running playback jobs share a 256 MiB cache/reservation limit, with an 8 MiB segment output bound and a 75-second generation deadline. Idle entries expire after twenty minutes or are evicted under cache pressure. Pausing and leaving stop unnecessary MSE requests; native HLS controls its own look-ahead. Selected permanent deletion cancels, drains and evicts its playback work before unlinking; shutdown drains jobs before closing the catalog. NAS scratch uses private tmpfs under `/run/curio/playback`, separate from stored derivatives and recovery material.
 
 ## Deletion and Recovery
 

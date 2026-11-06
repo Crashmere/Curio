@@ -11,7 +11,7 @@ Read `docs/README.md`, then the relevant architecture, API and operations docume
 - Block ordinary Tab/Shift+Tab focus traversal and remove focus-only decoration. Preserve composition, text input, modifier shortcuts, selections and carets.
 - Keep upload and processing state durable. Accept at most 128 MiB per chunk, flush acknowledged bytes, recover from authoritative server offsets and verify the complete server SHA-256 before publishing an original. Total file size is not limited to one chunk.
 - Global exact-byte deduplication must not silently change an existing item's manual hidden flag or discard its metadata and memberships.
-- Preserve alpha and animation. Never execute uploaded SVG scripts; use safe generated previews and serve SVG originals as downloads. Keep browser-compatible playback separate from original files.
+- Preserve alpha and animation. Never execute uploaded SVG scripts; use safe generated previews and serve SVG originals as downloads. Prefer browser-playable video originals; compatibility playback uses bounded, request-generated segments, never eager whole-video copies.
 - Prefer GPU processing where practical on `nas`, with bounded concurrency and explicit CPU fallbacks for unsupported codecs or fidelity-sensitive steps. Reuse installed media tools; do not introduce unneeded shared runtimes.
 - Keep normal removal reversible. Confirm permanent deletion, persist exact cleanup intent and resume interrupted cleanup without touching unrelated originals, real backups or Aura data.
 - Validate changed behavior locally with synthetic media and isolated data. Do not accumulate permanent tests or run a full historical regression suite by default.

@@ -187,7 +187,7 @@ func (l *Library) imageGPU(ctx context.Context, a *Asset, metadata map[string]an
 		}
 	}
 	rgb := filepath.Join(work, "gpu-source.ppm")
-	if _, err := command(ctx, "vips", "thumbnail", input, rgb+"[strip,format=ppm]", strconv.Itoa(max(a.Width, a.Height)), "--size", "down"); err != nil {
+	if _, err := l.cpuCommand(ctx, "vips", "thumbnail", input, rgb+"[strip,format=ppm]", strconv.Itoa(max(a.Width, a.Height)), "--size", "down"); err != nil {
 		return err
 	}
 	request["rgb"] = rgb

@@ -13,17 +13,30 @@ The runtime identity is `curio`; restricted local releases use `curio-deploy`. S
 | `/opt/curio/config/` | Curio systemd unit, Nginx location, Portal declaration and source receipt |
 | `/opt/curio/data/curio.sqlite` | Catalog, tags, collections, memberships, source observations, upload hints, jobs and deletion intent |
 | `/opt/curio/data/assets/` | Immutable SHA-256 originals until confirmed permanent deletion |
-| `/opt/curio/data/derived/` | Rebuildable still thumbnails, image previews and compatible playback derivatives |
+| `/opt/curio/data/derived/` | Rebuildable still thumbnails, transparent image previews and safe SVG raster previews |
+| `/run/curio/playback/` | Bounded tmpfs scratch and CUDA kernel cache; no stored whole-video playback copies or recovery coverage |
 | `/opt/curio/data/incoming/` | Durable acknowledged incomplete originals |
 | `/opt/curio/data/work/` | Persistent media processing workspace |
 | `/opt/curio/releases/` | Programs, hashes, publication results and rollback records |
 | `/opt/curio/docs/` | Controlled documentation copies and provenance |
 
-Go and Node are build dependencies on the maintenance computer only. Production reuses NAS's official Ubuntu libvips, ExifTool, FFmpeg and FFprobe tools. The service writes only to its private `data` directory, uses two processing jobs and one GPU slot, and applies bounded native thread pools with `TasksMax=1024`.
+Go and Node are build dependencies on the maintenance computer only. Production reuses NAS's official Ubuntu libvips, ExifTool, FFmpeg and FFprobe tools. The service writes business state only to its private `data` directory and online playback scratch to its private runtime directory. It uses two processing jobs, one GPU slot and two shared CPU operations, with one CPU slot reserved from background work for playback. Bounded native thread pools and `TasksMax=1024` limit processing. A single GPU slot is shared by foreground and background work; an already-running operation finishes before the next viewer task acquires it.
 
 `CURIO_IMAGE_PYTHON=/opt/aura/bin/image-gpu/bin/python` selects Aura's existing root-owned, read-only, hash-pinned NVIDIA image environment. Curio embeds its own worker; it does not import Aura's catalog or original store. This runtime is a dependency of both applications and must remain available while either unit selects it. Follow Aura's `deploy/install-image-gpu.sh` and pinned `deploy/image-gpu-requirements.txt` to reconstruct it on a compatible Linux CPython 3.14 host, using the python-environment and software-installation skills. Never install its packages globally. A changed lock requires a new runtime directory and independent validation before updating both applications' selections.
 
 Video work prefers FFmpeg CUDA/NVENC, with documented codec and CPU fallbacks. `CURIO_GPU=cpu` disables GPU work; changing the environment or worker limits requires only Curio's unit reload/restart. Verify representative GPU operations as `curio`, not only as root. The shared [NAS media policy](https://github.com/Crashmere/agent-config/blob/main/skills/server-operations/references/nas-host.md#media-processing-policy) owns driver/kernel alignment and host GPU limits.
+
+### Playback and Runtime Cache
+
+Imports create video metadata and a still thumbnail. Browser-compatible originals play directly; other videos use a finite playlist of four-second H.264/AAC segments generated only at requested positions. Seek-local decoding preserves original frame rates and display orientation, with HDR-to-SDR normalization for the compatibility stream. Detected transparent videos require native original support instead of an opaque fallback. Whole-video MP4 derivatives are no longer generated on import or a playback cache miss.
+
+The source unit sets `CURIO_PLAYBACK_CACHE=/run/curio/playback`, `RuntimeDirectory=curio` and mode `0700`. NAS `/run` is tmpfs. Cached segments and generation reservations share a 256 MiB limit; at most two generators and eight playback jobs are admitted, each segment is bounded to 8 MiB and 75 seconds, and unused entries expire after twenty minutes. Shutdown cancels/drains work and removes session scratch. Isolated development without the variable uses its data root's `work/playback` directory.
+
+`CUDA_CACHE_PATH=/run/curio/playback` and `CUDA_CACHE_MAXSIZE=33554432` add a separate 32 MiB compiled-kernel cache under Curio's own runtime identity. This avoids repeatedly compiling kernels in short FFmpeg processes; it does not share writable cache files with Aura. Systemd removes the runtime directory on stop. Follow the shared [CUDA cache diagnosis](https://github.com/Crashmere/agent-config/blob/main/skills/server-operations/references/common-issues.md#ffmpeg-recompiles-cuda-kernels-for-every-short-job) for repeated fixed GPU startup latency. GPU discovery uses server lifetime rather than a canceled viewer/import context.
+
+FFmpeg uses two decoder/encoder threads and one filter worker, except HDR segments use four bounded filter workers for CPU tone mapping. Permanent deletion drains selected playback and durable processing jobs before unlinking. Existing video `derived/<prefix>/<hash>/preview.mp4` files may be reclaimed only through a selected derivative cleanup after the new path is accepted; preserve originals, image previews, thumbnails, upload state and existing backups. Older programs may regenerate full MP4s, so prefer an on-demand-compatible rollback after cleanup.
+
+Program releases do not install changed unit sources. Install the committed `deploy/curio.service` into `/opt/curio/config/curio.service`, validate it and reload systemd before the next guarded release. Restart only Curio; keep Aura and the shared image runtime running.
 
 ## Upload and Browser Contract
 

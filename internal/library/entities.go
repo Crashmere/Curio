@@ -454,6 +454,7 @@ func (l *Library) purgeAssets(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, err)
 		return
 	}
+	l.cancelPlayback(p.IDs)
 	l.activeMu.Lock()
 	for _, hash := range p.IDs {
 		if job := l.active[hash]; job != nil {

@@ -40,6 +40,14 @@ func mediaCommand(ctx context.Context, name string, args ...string) *exec.Cmd {
 	return cmd
 }
 func command(ctx context.Context, name string, args ...string) ([]byte, error) {
+	out := &boundedBuffer{maximum: 4 << 20}
+	if err := commandOutput(ctx, name, out, args...); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
+func commandOutput(ctx context.Context, name string, output io.Writer, args ...string) error {
 	timeout := 2 * time.Minute
 	if name == "vips" || name == "vipsthumbnail" {
 		timeout = 5 * time.Minute
@@ -50,17 +58,25 @@ func command(ctx context.Context, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := mediaCommand(ctx, name, args...)
-	out := &boundedBuffer{maximum: 4 << 20}
 	stderr := &boundedBuffer{maximum: 4096}
-	cmd.Stdout = out
+	cmd.Stdout = output
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}
-		return nil, fmt.Errorf("%s: %w: %s", name, err, strings.TrimSpace(stderr.String()))
+		return fmt.Errorf("%s: %w: %s", name, err, strings.TrimSpace(stderr.String()))
 	}
-	return out.Bytes(), nil
+	return nil
+}
+
+func (l *Library) cpuCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	release, err := l.acquireCPU(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return command(ctx, name, args...)
 }
 
 func (l *Library) Worker(ctx context.Context) {
@@ -72,6 +88,8 @@ func (l *Library) Worker(ctx context.Context) {
 			_ = os.RemoveAll(filepath.Join(l.Root, "work", name))
 		}
 	}
+	// Discover video support before background jobs can occupy the single GPU slot.
+	l.nvidiaAvailable(ctx)
 	var workers sync.WaitGroup
 	for i := 0; i < l.Workers; i++ {
 		workers.Add(1)
@@ -155,6 +173,10 @@ func (l *Library) nextPurge(ctx context.Context) bool {
 }
 
 func (l *Library) finishPurge(ctx context.Context, hash string) error {
+	l.cancelPlayback([]string{hash})
+	if err := l.waitPlayback(ctx, []string{hash}); err != nil {
+		return err
+	}
 	unlock := l.lock(hash)
 	defer unlock()
 	l.activeMu.Lock()
@@ -247,7 +269,7 @@ func (l *Library) process(ctx context.Context, a Asset) error {
 		return err
 	}
 	metadata := map[string]any{}
-	if raw, e := command(ctx, "exiftool", "-j", "-n", "-api", "LargeFileSupport=1", input); e == nil {
+	if raw, e := l.cpuCommand(ctx, "exiftool", "-j", "-n", "-api", "LargeFileSupport=1", input); e == nil {
 		var values []map[string]any
 		if json.Unmarshal(raw, &values) == nil && len(values) > 0 {
 			metadata = values[0]
@@ -278,7 +300,7 @@ func (l *Library) process(ctx context.Context, a Asset) error {
 			// libvips' ImageMagick delegate for metadata and both derivatives.
 			decoded := filepath.Join(work, "icon.png")
 			decodeCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-			_, err = command(decodeCtx, "ffmpeg", "-nostdin", "-v", "error", "-protocol_whitelist", "file,pipe", "-threads", "2", "-filter_threads", "1", "-i", input, "-frames:v", "1", "-threads", "2", "-y", decoded)
+			_, err = l.cpuCommand(decodeCtx, "ffmpeg", "-nostdin", "-v", "error", "-protocol_whitelist", "file,pipe", "-threads", "2", "-filter_threads", "1", "-i", input, "-frames:v", "1", "-threads", "2", "-y", decoded)
 			cancel()
 			if err != nil {
 				return err
@@ -291,10 +313,10 @@ func (l *Library) process(ctx context.Context, a Asset) error {
 		if a.Format == "gif" && metaNumber(metadata, "FrameCount") == 1 {
 			a.Kind = "image"
 		}
-		if raw, e := command(ctx, "vipsheader", "-f", "width", input); e == nil {
+		if raw, e := l.cpuCommand(ctx, "vipsheader", "-f", "width", input); e == nil {
 			a.Width, _ = strconv.Atoi(strings.TrimSpace(string(raw)))
 		}
-		if raw, e := command(ctx, "vipsheader", "-f", "height", input); e == nil {
+		if raw, e := l.cpuCommand(ctx, "vipsheader", "-f", "height", input); e == nil {
 			a.Height, _ = strconv.Atoi(strings.TrimSpace(string(raw)))
 		}
 		if orientation := int(metaNumber(metadata, "Orientation")); orientation >= 5 && orientation <= 8 {
@@ -302,10 +324,10 @@ func (l *Library) process(ctx context.Context, a Asset) error {
 		}
 		bands := 0
 		interpretation := ""
-		if raw, e := command(ctx, "vipsheader", "-f", "bands", input); e == nil {
+		if raw, e := l.cpuCommand(ctx, "vipsheader", "-f", "bands", input); e == nil {
 			bands, _ = strconv.Atoi(strings.TrimSpace(string(raw)))
 		}
-		if raw, e := command(ctx, "vipsheader", "-f", "interpretation", input); e == nil {
+		if raw, e := l.cpuCommand(ctx, "vipsheader", "-f", "interpretation", input); e == nil {
 			interpretation = strings.TrimSpace(string(raw))
 		}
 		a.HasAlpha = bands == 2 || (bands == 4 && interpretation != "cmyk")
@@ -387,13 +409,13 @@ func (l *Library) image(ctx context.Context, a *Asset, metadata map[string]any, 
 			}
 		}
 		l.stage(a.ID, output.kind, engine+" · libvips", 0)
-		_, err := command(ctx, "vips", "thumbnail", frame, filepath.Join(work, output.kind+".png")+"[strip,compression=6]", strconv.Itoa(output.maximum), "--height", strconv.Itoa(output.maximum), "--size", size)
+		_, err := l.cpuCommand(ctx, "vips", "thumbnail", frame, filepath.Join(work, output.kind+".png")+"[strip,compression=6]", strconv.Itoa(output.maximum), "--height", strconv.Itoa(output.maximum), "--size", size)
 		if err != nil {
 			filter := fmt.Sprintf("scale=w='min(%d,iw)':h='min(%d,ih)':force_original_aspect_ratio=decrease", output.maximum, output.maximum)
 			if a.Format == "svg" {
 				filter = fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", output.maximum, output.maximum)
 			}
-			_, err = command(ctx, "ffmpeg", "-nostdin", "-v", "error", "-protocol_whitelist", "file,pipe", "-threads", "2", "-filter_threads", "1", "-i", input, "-vf", filter, "-frames:v", "1", "-threads", "2", "-y", filepath.Join(work, output.kind+".png"))
+			_, err = l.cpuCommand(ctx, "ffmpeg", "-nostdin", "-v", "error", "-protocol_whitelist", "file,pipe", "-threads", "2", "-filter_threads", "1", "-i", input, "-vf", filter, "-frames:v", "1", "-threads", "2", "-y", filepath.Join(work, output.kind+".png"))
 		}
 		if err != nil {
 			return err

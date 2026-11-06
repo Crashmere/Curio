@@ -33,7 +33,7 @@
       "id": "derived",
       "name": "预览缓存",
       "path": "/opt/curio/data/derived",
-      "purpose": "可再生静态缩略图、保留透明通道的图片预览、安全 SVG 栅格预览和兼容播放视频；nas 手工全量备份收录已存派生文件。",
+      "purpose": "可再生静态缩略图、保留透明通道的图片预览和安全 SVG 栅格预览；视频优先播放原件，必要时在内存盘按需生成短片段，不保存整段 MP4。nas 手工全量备份收录已存派生文件。",
       "kind": "cache",
       "browse": false,
       "cleanup": false
@@ -96,6 +96,7 @@
   "apis": [
     {"method": "GET", "path": "/healthz", "description": "数据库连接健康"},
     {"method": "GET", "path": "/api/info", "description": "当前展示范围的数量、体积、任务状态和上传能力"},
+    {"method": "GET", "path": "/api/playback/{id}", "description": "视频原件播放能力、按需分段地址和透明视频兼容提示"},
     {"method": "GET", "path": "/api/assets", "description": "按范围、关键词、标签、收藏集、类型、格式、尺寸、时长和大小分页查询媒体"},
     {"method": "PATCH", "path": "/api/assets", "description": "原子批量修改元数据、标签与收藏集关联、星标、隐藏、整理状态和回收站"},
     {"method": "POST", "path": "/api/assets/purge", "description": "明确确认永久删除所选回收站媒体；持久化意图后清理，任务中断后继续"},
@@ -118,6 +119,10 @@
     {"method": "PUT", "path": "/api/uploads/{id}", "description": "接收最多 128 MiB 原始分段，落盘后确认偏移"},
     {"method": "POST", "path": "/api/uploads/{id}/complete", "description": "校验完整大小和服务端 SHA-256，提交不可变原件并排队预览"},
     {"method": "GET", "path": "/api/download", "description": "流式打包所选媒体原件，不创建服务器压缩暂存"},
-    {"method": "GET", "path": "/media/{id}/{kind}", "description": "读取静态缩略图、图片预览、兼容播放或原件，支持 Range；SVG 原件只作为下载"}
+    {"method": "GET", "path": "/media/{id}/{kind}", "description": "读取静态缩略图、图片预览或原件，支持 Range；视频 preview 别名转到 HLS，SVG 原件只作为下载"},
+    {"method": "GET", "path": "/media/{id}/stream/index.m3u8", "description": "读取有限视频时间线，不预先转码整段视频"},
+    {"method": "HEAD", "path": "/media/{id}/stream/index.m3u8", "description": "验证视频时间线和响应头，不生成片段"},
+    {"method": "GET", "path": "/media/{id}/stream/{segment}.ts", "description": "按请求位置生成短 H.264/AAC 片段；GPU 优先，内存缓存有容量、并发和过期上限"},
+    {"method": "HEAD", "path": "/media/{id}/stream/{segment}.ts", "description": "验证片段范围与响应头，冷缓存不启动转码"}
   ]
 }

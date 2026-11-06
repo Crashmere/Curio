@@ -15,6 +15,11 @@ Environment=OMP_NUM_THREADS=1
 Environment=OPENBLAS_NUM_THREADS=1
 Environment=MAGICK_THREAD_LIMIT=1
 Environment=CURIO_IMAGE_PYTHON=/opt/aura/bin/image-gpu/bin/python
+Environment=CURIO_PLAYBACK_CACHE=/run/curio/playback
+Environment=CUDA_CACHE_PATH=/run/curio/playback
+Environment=CUDA_CACHE_MAXSIZE=33554432
+RuntimeDirectory=curio
+RuntimeDirectoryMode=0700
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=30

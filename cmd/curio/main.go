@@ -61,6 +61,10 @@ func run() error {
 	if err = l.Configure(*workers, *gpu); err != nil {
 		return err
 	}
+	if err = l.StartPlayback(ctx); err != nil {
+		return err
+	}
+	defer l.ClosePlayback()
 	host, _, err := net.SplitHostPort(*listen)
 	if err != nil {
 		return err

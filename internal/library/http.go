@@ -80,6 +80,7 @@ func (l *Library) Handler(frontend fs.FS) http.Handler {
 		writeJSON(w, 200, map[string]string{"status": "ok", "service": "Curio"})
 	})
 	r.Get("/api/info", l.info)
+	r.Get("/api/playback/{id}", l.playbackInfo)
 	r.Get("/api/assets", l.listAssets)
 	r.Patch("/api/assets", l.batchUpdate)
 	r.Post("/api/assets/purge", l.purgeAssets)
@@ -101,6 +102,10 @@ func (l *Library) Handler(frontend fs.FS) http.Handler {
 	r.Put("/api/uploads/{id}", l.uploadChunk)
 	r.Post("/api/uploads/{id}/complete", l.completeUpload)
 	r.Get("/api/download", l.downloadZip)
+	r.Get("/media/{id}/stream/index.m3u8", l.streamPlaylist)
+	r.Head("/media/{id}/stream/index.m3u8", l.streamPlaylist)
+	r.Get("/media/{id}/stream/{segment}.ts", l.streamSegment)
+	r.Head("/media/{id}/stream/{segment}.ts", l.streamSegment)
 	r.Get("/media/{id}/{kind}", l.media)
 	static := http.FileServer(http.FS(frontend))
 	r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
@@ -350,9 +355,26 @@ func (l *Library) media(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kind := chi.URLParam(r, "kind")
+	if kind == "preview" && a.Kind == "video" {
+		w.Header().Set("Cache-Control", "no-store")
+		http.Redirect(w, r, "/curio/media/"+hash+"/stream/index.m3u8", http.StatusTemporaryRedirect)
+		return
+	}
 	path := ""
 	contentType := ""
 	switch kind {
+	case "source":
+		w.Header().Set("Cache-Control", "no-store")
+		_, spec, err := l.playbackRequest(r)
+		if err != nil {
+			playbackFailure(w, err)
+			return
+		}
+		path, contentType = l.Object(hash), spec.sourceMime
+		if contentType == "" {
+			contentType = a.MIME
+		}
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": a.Name}))
 	case "original":
 		path = l.Object(hash)
 		contentType = a.MIME
@@ -388,6 +410,17 @@ func (l *Library) media(w http.ResponseWriter, r *http.Request) {
 	if err != nil || !stat.Mode().IsRegular() {
 		http.NotFound(w, r)
 		return
+	}
+	if kind == "source" {
+		if err := l.playbackAllowed(hash); err != nil {
+			playbackFailure(w, err)
+			return
+		}
+		if stat.Size() != a.Size {
+			playbackFailure(w, errPlaybackIntegrity)
+			return
+		}
+		w.Header().Set("ETag", `"`+hash+`"`)
 	}
 	if contentType != "" {
 		w.Header().Set("Content-Type", contentType)
