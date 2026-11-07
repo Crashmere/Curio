@@ -18,7 +18,9 @@ In media views, Ctrl/Command+A enters selection mode and selects the complete cu
 
 In the media viewer, A/Left Arrow and D/Right Arrow navigate to the previous and next media without wrapping at the ends. Text input, composition, Ctrl/Command/Alt combinations, handled key events and the metadata editor retain their own behavior.
 
-Within a tag or collection, media cards annotate their other tag and collection memberships, omitting the currently open container. The selection toolbar can remove only the current membership from selected media through the existing incremental batch edit. Original bytes, other memberships and manual flags remain unchanged; removing the last hidden membership can move an asset into normal scope according to effective hiding.
+Media cards show their tags, omitting the currently open tag. Within a tag or collection, they also annotate other collection memberships, omitting the currently open collection. Dragging a sidebar tag onto an individual card adds that membership without replacing existing tags. Dragging a card or viewer tag at least 64 CSS pixels from the starting pointer position turns its floating label red; releasing removes only that membership. Returning within the threshold, Escape, pointer cancellation or navigation cancels removal. These pointer gestures are separate from external file uploads and do not open previews or change gallery selection. The selection toolbar can remove only the current membership from selected media through the existing incremental batch edit. Original bytes, other memberships and manual flags remain unchanged; removing the last hidden membership can move an asset into normal scope according to effective hiding.
+
+Collections can be deleted from the collection grid or their management dialog after confirmation. Deletion removes the collection, its memberships and internal groups while retaining all assets and their other memberships. Removing the final container returns an asset to the inbox; removing its last hidden source restores normal visibility.
 
 ### Collection Groups
 

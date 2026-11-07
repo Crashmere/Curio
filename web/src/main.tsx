@@ -4,6 +4,7 @@ import { ArrowDownWideNarrow, Check, ChevronDown, CircleAlert, Download, Eye, Ey
 import { api, Asset, AssetPage, base, bytes, Entity, Info, Job, MediaGroup, Patch, Scope, scoped, View } from "./api";
 import { Dialog, Empty, isTextInput, stateNames } from "./components";
 import { MediaCard } from "./MediaCard";
+import { TagChip } from "./TagChip";
 import { CollectionGallery, collectionEntries } from "./CollectionGallery";
 import { GroupFormation } from "./MasonryGallery";
 import { prepareGroupMedia } from "./groupMedia";
@@ -75,6 +76,8 @@ function App() {
   const activeEntity = collectionId ? collections.find(item => item.id === collectionId) : tagId ? tags.find(item => item.id === tagId) : undefined;
   const title = activeEntity?.name || viewLabels[view];
   const activeFilters = Object.entries(filters).filter(([, value]) => value);
+  const tagDragKey = `${scope}:${view}:${tagId}:${collectionId}:${viewer?.id || ""}:${modal?.type || ""}`;
+  const tagBusy = busy || loading || selectingAll;
 
   function cancelSelectAll() {
     selectionRequest.current?.abort();
@@ -99,6 +102,7 @@ function App() {
   const switchScopeEvent = useEffectEvent(switchScope);
   const selectionKeyEvent = useEffectEvent((event: KeyboardEvent) => {
     if (event.repeat || event.altKey || modal || viewer) return;
+    if (event.key === "Escape" && document.querySelector(".tag-drag-ghost")) return;
     if (event.ctrlKey || event.metaKey) {
       if (event.key.toLowerCase() === "a" && !event.shiftKey && assetView && !isTextInput(event.target)) {
         event.preventDefault();
@@ -414,6 +418,18 @@ function App() {
     catch (error) { notify(error instanceof Error ? error.message : String(error)); }
     finally { setBusy(false); }
   }
+  async function changeTag(assetId: string, tag: Entity, remove: boolean) {
+    if (tagBusy) return;
+    const asset = [...assets, ...Object.values(groupPages).flatMap(page => page.items), ...(viewer ? [viewer] : [])].find(item => item.id === assetId);
+    if (!remove && asset?.tags.some(item => item.id === tag.id)) { notify(`已有标签“${tag.name}”`); return; }
+    setBusy(true);
+    try {
+      await api(scoped(`assets/${assetId}`, scope), remove ? { removeTagIds: [tag.id] } : { addTagIds: [tag.id] }, "PATCH");
+      if (!remove) setSidebarOpen(false);
+      changed(); notify(`${remove ? "已移除" : "已添加"}标签“${tag.name}”`);
+    } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
+    finally { setBusy(false); }
+  }
   async function retry(ids: string[]) {
     try { await api("assets/retry", { ids }); changed(); notify("已重新加入处理队列"); }
     catch (error) { notify(error instanceof Error ? error.message : String(error)); }
@@ -431,7 +447,7 @@ function App() {
   const viewerIndex = viewer ? galleryAssets.findIndex(item => item.id === viewer.id) : -1;
   function renderMedia(asset: Asset, groupOpen?: boolean) {
     const index = galleryIndices.get(asset.id) ?? -1;
-    return <MediaCard key={asset.id} asset={asset} tagId={tagId} collectionId={collectionId} selected={selected.has(asset.id)} selecting={selecting || !!selected.size} active={groupOpen !== false} loading={groupOpen === undefined ? "lazy" : "eager"} open={event => { if (selecting || selected.size || event.ctrlKey || event.metaKey || event.shiftKey) select(asset, index, event.shiftKey); else setViewer(asset); }} select={range => select(asset, index, range)} />;
+    return <MediaCard key={asset.id} asset={asset} tagId={tagId} collectionId={collectionId} selected={selected.has(asset.id)} selecting={selecting || !!selected.size} active={groupOpen !== false} loading={groupOpen === undefined ? "lazy" : "eager"} open={event => { if (selecting || selected.size || event.ctrlKey || event.metaKey || event.shiftKey) select(asset, index, event.shiftKey); else setViewer(asset); }} select={range => select(asset, index, range)} tagDragKey={tagDragKey} tagBusy={tagBusy} changeTag={(id, tag, remove) => void changeTag(id, tag, remove)} />;
   }
   const gallery = collectionId ? <CollectionGallery entries={entries} expanded={expandedGroups} formation={groupFormation} selected={selected} selecting={selecting || !!selected.size} busy={busy || loading || selectingAll} render={renderMedia} toggle={toggleGroup} selectGroup={selectGroup} add={group => void editGroup(group, "add")} dissolve={group => void editGroup(group, "dissolve")} /> : <div className={`gallery ${selecting ? "selecting" : ""}`}>{assets.map(asset => renderMedia(asset))}</div>;
   return <div className={`app ${scope === "hidden" ? "hidden-mode" : ""} ${assetView && (selecting || selected.size) ? "has-selection" : ""}`}>
@@ -445,7 +461,7 @@ function App() {
         <Nav icon={<Star size={18} />} label="星标" active={view === "starred"} count={info?.starred} click={() => navigate("starred")} />
       </nav>
       <div className="sidebar-section"><div className="sidebar-section-heading"><button onClick={() => navigate("collections")}>收藏集</button><button className="icon-button" aria-label="新建收藏集" onClick={() => setModal({ type: "entity", kind: "collections" })}><Plus size={14} /></button></div><div className="sidebar-entities">{collections.slice(0, 7).map(collection => <button key={collection.id} className={collectionId === collection.id ? "active" : ""} onClick={() => navigate("all", "", collection.id)}><Folder size={15} /><span>{collection.name}</span><small>{collection.count}</small></button>)}{!collections.length && <button className="sidebar-placeholder" onClick={() => setModal({ type: "entity", kind: "collections" })}>新建一个主题收藏集</button>}{collections.length > 7 && <button className="sidebar-more" onClick={() => navigate("collections")}>查看全部 <ChevronDown size={12} /></button>}</div></div>
-      <div className="sidebar-section"><div className="sidebar-section-heading"><button onClick={() => navigate("tags")}>标签</button><button className="icon-button" aria-label="新建标签" onClick={() => setModal({ type: "entity", kind: "tags" })}><Plus size={14} /></button></div><div className="sidebar-tag-list">{tags.slice(0, 10).map(tag => <button className={tagId === tag.id ? "active" : ""} key={tag.id} onClick={() => navigate("all", tag.id)}><span>{tag.name}</span></button>)}{!tags.length && <button className="sidebar-placeholder" onClick={() => setModal({ type: "entity", kind: "tags" })}>添加用途或主题标签</button>}{tags.length > 10 && <button className="sidebar-more" onClick={() => navigate("tags")}>全部标签</button>}</div></div>
+      <div className="sidebar-section"><div className="sidebar-section-heading"><button onClick={() => navigate("tags")}>标签</button><button className="icon-button" aria-label="新建标签" onClick={() => setModal({ type: "entity", kind: "tags" })}><Plus size={14} /></button></div><div className="sidebar-tag-list">{tags.slice(0, 10).map(tag => <TagChip className={tagId === tag.id ? "active" : ""} key={tag.id} tag={tag} cancelKey={tagDragKey} disabled={tagBusy} click={() => navigate("all", tag.id)} change={(id, tag, remove) => void changeTag(id, tag, remove)} />)}{!tags.length && <button className="sidebar-placeholder" onClick={() => setModal({ type: "entity", kind: "tags" })}>添加用途或主题标签</button>}{tags.length > 10 && <button className="sidebar-more" onClick={() => navigate("tags")}>全部标签</button>}</div></div>
       <div className="sidebar-bottom">{!!uploading && <button className="transfer-mini" onClick={() => setModal({ type: "upload" })}><Upload size={18} /><div><strong>{uploadState.paused ? "收集已暂停" : "正在收集素材"}</strong><small>{uploading} 个文件待完成</small></div></button>}<nav className="navigation secondary"><Nav icon={<Layers3 size={17} />} label="任务中心" active={view === "jobs"} count={(info?.queued || 0) + (info?.errors || 0) || undefined} click={() => navigate("jobs")} /><Nav icon={<Trash2 size={17} />} label="回收站" active={view === "trash"} count={info?.trash || undefined} click={() => navigate("trash")} /></nav><div className="sidebar-storage"><span className="mode-dot" /><span>{info ? `${info.total.toLocaleString()} 个素材 · ${bytes(info.bytes)}` : "连接素材库…"}</span></div></div>
     </aside>
     <main className="main"><header className="topbar"><div className="breadcrumb"><button className="icon-button mobile-menu" aria-label="打开导航" onClick={() => setSidebarOpen(true)}><Menu size={22} /></button><span className="desktop-label">视觉收藏库</span><span className="crumb-separator">/</span><span>{title}</span></div><div className="top-actions"><label className="search"><Search size={16} /><input type="search" value={query} onChange={event => { setQuery(event.target.value); if (!assetView) navigate("all"); }} placeholder="搜索名称、标签、备注" aria-label="搜索素材" />{query && <button className="icon-button" aria-label="清空搜索" onClick={() => setQuery("")}><X size={14} /></button>}</label><button className="button primary collect-button" onClick={() => setModal({ type: "upload" })}><Plus size={17} /><span>收集素材</span></button></div></header>
@@ -470,9 +486,9 @@ function App() {
         {collectionId && <><button className="button group-create" title="将所选素材组成无名称的分组" disabled={busy || loading || selected.size < 2 || selected.size > 2000} onClick={() => void editGroup(null, "create")}><Group size={15} />组成一组</button>{selectedInGroups && <button className="button" disabled={busy || loading} onClick={() => void editGroup(null, "remove")}><Ungroup size={15} />移出分组</button>}</>}
         <button className="button" disabled={busy} onClick={() => setModal({ type: "organize", ids: [...selected] })}><Tag size={15} /><span>整理</span></button>{(collectionId || tagId) && <button className="button" title="仅移除当前关联，保留素材与其他标签、收藏集" disabled={busy} onClick={() => void patch([...selected], collectionId ? { removeCollectionIds: [collectionId] } : { removeTagIds: [tagId] }, collectionId ? "已移出当前收藏集" : "已移出当前标签")}><Unlink size={15} />{collectionId ? "移出当前收藏集" : "移出当前标签"}</button>}<button className="icon-button" title={selectedAreStarred ? "取消星标" : "添加星标"} aria-label={selectedAreStarred ? "取消星标" : "添加星标"} disabled={busy} onClick={() => void patch([...selected], { starred: !selectedAreStarred }, "星标已更新")}><Star size={17} /></button><button className="icon-button" title="单独隐藏" aria-label="单独隐藏" disabled={busy} onClick={() => void patch([...selected], { hidden: true }, "已标记隐藏")}><EyeOff size={17} /></button><button className="icon-button" title="取消单独隐藏" aria-label="取消单独隐藏" disabled={busy} onClick={() => void patch([...selected], { hidden: false }, "已取消单独隐藏；标签或收藏集的隐藏仍会生效")}><Eye size={17} /></button><a className="icon-button" title="打包下载" aria-label="打包下载" href={`${base}api/download?ids=${[...selected].join(",")}`}><Download size={17} /></a><button className="icon-button danger" title="移入回收站" aria-label="移入回收站" disabled={busy} onClick={() => void patch([...selected], { trash: true }, "已移入回收站")}><Trash2 size={17} /></button></> : <><button className="button" disabled={busy} onClick={() => void patch([...selected], { trash: false }, "素材已恢复")}><RotateCw size={15} />恢复</button><button className="button danger" disabled={busy} onClick={() => setModal({ type: "purge", ids: [...selected] })}><Trash2 size={15} />永久删除</button></>}</>}
     </div>}
-    {viewer && <Viewer asset={viewer} scope={scope} tags={tags} collections={collections} close={() => setViewer(null)} previous={viewerIndex > 0 ? () => setViewer(galleryAssets[viewerIndex - 1]) : undefined} next={viewerIndex >= 0 && viewerIndex < galleryAssets.length - 1 ? () => setViewer(galleryAssets[viewerIndex + 1]) : undefined} changed={changed} notify={notify} />}
+    {viewer && <Viewer asset={viewer} scope={scope} tags={tags} collections={collections} close={() => setViewer(null)} previous={viewerIndex > 0 ? () => setViewer(galleryAssets[viewerIndex - 1]) : undefined} next={viewerIndex >= 0 && viewerIndex < galleryAssets.length - 1 ? () => setViewer(galleryAssets[viewerIndex + 1]) : undefined} changed={changed} notify={notify} tagDragKey={tagDragKey} tagBusy={tagBusy} changeTag={(id, tag, remove) => void changeTag(id, tag, remove)} />}
     {modal?.type === "upload" && <UploadPanel scope={scope} close={() => setModal(null)} pick={() => picker.current?.click()} folder={() => folderPicker.current?.click()} />}
-    {modal?.type === "entity" && <EntityEditor kind={modal.kind} entity={modal.entity} scope={scope} close={() => setModal(null)} saved={() => { changed(); setModal(null); notify("已保存"); }} />}
+    {modal?.type === "entity" && <EntityEditor kind={modal.kind} entity={modal.entity} scope={scope} close={() => setModal(null)} saved={() => { changed(); setModal(null); notify("已保存"); }} remove={modal.entity && modal.kind === "collections" ? () => setModal({ type: "remove-entity", kind: modal.kind, entity: modal.entity! }) : undefined} />}
     {modal?.type === "organize" && <Organize ids={modal.ids} tags={tags} collections={collections} close={() => setModal(null)} save={async value => { await api(scoped("assets", scope), { ids: modal.ids, ...value }, "PATCH"); setModal(null); setSelected(new Set()); changed(); notify("标签与收藏集已更新"); }} />}
     {modal?.type === "purge" && <Purge count={modal.ids.length} close={() => setModal(null)} confirm={async () => { await api("assets/purge", { ids: modal.ids, confirm: true }); setModal(null); setSelected(new Set()); changed(); notify("永久删除已提交"); }} />}
     {modal?.type === "remove-entity" && <RemoveEntity kind={modal.kind} entity={modal.entity} close={() => setModal(null)} confirm={async () => { await api(`${modal.kind}/${modal.entity.id}`, undefined, "DELETE"); setModal(null); if (tagId === modal.entity.id || collectionId === modal.entity.id) navigate("all"); changed(); notify("已移除，不影响原件"); }} />}
@@ -496,7 +512,7 @@ function EntityGrid({ items, kind, open, edit, remove, create }: { items: Entity
   if (!items.length) return <Empty icon={kind === "collections" ? <Folder size={32} strokeWidth={1.3} /> : <Tag size={32} strokeWidth={1.3} />} title={kind === "collections" ? "还没有收藏集" : "还没有标签"} description={kind === "collections" ? "把同一个游戏、角色或主题的素材放在一起。" : "用头像、壁纸、梗图等标签标记用途，同一素材可以有多个标签。"}><button className="button primary" onClick={create}><Plus size={15} />新建{kind === "collections" ? "收藏集" : "标签"}</button></Empty>;
   return <div className={`entity-grid ${kind}`}>{items.map(entity => <article className="entity-card" key={entity.id}><button className="entity-open" onClick={() => open(entity)}><div className="entity-cover">{entity.coverUrl ? <img src={entity.coverUrl} alt="" loading="lazy" /> : kind === "collections" ? <Folder size={35} strokeWidth={1.2} /> : <Tag size={30} strokeWidth={1.2} />}</div><div className="entity-card-info"><h2>{entity.name}</h2><span>{entity.count} 个素材</span></div></button><div className="entity-actions"><button className="icon-button" aria-label={`编辑 ${entity.name}`} title="编辑" onClick={() => edit(entity)}><MoreHorizontal size={17} /></button><button className="icon-button" aria-label={`移除 ${entity.name}`} title="移除" onClick={() => remove(entity)}><Trash2 size={15} /></button></div></article>)}</div>;
 }
-function EntityEditor({ kind, entity, scope, close, saved }: { kind: "tags" | "collections"; entity?: Entity; scope: Scope; close: () => void; saved: () => void }) {
+function EntityEditor({ kind, entity, scope, close, saved, remove }: { kind: "tags" | "collections"; entity?: Entity; scope: Scope; close: () => void; saved: () => void; remove?: () => void }) {
   const [name, setName] = useState(entity?.name || "");
   const [hidden, setHidden] = useState(entity?.hidden ?? scope === "hidden");
   const [busy, setBusy] = useState(false);
@@ -509,7 +525,7 @@ function EntityEditor({ kind, entity, scope, close, saved }: { kind: "tags" | "c
     catch (error) { setError(error instanceof Error ? error.message : String(error)); }
     finally { setBusy(false); }
   }
-  return <Dialog title={`${entity ? "编辑" : "新建"}${label}`} close={close}><form className="metadata-form" onSubmit={event => { event.preventDefault(); void save(); }}><label>名称<input value={name} onChange={event => setName(event.target.value)} maxLength={200} placeholder={kind === "collections" ? "例如：桌面壁纸、某款游戏" : "例如：头像、梗图"} /></label><div className="form-switches"><label><input type="checkbox" checked={hidden} onChange={event => setHidden(event.target.checked)} />隐藏此{label}</label></div><p className="form-help">隐藏后，关联的全部素材都会进入隐藏模式，即使它们同时属于其他普通{label}。</p>{error && <div className="inline-error">{error}</div>}<footer className="dialog-footer"><button type="button" className="button" onClick={close}>取消</button><button className="button primary" type="submit" disabled={!name.trim() || busy}>{busy ? <RotateCw size={15} className="spin" /> : <Check size={15} />}保存</button></footer></form></Dialog>;
+  return <Dialog title={`${entity ? "编辑" : "新建"}${label}`} close={close}><form className="metadata-form" onSubmit={event => { event.preventDefault(); void save(); }}><label>名称<input value={name} onChange={event => setName(event.target.value)} maxLength={200} placeholder={kind === "collections" ? "例如：桌面壁纸、某款游戏" : "例如：头像、梗图"} /></label><div className="form-switches"><label><input type="checkbox" checked={hidden} onChange={event => setHidden(event.target.checked)} />隐藏此{label}</label></div><p className="form-help">隐藏后，关联的全部素材都会进入隐藏模式，即使它们同时属于其他普通{label}。</p>{error && <div className="inline-error">{error}</div>}<footer className="dialog-footer">{remove && <button type="button" className="button danger entity-delete" disabled={busy} onClick={remove}><Trash2 size={15} />删除收藏集</button>}<button type="button" className="button" onClick={close}>取消</button><button className="button primary" type="submit" disabled={!name.trim() || busy}>{busy ? <RotateCw size={15} className="spin" /> : <Check size={15} />}保存</button></footer></form></Dialog>;
 }
 function Organize({ ids, tags, collections, close, save }: { ids: string[]; tags: Entity[]; collections: Entity[]; close: () => void; save: (value: Patch) => Promise<void> }) {
   const [tagIds, setTagIds] = useState<string[]>([]);
@@ -537,7 +553,7 @@ function Purge({ count, close, confirm }: { count: number; close: () => void; co
 function RemoveEntity({ kind, entity, close, confirm }: { kind: "tags" | "collections"; entity: Entity; close: () => void; confirm: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  return <Dialog title={`移除${kind === "tags" ? "标签" : "收藏集"}`} close={close}><div className="confirm-content"><p>移除“{entity.name}”及其关联，不会删除任何素材原件。</p>{entity.hidden && <p className="muted">仅通过它继承隐藏的素材，将恢复为普通模式可见。</p>}{error && <div className="inline-error">{error}</div>}</div><footer className="dialog-footer"><button className="button" onClick={close}>取消</button><button className="button danger" disabled={busy} onClick={async () => { setBusy(true); try { await confirm(); } catch (error) { setError(error instanceof Error ? error.message : String(error)); setBusy(false); } }}>确认移除</button></footer></Dialog>;
+  return <Dialog title={kind === "tags" ? "移除标签" : "删除收藏集"} close={close}><div className="confirm-content"><p>{kind === "tags" ? "移除" : "删除"}“{entity.name}”及其关联{kind === "collections" ? "、内部的分组" : ""}，不会删除任何素材原件。</p>{entity.hidden && <p className="muted">仅通过它继承隐藏的素材，将恢复为普通模式可见。</p>}{error && <div className="inline-error">{error}</div>}</div><footer className="dialog-footer"><button className="button" onClick={close}>取消</button><button className="button danger" disabled={busy} onClick={async () => { setBusy(true); try { await confirm(); } catch (error) { setError(error instanceof Error ? error.message : String(error)); setBusy(false); } }}>{kind === "tags" ? "确认移除" : "确认删除"}</button></footer></Dialog>;
 }
 function Jobs({ items, retry, open }: { items: Job[]; retry: (ids: string[]) => Promise<void>; open: (id: string) => Promise<void> }) {
   const [filter, setFilter] = useState("all");
