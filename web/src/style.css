@@ -349,6 +349,13 @@ input[type="search"]::-webkit-search-cancel-button { display: none; }
 .tank-controls input[type="range"] { padding: 0; height: 20px; accent-color: #7e9965; }
 .tank-controls .tank-value { font-variant-numeric: tabular-nums; }
 .tank-controls .form-help { margin: 0; line-height: 1.7; }
+.tank-analysis { display: grid; gap: 9px; padding: 12px; border: 1px solid #dce6ce; border-radius: 8px; background: #f0f5e9; }
+.tank-analysis > strong { color: #687d52; font-size: 11px; line-height: 1.6; }
+.tank-candidates { display: grid; gap: 6px; }
+.tank-candidate { display: grid; gap: 4px; padding: 9px; border: 1px solid #dce6ce; border-radius: 6px; background: #f8fcee; color: #6d7b59; text-align: left; }
+.tank-candidate strong { font-size: 10px; }
+.tank-candidate span { font-size: 9px; font-variant-numeric: tabular-nums; }
+.tank-candidate.is-selected { border-color: #93aa7a; background: #e2ecd5; }
 .tank-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
 .tank-credit { color: #6d7b59; font-size: 10px; text-align: center; }
 @media (max-width: 700px) {

@@ -1,5 +1,6 @@
 import { adjustTankContrast, decodeTankCPU, resizeTankPreview, tankPreviewEdge, TankOptions } from "./tank-decode";
 import { TankGPU } from "./tank-decode-gpu";
+import { analyzeTank } from "./tank-analysis";
 
 let pixels: Uint8ClampedArray;
 let width: number;
@@ -14,8 +15,9 @@ self.onmessage = (event: MessageEvent) => {
       pixels = event.data.pixels;
       width = event.data.width;
       height = event.data.height;
+      const analysis = analyzeTank(pixels, width, height, event.data.preset);
       try { gpu = new TankGPU(width, event.data.height, pixels); } catch { gpu = null; }
-      self.postMessage({ type: "ready" });
+      self.postMessage({ type: "ready", analysis });
       return;
     }
     if (gpu && (options.mode !== "prism" || options.fill !== "lcopy" && options.fill !== "tcopy")) {

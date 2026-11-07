@@ -4,6 +4,7 @@ import { Asset } from "./api";
 import { Dialog } from "./components";
 import { ImageViewer } from "./ImageViewer";
 import { readTankPreset, tankDefaults, tankMaxBytes, tankMaxPixels, tankPreviewEdge, TankOptions } from "./tank-decode";
+import { TankAnalysis } from "./tank-analysis";
 import thirdPartyNotices from "../../docs/THIRD_PARTY_NOTICES.md?raw";
 
 export function canDecodeTank(asset: Asset) {
@@ -23,7 +24,8 @@ export function TankDecoder({ asset, close }: { asset: Asset; close: () => void 
   const [options, setOptions] = useState<TankOptions>({ ...tankDefaults });
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
-  const [preset, setPreset] = useState(false);
+  const [analysis, setAnalysis] = useState<TankAnalysis>();
+  const [activated, setActivated] = useState(false);
   const [compare, setCompare] = useState(false);
   const [original, setOriginal] = useState("");
   const [result, setResult] = useState<{ pixels?: ImageData; bitmap?: ImageBitmap }>();
@@ -35,6 +37,7 @@ export function TankDecoder({ asset, close }: { asset: Asset; close: () => void 
     request.current++;
     pending.current = null;
     setOptions(value => ({ ...value, ...patch }));
+    setActivated(true); setCompare(false);
     setError("");
   }
   function dispatch() {
@@ -44,7 +47,15 @@ export function TankDecoder({ asset, close }: { asset: Asset; close: () => void 
     pending.current = null;
   }
   const message = useEffectEvent((event: MessageEvent) => {
-    if (event.data.type === "ready") { setReady(true); return; }
+    if (event.data.type === "ready") {
+      const analysis = event.data.analysis as TankAnalysis;
+      const automatic = analysis.confidence !== "uncertain";
+      setAnalysis(analysis);
+      setOptions(analysis.candidates[0].options);
+      setActivated(automatic); setCompare(!automatic); setReady(true);
+      return;
+    }
+    if (event.data.type === "error" && !ready) { setError(`图片分析失败：${event.data.error}`); return; }
     // Keep only the latest pending parameters while one full-size decode is running.
     const operation = inFlight.current;
     inFlight.current = null;
@@ -145,14 +156,13 @@ export function TankDecoder({ asset, close }: { asset: Asset; close: () => void 
           const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
           canvas.width = canvas.height = 0;
           setDimensions({ width: bitmap.width, height: bitmap.height });
-          if (metadata) { setOptions(value => ({ ...value, ...metadata })); setPreset(true); }
           originalUrl = URL.createObjectURL(blob);
           setOriginal(originalUrl);
           const instance = new Worker(new URL("./tank-decode.worker.ts", import.meta.url), { type: "module" });
           worker.current = instance;
           instance.onmessage = message;
           instance.onerror = () => { setError("显形处理器启动失败，请关闭后重试"); setReady(false); exportRequested.current = false; setExporting(false); };
-          instance.postMessage({ type: "init", width: bitmap.width, height: bitmap.height, pixels }, [pixels.buffer]);
+          instance.postMessage({ type: "init", width: bitmap.width, height: bitmap.height, pixels, preset: metadata }, [pixels.buffer]);
         } finally { bitmap.close(); }
       } catch (error) {
         if (!abort.signal.aborted) setError(error instanceof Error ? error.message : String(error));
@@ -168,31 +178,41 @@ export function TankDecoder({ asset, close }: { asset: Asset; close: () => void 
     };
   }, [asset.id]);
   useEffect(() => {
-    if (!ready || exportRequested.current) return;
+    if (!ready || !activated || exportRequested.current) return;
     const id = ++request.current;
     pending.current = { type: "decode", id, options };
     const frame = window.requestAnimationFrame(dispatch);
     return () => window.cancelAnimationFrame(frame);
-  }, [ready, options]);
+  }, [ready, activated, options]);
   const viewingAsset = { ...asset, ...dimensions, hasAlpha: compare ? asset.hasAlpha : options.mode === "prism", previewUrl: original || asset.previewUrl };
   return <Dialog title="坦克显形" close={close} wide>
     <div className="tank-decoder">
       <div className="tank-preview">
         <ImageViewer asset={viewingAsset} sourceOverride={original || undefined} pixels={compare ? undefined : result?.pixels} bitmap={compare ? undefined : result?.bitmap} />
-        <div className="tank-preview-status" role="status">{compare ? "原图" : result ? `快速预览 · 浏览器 ${engine}` : error ? "原图" : <><RotateCw size={12} className="spin" />{ready ? "正在生成预览" : "正在读取原图"}</>}</div>
+        <div className="tank-preview-status" role="status">{compare ? "原图" : result ? `快速预览 · 浏览器 ${engine}` : error ? "原图" : <><RotateCw size={12} className="spin" />{ready ? "正在生成预览" : original ? "正在分析图片" : "正在读取原图"}</>}</div>
       </div>
       <div className="tank-controls">
         <p className="form-help">在本机浏览器中读取原件并显形，不向第三方发送图片，也不修改素材。</p>
+        <div className="tank-analysis">
+          <strong>{analysis?.summary || "正在分析图片特征"}</strong>
+          <p className="form-help">{analysis ? analysis.confidence === "uncertain" ? "首次保留原图。以下候选仅供试用，也可手动调节。" : "打开时已应用首选参数。可试用其他候选或手动调节。" : "优先读取内嵌参数，再分析原始像素；只在打开时运行。"}</p>
+          {analysis && <div className="tank-candidates">{analysis.candidates.map((candidate, index) => {
+            const selected = activated && (Object.keys(tankDefaults) as (keyof TankOptions)[]).every(key => options[key] === candidate.options[key]);
+            return <button key={index} className={`tank-candidate ${selected ? "is-selected" : ""}`} disabled={!ready || exporting} aria-pressed={selected} onClick={() => update(candidate.options)}>
+              <strong>{candidate.label}{index === 0 && analysis.confidence !== "uncertain" ? " · 首选" : ""}</strong>
+              <span>{candidate.options.mode === "prism" ? `色阶 ${candidate.options.lower}–${candidate.options.upper} · ` : ""}对比度 {Math.round(candidate.options.contrast)}</span>
+            </button>;
+          })}</div>}
+        </div>
         <label>显形方式<select value={options.mode} disabled={!ready || exporting} onChange={event => update({ mode: event.target.value as TankOptions["mode"] })}><option value="prism">光棱坦克（Prism 色阶）</option><option value="black">幻影坦克（黑底）</option><option value="white">幻影坦克（白底）</option></select></label>
         {options.mode === "prism" ? <>
-          <p className="form-help">{preset ? "已读取图片内的 Prism 显形参数。" : "未找到显形参数，先使用 0–24 色阶；可手动调整。"}</p>
           <label>色阶下限 <span className="tank-value">{options.lower}</span><input type="range" min={0} max={options.upper - 1} value={options.lower} disabled={!ready || exporting} onInput={event => update({ lower: Number(event.currentTarget.value) })} /></label>
           <label>色阶上限 <span className="tank-value">{options.upper}</span><input type="range" min={options.lower + 1} max={255} value={options.upper} disabled={!ready || exporting} onInput={event => update({ upper: Number(event.currentTarget.value) })} /></label>
           <label>表图填充<select value={options.fill} disabled={!ready || exporting} onChange={event => update({ fill: event.target.value as TankOptions["fill"] })}><option value="ltavg">邻域填充</option><option value="black">黑色</option><option value="white">白色</option><option value="transparent">透明</option><option value="lcopy">复制左侧像素</option><option value="tcopy">复制上方像素</option></select></label>
           {options.fill === "ltavg" && <label>填充轮数 <span className="tank-value">{options.iterations}</span><input type="range" min={0} max={32} value={options.iterations} disabled={!ready || exporting} onInput={event => update({ iterations: Number(event.currentTarget.value) })} /></label>}
         </> : <p className="form-help">用纯{options.mode === "black" ? "黑" : "白"}色合成透明像素，查看传统幻影坦克的另一幅图。</p>}
         <label>对比度 <span className="tank-value">{Math.round(options.contrast)}</span><input type="range" min={-255} max={255} value={options.contrast} disabled={!ready || exporting} onInput={event => update({ contrast: Number(event.currentTarget.value) })} /></label>
-        <div className="tank-buttons"><button className="button" disabled={!original} aria-pressed={compare} onClick={() => setCompare(!compare)}>{compare ? "查看显形" : "对比原图"}</button><button className="button subtle" disabled={!ready || exporting} onClick={() => update({ ...tankDefaults })}>重置参数</button></div>
+        <div className="tank-buttons"><button className="button" disabled={!original || !result} aria-pressed={compare} onClick={() => setCompare(!compare)}>{compare ? "查看显形" : "对比原图"}</button><button className="button subtle" disabled={!ready || exporting} onClick={() => update(analysis && analysis.confidence !== "uncertain" ? analysis.candidates[0].options : { ...tankDefaults })}>{analysis && analysis.confidence !== "uncertain" ? "恢复推荐" : "重置参数"}</button></div>
         {engine === "CPU" && options.mode === "prism" && options.fill === "ltavg" && <p className="form-help">当前使用 CPU 兼容填充：逐像素平均左上邻域，不使用填充轮数。</p>}
         {error && <div className="inline-error" role="alert">{error}</div>}
         <p className="form-help">仅处理静态位图，最多 64 MiB / 1600 万像素。压缩或缩放过的图片可能无法恢复里图。</p>
