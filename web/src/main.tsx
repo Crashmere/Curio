@@ -40,6 +40,9 @@ function App() {
   const [collections, setCollections] = useState<Entity[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
+  const contentKey = JSON.stringify([scope, view, tagId, collectionId]);
+  const [loadedKey, setLoadedKey] = useState("");
+  const contentReady = loadedKey === contentKey;
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
@@ -251,6 +254,7 @@ function App() {
         ]);
         const prepared = assetView && content && "total" in content ? await prepareGroupMedia(content.items, groupList.items, assetPath(), controller.signal) : {};
         if (controller.signal.aborted) return;
+        setLoadedKey(contentKey);
         setInfo(information); setTags(tagList.items || []); setCollections(collectionList.items || []);
         setGroups(groupList.items);
         setGroupPages(prepared);
@@ -305,7 +309,7 @@ function App() {
     return () => clearInterval(timer);
   }, [info?.queued]);
   async function loadMore() {
-    if (nextOffset === null || nextOffset === undefined || loadingMore || selectingAll || busy) return;
+    if (nextOffset === null || nextOffset === undefined || loading || error || loadingMore || selectingAll || busy) return;
     setLoadingMore(true);
     const token = pageToken.current;
     try {
@@ -503,14 +507,15 @@ function App() {
           {filterOpen && <FilterPanel value={filters} change={setFilters} clear={() => setFilters(emptyFilter)} />}
           {!!activeFilters.filter(([key]) => key !== "kind").length && <div className="active-filters">{activeFilters.filter(([key]) => key !== "kind").map(([key, value]) => <button key={key} onClick={() => setFilters({ ...filters, [key]: "" })}>{filterLabel(key, value)}<X size={11} /></button>)}<button className="clear" onClick={() => setFilters({ ...emptyFilter, kind: filters.kind })}>清除筛选</button></div>}
         </>}
-        {error ? <Empty icon={<CircleAlert size={30} />} title="暂时无法读取素材库" description={error}><button className="button" onClick={changed}><RotateCw size={15} />重试</button></Empty> : loading && (!assets.length || collectionId) && assetView ? <div className="skeleton-gallery" style={{ "--tile-width": `${density}px` } as CSSProperties}>{Array.from({ length: 12 }, (_, index) => <div key={index} style={{ aspectRatio: [0.85, 1.25, 1, 0.68][index % 4] }} />)}</div> : assetView ? assets.length ? <>
+        {error && contentReady && <div className="inline-error" role="alert">更新失败，仍显示上次内容：{error} <button className="button" onClick={changed}>重试</button></div>}
+        {error && !contentReady ? <Empty icon={<CircleAlert size={30} />} title="暂时无法读取素材库" description={error}><button className="button" onClick={changed}><RotateCw size={15} />重试</button></Empty> : loading && !contentReady && assetView ? <div className="skeleton-gallery" style={{ "--tile-width": `${density}px` } as CSSProperties}>{Array.from({ length: 12 }, (_, index) => <div key={index} style={{ aspectRatio: [0.85, 1.25, 1, 0.68][index % 4] }} />)}</div> : assetView ? assets.length ? <>
           {collectionId && !groups.length && <p className="group-help"><Layers3 size={13} />选中多个素材，即可组成一组，无需命名。</p>}
-          <div style={{ "--tile-width": `${density}px` } as CSSProperties}>{gallery}</div>
-          {nextOffset !== null && nextOffset !== undefined && nextOffset < total && <div className="load-more"><button className="button" onClick={() => void loadMore()} disabled={loadingMore}>{loadingMore && <RotateCw size={15} className="spin" />}加载更多 {!collectionId && <span>{assets.length} / {total}</span>}</button></div>}
+          <div className="gallery-results" aria-busy={loading} inert={loading || !!error} style={{ "--tile-width": `${density}px` } as CSSProperties}>{gallery}</div>
+          {nextOffset !== null && nextOffset !== undefined && nextOffset < total && <div className="load-more"><button className="button" onClick={() => void loadMore()} disabled={loading || !!error || loadingMore}>{loadingMore && <RotateCw size={15} className="spin" />}加载更多 {!collectionId && <span>{assets.length} / {total}</span>}</button></div>}
         </> : <Empty icon={view === "trash" ? <Trash2 size={30} /> : search || activeFilters.length ? <Search size={30} /> : view === "inbox" ? <Inbox size={30} /> : view === "starred" ? <Star size={30} /> : <Image size={32} strokeWidth={1.3} />} title={search || activeFilters.length ? "没有找到匹配的素材" : view === "trash" ? "回收站是空的" : view === "inbox" ? "没有待整理的素材" : view === "starred" ? "还没有星标素材" : scope === "hidden" ? "隐藏模式暂无素材" : activeEntity ? "这里还没有素材" : "开始你的视觉收藏"} description={search || activeFilters.length ? "试试其他关键词，或减少筛选条件。" : view === "trash" ? "移除的素材会先保留在这里，可以随时恢复。" : view === "starred" ? "给常用或喜欢的素材添加星标，方便再次找到。" : view === "inbox" ? "没有标签或收藏集的素材会显示在这里，添加任意一个即可完成整理。" : "图标、头像、壁纸、梗图、截图和录像，都可以收集到这里。"}>{!["trash", "starred"].includes(view) && !search && !activeFilters.length && <button className="button primary" onClick={() => setModal({ type: "upload" })}><Plus size={17} />收集素材</button>}</Empty> : view === "collections" || view === "tags" ? <EntityGrid items={view === "collections" ? collections : tags} kind={view} open={entity => navigate("all", view === "tags" ? entity.id : "", view === "collections" ? entity.id : "")} edit={entity => setModal({ type: "entity", kind: view, entity })} remove={entity => setModal({ type: "remove-entity", kind: view, entity })} create={() => setModal({ type: "entity", kind: view })} /> : <Jobs items={jobs} retry={retry} open={async id => { try { setViewer(await api<Asset>(scoped(`assets/${id}`, scope))); } catch (error) { notify(error instanceof Error ? error.message : String(error)); } }} />}
       </div>
     </main>
-    {assetView && (selecting || !!selected.size) && <div className="selection-bar">
+    {assetView && (selecting || !!selected.size) && <div className="selection-bar" inert={loading || !!error || !contentReady}>
       <button className="icon-button" aria-label="退出选择" title="退出选择 (Esc)" onClick={exitSelection}><X size={17} /></button>
       <strong>已选 {selected.size} 项</strong>
       <button className="button subtle" title="全选当前筛选结果，包含尚未加载的素材" disabled={loading || loadingMore || selectingAll || busy || !total || !!error} onClick={() => void selectAll()}>{selectingAll ? <><RotateCw size={14} className="spin" />正在全选</> : allSelected ? "取消全选" : "全选"}</button>
