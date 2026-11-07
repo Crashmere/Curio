@@ -148,6 +148,7 @@ input[type="search"]::-webkit-search-cancel-button { display: none; }
 .group-member .media-caption, .group-member .media-memberships { cursor: pointer; }
 .group-member::before { content: ""; position: absolute; inset: -2px auto auto -2px; width: 14px; height: 14px; border-top: 1px solid #b99c7270; border-left: 1px solid #b99c7270; border-radius: 8px 0 0; pointer-events: none; }
 .selection-bar .group-create { background: var(--accent-soft); border-color: #d5c2a7; color: var(--accent-dark); }
+.group-formation-ghost { position: absolute; z-index: 11; display: block; pointer-events: none; object-fit: cover; border-radius: 9px; box-shadow: 0 4px 16px #5e4b2b20; transform-origin: 0 0; }
 @keyframes group-reveal { from { transform: translateY(6px) scale(.99); } to { transform: none; } }
 @keyframes group-fold { from { opacity: 0; transform: translateY(4px) scale(.96); } to { opacity: 1; transform: none; } }
 .media-card { position: relative; break-inside: avoid; margin-bottom: 15px; border-radius: 9px; contain-intrinsic-size: auto 250px; content-visibility: auto; }

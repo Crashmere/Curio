@@ -1,7 +1,7 @@
 import { CSSProperties, MouseEvent, ReactNode } from "react";
 import { Check, Image, Layers3, Plus, Ungroup } from "lucide-react";
 import { Asset, AssetPage, base, MediaGroup } from "./api";
-import { MasonryGallery } from "./MasonryGallery";
+import { GroupFormation, MasonryGallery } from "./MasonryGallery";
 
 export type GalleryEntry = { asset: Asset; group?: undefined } | { group: MediaGroup; items: Asset[]; asset?: undefined };
 
@@ -22,8 +22,8 @@ export function collectionEntries(assets: Asset[], groups: MediaGroup[], pages: 
   return entries;
 }
 
-export function CollectionGallery({ entries, expanded, selected, selecting, busy, render, toggle, selectGroup, add, dissolve }: {
-  entries: GalleryEntry[]; expanded: Set<string>;
+export function CollectionGallery({ entries, expanded, formation, selected, selecting, busy, render, toggle, selectGroup, add, dissolve }: {
+  entries: GalleryEntry[]; expanded: Set<string>; formation?: GroupFormation;
   selected: Set<string>; selecting: boolean; busy: boolean; render: (asset: Asset, groupOpen?: boolean) => ReactNode;
   toggle: (group: MediaGroup) => void; selectGroup: (group: MediaGroup) => void;
   add: (group: MediaGroup) => void; dissolve: (group: MediaGroup) => void;
@@ -34,7 +34,7 @@ export function CollectionGallery({ entries, expanded, selected, selecting, busy
     if (event.target instanceof Element && event.target.closest("button, a, .group-actions")) return;
     toggle(group);
   }
-  return <MasonryGallery>{entries.flatMap(entry => {
+  return <MasonryGallery formation={formation}>{entries.flatMap(entry => {
     if (entry.asset) return [render(entry.asset)];
     const { group, items } = entry;
     const open = expanded.has(group.id);
