@@ -6,7 +6,7 @@ type Point = { x: number; y: number };
 type Transform = Point & { scale: number | null };
 const clamp = (value: number, limit: number) => Math.max(-limit, Math.min(limit, value));
 
-export function ImageViewer({ asset }: { asset: Asset }) {
+export function ImageViewer({ asset, sourceOverride }: { asset: Asset; sourceOverride?: string }) {
   const stage = useRef<HTMLDivElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const pointers = useRef(new Map<number, Point>());
@@ -21,7 +21,7 @@ export function ImageViewer({ asset }: { asset: Asset }) {
   const [requestOriginal, setRequestOriginal] = useState(false);
   const [previewFailed, setPreviewFailed] = useState(false);
   const format = (asset.format || asset.name.split(".").pop() || "").toLowerCase();
-  const canLoadOriginal = asset.kind === "image" && /^(jpe?g|png|webp|avif|gif|bmp|ico|apng)$/.test(format) && asset.mime !== "image/svg+xml" && !!asset.originalUrl;
+  const canLoadOriginal = !sourceOverride && asset.kind === "image" && /^(jpe?g|png|webp|avif|gif|bmp|ico|apng)$/.test(format) && asset.mime !== "image/svg+xml" && !!asset.originalUrl;
   const ready = size.width > 0 && size.height > 0 && area.width > 0 && area.height > 0;
   const fit = ready ? Math.min(format === "svg" ? Infinity : 1, area.width / size.width, area.height / size.height) : 1;
   const minimum = Math.min(fit, 0.1);
@@ -83,7 +83,7 @@ export function ImageViewer({ asset }: { asset: Asset }) {
     if (needsOriginal && canLoadOriginal) setRequestOriginal(true);
   }, [needsOriginal, canLoadOriginal]);
   useEffect(() => {
-    if (!requestOriginal) return;
+    if (!requestOriginal || sourceOverride) return;
     let active = true;
     const original = new Image();
     setQuality("loading");
@@ -96,13 +96,13 @@ export function ImageViewer({ asset }: { asset: Asset }) {
     original.onerror = () => { if (active) setQuality("fallback"); };
     original.src = asset.originalUrl;
     return () => { active = false; original.onload = null; original.onerror = null; original.src = ""; };
-  }, [requestOriginal, asset.originalUrl]);
+  }, [requestOriginal, asset.originalUrl, sourceOverride]);
 
   function release(pointerId: number) {
     pointers.current.delete(pointerId);
     setDragging(pointers.current.size > 0);
   }
-  const source = quality === "original" ? asset.originalUrl : asset.previewUrl;
+  const source = sourceOverride || (quality === "original" ? asset.originalUrl : asset.previewUrl);
   return <>
     <div ref={stage} className={`media-stage image-stage ${asset.hasAlpha ? background : "neutral"} ${dragging ? "is-dragging" : ""} ${zoomed ? "is-zoomed" : ""}`}>
       <div ref={viewport} className="image-viewport"
@@ -129,7 +129,7 @@ export function ImageViewer({ asset }: { asset: Asset }) {
           }
         }}
         onPointerUp={event => release(event.pointerId)} onPointerCancel={event => release(event.pointerId)} onLostPointerCapture={event => release(event.pointerId)}>
-        {source && (!previewFailed || quality === "original") ? <img className="viewer-image" src={source} alt={asset.title || asset.name} draggable={false}
+        {source && (sourceOverride || !previewFailed || quality === "original") ? <img className="viewer-image" src={source} alt={asset.title || asset.name} draggable={false}
           onLoad={event => {
             const dimensions = { width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight };
             if (!size.width || !size.height) setSize(dimensions);
@@ -139,7 +139,7 @@ export function ImageViewer({ asset }: { asset: Asset }) {
           style={{ width: size.width || undefined, height: size.height || undefined, visibility: ready ? "visible" : "hidden", transform: `translate(-50%, -50%) translate(${view.x}px, ${view.y}px) scale(${scale})` }} />
           : <div className="preview-pending"><RotateCw size={30} className={asset.status === "error" || previewFailed ? "" : "spin"} /><strong>{previewFailed ? "预览暂不可用" : asset.status === "error" ? "预览处理失败" : "预览正在准备"}</strong><span>原件已保存，可以先下载使用。</span></div>}
       </div>
-      {(zoomed || quality === "loading" || quality === "fallback") && source && <div className="image-quality" role="status">{quality === "loading" ? <><RotateCw size={12} className="spin" />正在加载原图</> : quality === "fallback" ? "预览图 · 原图不可用" : quality === "original" || asset.kind === "animation" ? "原图" : !canLoadOriginal ? "兼容预览" : "预览图"}</div>}
+      {!sourceOverride && (zoomed || quality === "loading" || quality === "fallback") && source && <div className="image-quality" role="status">{quality === "loading" ? <><RotateCw size={12} className="spin" />正在加载原图</> : quality === "fallback" ? "预览图 · 原图不可用" : quality === "original" || asset.kind === "animation" ? "原图" : !canLoadOriginal ? "兼容预览" : "预览图"}</div>}
     </div>
     <div className="viewer-tools">
       <button className="icon-button" aria-label="缩小" disabled={!ready || scale <= minimum} onClick={() => zoomTo(scale / 1.25)}><Minus size={16} /></button>

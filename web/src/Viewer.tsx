@@ -1,19 +1,21 @@
 import { useEffect, useEffectEvent, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, Copy, Download, EyeOff, Info, Pencil, Plus, RotateCw, Star, Trash2, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Copy, Download, EyeOff, Info, Pencil, Plus, RotateCw, ScanEye, Star, Trash2, X } from "lucide-react";
 import { api, Asset, bytes, duration, Entity, Patch, Scope, scoped } from "./api";
 import { Dialog, isTextInput, kindNames, stateNames } from "./components";
 import { VideoPlayer } from "./VideoPlayer";
 import { ImageViewer } from "./ImageViewer";
 import { TagChip } from "./TagChip";
+import { canDecodeTank, TankDecoder } from "./TankDecoder";
 
 type Props = { asset: Asset; scope: Scope; tags: Entity[]; collections: Entity[]; close: () => void; previous?: () => void; next?: () => void; changed: () => void; notify: (text: string) => void; tagDragKey: string; tagBusy: boolean; changeTag: (assetId: string, tag: Entity, remove: boolean) => void };
 export function Viewer({ asset, scope, tags, collections, close, previous, next, changed, notify, tagDragKey, tagBusy, changeTag }: Props) {
   const [details, setDetails] = useState(true);
   const [edit, setEdit] = useState(false);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { setEdit(false); }, [asset.id]);
+  const [tank, setTank] = useState(false);
+  useEffect(() => { setEdit(false); setTank(false); }, [asset.id]);
   const keyboard = useEffectEvent((event: KeyboardEvent) => {
-    if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey || isTextInput(event.target) || edit) return;
+    if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey || isTextInput(event.target) || edit || tank) return;
     if (event.key === "Escape") close();
     if (event.key === "ArrowLeft" || event.key.toLowerCase() === "a") { event.preventDefault(); previous?.(); }
     if (event.key === "ArrowRight" || event.key.toLowerCase() === "d") { event.preventDefault(); next?.(); }
@@ -52,7 +54,7 @@ export function Viewer({ asset, scope, tags, collections, close, previous, next,
   }
   const image = asset.kind !== "video";
   return <div className="viewer" role="dialog" aria-modal="true" aria-label={asset.title || asset.name}>
-    <header className="viewer-heading"><button className="icon-button" aria-label="关闭预览" onClick={close}><X size={21} /></button><div className="viewer-name"><strong>{asset.title || asset.name}</strong><span>{kindNames[asset.kind]}{asset.effectiveHidden && <> · <EyeOff size={11} /> 隐藏</>}</span></div><div className="viewer-actions"><button className={`icon-button ${asset.starred ? "is-active" : ""}`} title={asset.starred ? "取消星标" : "添加星标"} aria-label={asset.starred ? "取消星标" : "添加星标"} disabled={busy} onClick={() => void update({ starred: !asset.starred })}><Star size={18} fill={asset.starred ? "currentColor" : "none"} /></button><a className="icon-button" title="下载原件" aria-label="下载原件" href={asset.downloadUrl} download><Download size={18} /></a><button className={`icon-button ${details ? "is-active" : ""}`} title="素材信息" aria-label="素材信息" onClick={() => setDetails(!details)}><Info size={18} /></button></div></header>
+    <header className="viewer-heading"><button className="icon-button" aria-label="关闭预览" onClick={close}><X size={21} /></button><div className="viewer-name"><strong>{asset.title || asset.name}</strong><span>{kindNames[asset.kind]}{asset.effectiveHidden && <> · <EyeOff size={11} /> 隐藏</>}</span></div><div className="viewer-actions">{canDecodeTank(asset) && <button className="icon-button" title="坦克显形" aria-label="坦克显形" onClick={() => setTank(true)}><ScanEye size={18} /></button>}<button className={`icon-button ${asset.starred ? "is-active" : ""}`} title={asset.starred ? "取消星标" : "添加星标"} aria-label={asset.starred ? "取消星标" : "添加星标"} disabled={busy} onClick={() => void update({ starred: !asset.starred })}><Star size={18} fill={asset.starred ? "currentColor" : "none"} /></button><a className="icon-button" title="下载原件" aria-label="下载原件" href={asset.downloadUrl} download><Download size={18} /></a><button className={`icon-button ${details ? "is-active" : ""}`} title="素材信息" aria-label="素材信息" onClick={() => setDetails(!details)}><Info size={18} /></button></div></header>
     <div className={`viewer-body ${details ? "with-details" : ""}`}>
       <div className="viewer-canvas">
         {image ? <ImageViewer key={asset.id} asset={asset} /> : <div className="media-stage dark"><VideoPlayer key={asset.id} asset={asset} /></div>}
@@ -68,6 +70,7 @@ export function Viewer({ asset, scope, tags, collections, close, previous, next,
       </aside>}
     </div>
     {edit && <MetadataEditor asset={asset} scope={scope} tags={tags} collections={collections} close={() => setEdit(false)} saved={() => { setEdit(false); changed(); }} notify={notify} />}
+    {tank && <TankDecoder key={asset.id} asset={asset} close={() => setTank(false)} />}
   </div>;
 }
 function MetadataEditor({ asset, scope, tags, collections, close, saved, notify }: { asset: Asset; scope: Scope; tags: Entity[]; collections: Entity[]; close: () => void; saved: () => void; notify: (message: string) => void }) {

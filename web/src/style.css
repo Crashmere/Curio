@@ -338,6 +338,26 @@ input[type="search"]::-webkit-search-cancel-button { display: none; }
 .hidden-reasons p { color: #bab28c; }
 .details-bottom { display: flex; flex-direction: column; gap: 8px; margin-top: 26px; }
 .details-bottom .button { font-size: 10px; }
+.tank-decoder { display: grid; grid-template-columns: minmax(0, 1fr) 260px; min-height: 470px; }
+.dialog.wide:has(.tank-decoder) { width: min(1100px, 94vw); }
+.tank-preview { position: relative; min-width: 0; min-height: 380px; }
+.tank-preview-status { position: absolute; top: 12px; left: 12px; display: flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 6px; background: #f8fceeeb; color: #6d7b59; font-size: 10px; }
+.tank-controls { display: flex; flex-direction: column; gap: 14px; padding: 20px; border-left: 1px solid #e0e9d2; }
+.tank-controls label { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 7px; color: #6d7b59; font-size: 11px; }
+.tank-controls select, .tank-controls input { width: 100%; }
+.tank-controls select { padding: 8px; }
+.tank-controls input[type="range"] { padding: 0; height: 20px; accent-color: #7e9965; }
+.tank-controls .tank-value { font-variant-numeric: tabular-nums; }
+.tank-controls .form-help { margin: 0; line-height: 1.7; }
+.tank-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.tank-credit { color: #6d7b59; font-size: 10px; text-align: center; }
+.tank-controls .is-disabled { opacity: .5; cursor: default; }
+@media (max-width: 700px) {
+  .tank-decoder { grid-template-columns: minmax(0, 1fr); }
+  .tank-preview { min-height: 300px; height: 42dvh; }
+  .tank-controls { border-left: 0; border-top: 1px solid #e0e9d2; }
+  .tank-preview .media-stage { padding: 35px 15px 65px; }
+}
 .preview-pending { display: flex; align-items: center; flex-direction: column; gap: 14px; color: #99b580; text-align: center; }
 .preview-pending strong { font-size: 14px; font-weight: 500; }
 .preview-pending span { font-size: 10px; color: #b1c89b; }
