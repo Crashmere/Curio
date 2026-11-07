@@ -58,7 +58,7 @@ function App() {
   const lastSelected = useRef<number>(-1);
   const pageToken = useRef(0);
   const selectionRequest = useRef<AbortController | null>(null);
-  const groupRequest = useRef<AbortController | null>(null);
+  const galleryRequest = useRef<AbortController | null>(null);
   const polling = useRef(false);
   const uploadState = useSyncExternalStore(importer.subscribe, importer.snapshot);
   const uploads = uploadState.items.filter(item => item.scope === scope);
@@ -217,10 +217,23 @@ function App() {
     }
     return { ...page, items };
   }
+  async function reloadGallery(signal: AbortSignal, token: number) {
+    const [content, groupList] = await Promise.all([
+      loadPages(signal),
+      collectionId ? api<{ items: MediaGroup[] }>(groupsPath(), undefined, undefined, signal) : Promise.resolve({ items: [] })
+    ]);
+    const prepared = await prepareGroupMedia(content.items, groupList.items, assetPath(), signal);
+    if (signal.aborted || token !== pageToken.current) return;
+    setAssets(content.items); setTotal(content.total); setNextOffset(content.nextOffset);
+    setGroups(groupList.items); setGroupPages(prepared);
+    const available = new Set([...content.items.map(asset => asset.id), ...groupList.items.flatMap(group => group.assetIds)]);
+    setSelected(previous => new Set([...previous].filter(id => available.has(id))));
+    lastSelected.current = -1;
+  }
   useEffect(() => {
     const controller = new AbortController();
-    if (groupRequest.current) {
-      groupRequest.current.abort(); groupRequest.current = null; setBusy(false);
+    if (galleryRequest.current) {
+      galleryRequest.current.abort(); galleryRequest.current = null; setBusy(false);
     }
     setGroupFormation(undefined);
     cancelSelectAll();
@@ -255,10 +268,10 @@ function App() {
       finally { if (!controller.signal.aborted) setLoading(false); }
     };
     void load();
-    return () => { controller.abort(); selectionRequest.current?.abort(); groupRequest.current?.abort(); };
+    return () => { controller.abort(); selectionRequest.current?.abort(); galleryRequest.current?.abort(); };
   }, [scope, view, tagId, collectionId, search, filters, sort, refresh]);
   const poll = useEffectEvent(async () => {
-    if (polling.current || groupRequest.current) return;
+    if (polling.current || galleryRequest.current) return;
     polling.current = true;
     const token = pageToken.current;
     const polledIds = [...new Set([...assets, ...Object.values(groupPages).flatMap(page => page.items)].map(asset => asset.id))].slice(0, 2000);
@@ -344,7 +357,7 @@ function App() {
     if (action !== "dissolve" && (!ids.length || ids.length > 2000)) return;
     if (action === "create" && ids.length < 2) return;
     const controller = new AbortController();
-    groupRequest.current = controller;
+    galleryRequest.current = controller;
     const token = ++pageToken.current;
     setLoadingMore(false);
     setBusy(true);
@@ -356,14 +369,8 @@ function App() {
       saved = true;
       if (controller.signal.aborted || token !== pageToken.current) return;
       // Group edits change gallery placement, not memberships or library counters.
-      const [content, groupList] = await Promise.all([
-        loadPages(controller.signal),
-        api<{ items: MediaGroup[] }>(groupsPath(), undefined, undefined, controller.signal)
-      ]);
-      const prepared = await prepareGroupMedia(content.items, groupList.items, assetPath(), controller.signal);
+      await reloadGallery(controller.signal, token);
       if (controller.signal.aborted || token !== pageToken.current) return;
-      setAssets(content.items); setTotal(content.total); setNextOffset(content.nextOffset);
-      setGroups(groupList.items); setGroupPages(prepared);
       exitSelection();
       if (action === "create" && result.id) {
         const id = result.id;
@@ -379,7 +386,7 @@ function App() {
         notify(saved ? "分组已保存，界面同步失败，请点击刷新" : error instanceof Error ? error.message : String(error));
       }
     } finally {
-      if (groupRequest.current === controller) { groupRequest.current = null; setBusy(false); }
+      if (galleryRequest.current === controller) { galleryRequest.current = null; setBusy(false); }
     }
   }
   async function selectAll(toggle = true) {
@@ -422,13 +429,38 @@ function App() {
     if (tagBusy) return;
     const asset = [...assets, ...Object.values(groupPages).flatMap(page => page.items), ...(viewer ? [viewer] : [])].find(item => item.id === assetId);
     if (!remove && asset?.tags.some(item => item.id === tag.id)) { notify(`已有标签“${tag.name}”`); return; }
+    const controller = new AbortController();
+    galleryRequest.current = controller;
+    const token = ++pageToken.current;
+    setLoadingMore(false);
     setBusy(true);
+    let saved = false;
     try {
-      await api(scoped(`assets/${assetId}`, scope), remove ? { removeTagIds: [tag.id] } : { addTagIds: [tag.id] }, "PATCH");
+      const updated = await api<Asset>(scoped(`assets/${assetId}`, scope), remove ? { removeTagIds: [tag.id] } : { addTagIds: [tag.id] }, "PATCH");
+      saved = true;
+      if (controller.signal.aborted || token !== pageToken.current) return;
+      const replace = (items: Asset[]) => items.map(item => item.id === updated.id ? updated : item);
+      setAssets(replace);
+      setGroupPages(previous => Object.fromEntries(Object.entries(previous).map(([id, page]) => [id, { ...page, items: replace(page.items) }])));
+      const sameScope = updated.effectiveHidden === (scope === "hidden");
+      setViewer(previous => previous?.id === updated.id ? sameScope ? updated : null : previous);
       if (!remove) setSidebarOpen(false);
-      changed(); notify(`${remove ? "已移除" : "已添加"}标签“${tag.name}”`);
-    } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
-    finally { setBusy(false); }
+      // Tags affect gallery membership only through visibility, inbox or tag/search filters.
+      const affectsFilter = !sameScope || view === "inbox" || !!search.trim() || (!!tagId && !updated.tags.some(item => item.id === tagId));
+      const [information, tagList, collectionList] = await Promise.all([
+        api<Info>(scoped("info", scope), undefined, undefined, controller.signal),
+        api<{ items: Entity[] }>(scoped("tags", scope), undefined, undefined, controller.signal),
+        api<{ items: Entity[] }>(scoped("collections", scope), undefined, undefined, controller.signal),
+        affectsFilter ? reloadGallery(controller.signal, token) : Promise.resolve()
+      ]);
+      if (controller.signal.aborted || token !== pageToken.current) return;
+      setInfo(information); setTags(tagList.items || []); setCollections(collectionList.items || []);
+      notify(`${remove ? "已移除" : "已添加"}标签“${tag.name}”`);
+    } catch (error) {
+      if (!controller.signal.aborted && token === pageToken.current) notify(saved ? "标签已保存，界面同步失败，请点击刷新" : error instanceof Error ? error.message : String(error));
+    } finally {
+      if (galleryRequest.current === controller) { galleryRequest.current = null; setBusy(false); }
+    }
   }
   async function retry(ids: string[]) {
     try { await api("assets/retry", { ids }); changed(); notify("已重新加入处理队列"); }

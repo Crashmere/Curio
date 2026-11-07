@@ -22,6 +22,8 @@ Media cards show their tags, omitting the currently open tag. Within a tag or co
 
 Collections can be deleted from the collection grid or their management dialog after confirmation. Deletion removes the collection, its memberships and internal groups while retaining all assets and their other memberships. Removing the final container returns an asset to the inbox; removing its last hidden source restores normal visibility.
 
+Quick tag edits update loaded cards and viewer details from the saved asset response, then synchronize scoped sidebar counts. They do not enter page loading state; unaffected gallery and image nodes stay mounted. Visibility, inbox, tag-filter or search changes reconcile the matching gallery in place, including totals, pagination and group members. Unaffected cards, selection and expanded groups remain intact; responses from a previous view are ignored.
+
 ### Collection Groups
 
 Collections support unnamed groups of media. A media item belongs to at most one group within each collection and can be grouped independently in other collections. Selecting at least two items creates a group; adding selected items to an existing group moves only their grouping in that collection. Removing items from a group or dissolving a group keeps the media in the collection. Groups have no separate visibility flag or effect on organization status.
