@@ -44,6 +44,7 @@ function App() {
   const [loadedKey, setLoadedKey] = useState("");
   const contentReady = loadedKey === contentKey;
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreFailed, setLoadMoreFailed] = useState(false);
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
   const [selected, setSelected] = useState(new Set<string>());
@@ -62,6 +63,8 @@ function App() {
   const pageToken = useRef(0);
   const selectionRequest = useRef<AbortController | null>(null);
   const galleryRequest = useRef<AbortController | null>(null);
+  const loadMoreRequest = useRef<AbortController | null>(null);
+  const loadMoreTarget = useRef<HTMLDivElement>(null);
   const polling = useRef(false);
   const uploadState = useSyncExternalStore(importer.subscribe, importer.snapshot);
   const uploads = uploadState.items.filter(item => item.scope === scope);
@@ -69,6 +72,8 @@ function App() {
   const notify = (message: string) => setToast(message);
   const changed = () => setRefresh(value => value + 1);
   const assetView = !["tags", "collections", "jobs"].includes(view);
+  const hasMore = nextOffset !== null && nextOffset !== undefined && nextOffset < total;
+  const canAutoLoadMore = assetView && contentReady && hasMore && !loading && !loadingMore && !loadMoreFailed && !error && !selectingAll && !busy && !modal && !viewer;
   const entries = collectionEntries(assets, collectionId ? groups : [], groupPages);
   const galleryAssets = entries.flatMap(entry => entry.asset ? [entry.asset] : expandedGroups.has(entry.group.id) ? entry.items : []);
   const galleryIndices = new Map(galleryAssets.map((asset, index) => [asset.id, index]));
@@ -235,6 +240,7 @@ function App() {
   }
   useEffect(() => {
     const controller = new AbortController();
+    loadMoreRequest.current?.abort(); loadMoreRequest.current = null;
     if (galleryRequest.current) {
       galleryRequest.current.abort(); galleryRequest.current = null; setBusy(false);
     }
@@ -242,7 +248,7 @@ function App() {
     cancelSelectAll();
     pageToken.current++;
     lastSelected.current = -1;
-    setLoading(true); setLoadingMore(false); setError("");
+    setLoading(true); setLoadingMore(false); setLoadMoreFailed(false); setError("");
     const load = async () => {
       try {
         const [information, tagList, collectionList, content, groupList] = await Promise.all([
@@ -272,7 +278,7 @@ function App() {
       finally { if (!controller.signal.aborted) setLoading(false); }
     };
     void load();
-    return () => { controller.abort(); selectionRequest.current?.abort(); galleryRequest.current?.abort(); };
+    return () => { controller.abort(); selectionRequest.current?.abort(); galleryRequest.current?.abort(); loadMoreRequest.current?.abort(); };
   }, [scope, view, tagId, collectionId, search, filters, sort, refresh]);
   const poll = useEffectEvent(async () => {
     if (polling.current || galleryRequest.current) return;
@@ -309,17 +315,36 @@ function App() {
     return () => clearInterval(timer);
   }, [info?.queued]);
   async function loadMore() {
-    if (nextOffset === null || nextOffset === undefined || loading || error || loadingMore || selectingAll || busy) return;
-    setLoadingMore(true);
+    if (!contentReady || !hasMore || nextOffset === null || loading || error || loadingMore || loadMoreRequest.current || selectingAll || busy) return;
+    const controller = new AbortController();
+    loadMoreRequest.current = controller;
+    setLoadingMore(true); setLoadMoreFailed(false);
     const token = pageToken.current;
     try {
-      const result = await api<AssetPage>(assetPath(nextOffset));
-      if (token !== pageToken.current) return;
+      const result = await api<AssetPage>(assetPath(nextOffset), undefined, undefined, controller.signal);
+      if (controller.signal.aborted || token !== pageToken.current) return;
       setAssets(previous => [...previous, ...result.items.filter(item => !previous.some(asset => asset.id === item.id))]);
       setNextOffset(result.nextOffset); setTotal(result.total);
-    } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
-    finally { if (token === pageToken.current) setLoadingMore(false); }
+    } catch (error) {
+      if (!controller.signal.aborted && token === pageToken.current) {
+        setLoadMoreFailed(true);
+        notify(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      if (loadMoreRequest.current === controller) loadMoreRequest.current = null;
+      if (token === pageToken.current) setLoadingMore(false);
+    }
   }
+  const loadMoreEvent = useEffectEvent(loadMore);
+  useEffect(() => {
+    const target = loadMoreTarget.current;
+    if (!canAutoLoadMore || !target) return;
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) void loadMoreEvent();
+    }, { rootMargin: "0px 0px 100px 0px" });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [canAutoLoadMore, nextOffset, contentKey]);
   function toggleGroup(group: MediaGroup) {
     lastSelected.current = -1;
     setExpandedGroups(previous => { const next = new Set(previous); if (next.has(group.id)) next.delete(group.id); else next.add(group.id); return next; });
@@ -511,7 +536,7 @@ function App() {
         {error && !contentReady ? <Empty icon={<CircleAlert size={30} />} title="暂时无法读取素材库" description={error}><button className="button" onClick={changed}><RotateCw size={15} />重试</button></Empty> : !contentReady && assetView ? <div className="skeleton-gallery" style={{ "--tile-width": `${density}px` } as CSSProperties}>{Array.from({ length: 12 }, (_, index) => <div key={index} style={{ aspectRatio: [0.85, 1.25, 1, 0.68][index % 4] }} />)}</div> : assetView ? assets.length ? <>
           {collectionId && !groups.length && <p className="group-help"><Layers3 size={13} />选中多个素材，即可组成一组，无需命名。</p>}
           <div className="gallery-results" aria-busy={loading} inert={loading || !!error} style={{ "--tile-width": `${density}px` } as CSSProperties}>{gallery}</div>
-          {nextOffset !== null && nextOffset !== undefined && nextOffset < total && <div className="load-more"><button className="button" onClick={() => void loadMore()} disabled={loading || !!error || loadingMore}>{loadingMore && <RotateCw size={15} className="spin" />}加载更多 {!collectionId && <span>{assets.length} / {total}</span>}</button></div>}
+          {hasMore && <div className="load-more" ref={loadMoreTarget}><button className="button" onClick={() => void loadMore()} disabled={loading || !!error || loadingMore || selectingAll || busy}>{loadingMore && <RotateCw size={15} className="spin" />}{loadingMore ? "正在加载…" : loadMoreFailed ? "重试加载" : "加载更多"} {!collectionId && <span>{assets.length} / {total}</span>}</button></div>}
         </> : <Empty icon={view === "trash" ? <Trash2 size={30} /> : search || activeFilters.length ? <Search size={30} /> : view === "inbox" ? <Inbox size={30} /> : view === "starred" ? <Star size={30} /> : <Image size={32} strokeWidth={1.3} />} title={search || activeFilters.length ? "没有找到匹配的素材" : view === "trash" ? "回收站是空的" : view === "inbox" ? "没有待整理的素材" : view === "starred" ? "还没有星标素材" : scope === "hidden" ? "隐藏模式暂无素材" : activeEntity ? "这里还没有素材" : "开始你的视觉收藏"} description={search || activeFilters.length ? "试试其他关键词，或减少筛选条件。" : view === "trash" ? "移除的素材会先保留在这里，可以随时恢复。" : view === "starred" ? "给常用或喜欢的素材添加星标，方便再次找到。" : view === "inbox" ? "没有标签或收藏集的素材会显示在这里，添加任意一个即可完成整理。" : "图标、头像、壁纸、梗图、截图和录像，都可以收集到这里。"}>{!["trash", "starred"].includes(view) && !search && !activeFilters.length && <button className="button primary" onClick={() => setModal({ type: "upload" })}><Plus size={17} />收集素材</button>}</Empty> : view === "collections" || view === "tags" ? <EntityGrid items={view === "collections" ? collections : tags} kind={view} open={entity => navigate("all", view === "tags" ? entity.id : "", view === "collections" ? entity.id : "")} edit={entity => setModal({ type: "entity", kind: view, entity })} remove={entity => setModal({ type: "remove-entity", kind: view, entity })} create={() => setModal({ type: "entity", kind: view })} /> : <Jobs items={jobs} retry={retry} open={async id => { try { setViewer(await api<Asset>(scoped(`assets/${id}`, scope))); } catch (error) { notify(error instanceof Error ? error.message : String(error)); } }} />}
       </div>
     </main>
