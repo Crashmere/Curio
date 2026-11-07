@@ -45,14 +45,36 @@ export function MasonryGallery({ children, formation }: { children: ReactNode; f
       // Reveal transforms must not change the dimensions used for packing.
       const heights = tiles.map(tile => tile.offsetHeight);
       const bottoms = Array<number>(columns).fill(0);
-      tiles.forEach((tile, index) => {
-        const shortest = Math.min(...bottoms);
+      const nextColumn = (first = 0, span = columns) => {
+        const available = bottoms.slice(first, first + span);
+        const shortest = Math.min(...available);
         // Tiny aspect-ratio differences must not scatter a nearly level partial row.
-        const column = bottoms.findIndex(bottom => bottom <= shortest + gap);
+        return first + available.findIndex(bottom => bottom <= shortest + gap);
+      };
+      const place = (index: number, column: number) => {
+        const tile = tiles[index];
         tile.style.left = `${column * (columnWidth + gap) + (columnWidth - widths[index]) / 2}px`;
         tile.style.top = `${bottoms[column]}px`;
         bottoms[column] += heights[index] + gap;
-      });
+      };
+      for (let index = 0; index < tiles.length;) {
+        const tile = tiles[index];
+        if (!tile.classList.contains("group-member")) {
+          place(index++, nextColumn());
+          continue;
+        }
+        let end = index + 1;
+        while (end < tiles.length && tiles[end].classList.contains("group-member") && tiles[end].dataset.group === tile.dataset.group) end++;
+        const span = Math.min(columns, end - index);
+        const starts = Array.from({ length: columns - span + 1 }, (_, first) => Math.max(...bottoms.slice(first, first + span)));
+        const lowest = Math.min(...starts);
+        const first = starts.findIndex(top => top <= lowest + gap);
+        // Pack each group from a shared edge in adjacent columns.
+        bottoms.fill(starts[first], first, first + span);
+        for (; index < end; index++) place(index, nextColumn(first, span));
+        // Reserve its whole footprint so unrelated cards cannot fill group gaps.
+        bottoms.fill(Math.max(...bottoms.slice(first, first + span)), first, first + span);
+      }
       gallery.style.height = `${Math.max(0, ...bottoms) - (tiles.length ? gap : 0)}px`;
       const previous = snapshots.current;
       const next = new Map<HTMLElement, TileSnapshot>();
