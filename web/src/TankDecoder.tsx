@@ -17,11 +17,11 @@ export function TankDecoder({ asset, close }: { asset: Asset; close: () => void 
   const exportUrl = useRef("");
   const renderedRequest = useRef(0);
   const currentBitmap = useRef<ImageBitmap | null>(null);
-  const inFlight = useRef(false);
-  const pending = useRef<{ id: number; options: TankOptions } | null>(null);
+  const inFlight = useRef<"decode" | "export" | null>(null);
+  const pending = useRef<{ type: "decode" | "export"; id: number; options: TankOptions } | null>(null);
+  const exportRequested = useRef(false);
   const [options, setOptions] = useState<TankOptions>({ ...tankDefaults });
   const [ready, setReady] = useState(false);
-  const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
   const [preset, setPreset] = useState(false);
   const [compare, setCompare] = useState(false);
@@ -31,26 +31,31 @@ export function TankDecoder({ asset, close }: { asset: Asset; close: () => void 
   const [engine, setEngine] = useState("");
   const [dimensions, setDimensions] = useState({ width: asset.width, height: asset.height });
   function update(patch: Partial<TankOptions>) {
+    if (exportRequested.current) return;
     request.current++;
     pending.current = null;
     setOptions(value => ({ ...value, ...patch }));
-    setBusy(true); setError("");
+    setError("");
   }
   function dispatch() {
     if (inFlight.current || !pending.current || !worker.current) return;
-    inFlight.current = true;
-    worker.current.postMessage({ type: "decode", ...pending.current });
+    inFlight.current = pending.current.type;
+    worker.current.postMessage(pending.current);
     pending.current = null;
   }
   const message = useEffectEvent((event: MessageEvent) => {
     if (event.data.type === "ready") { setReady(true); return; }
     // Keep only the latest pending parameters while one full-size decode is running.
-    inFlight.current = false;
+    const operation = inFlight.current;
+    inFlight.current = null;
     dispatch();
     const id = event.data.id;
     if (!worker.current || id < renderedRequest.current) { event.data.bitmap?.close(); return; }
     if (event.data.type === "error") {
-      if (id === request.current) { setError(`显形失败：${event.data.error}`); setBusy(false); setExporting(false); }
+      if (id === request.current) {
+        setError(`显形失败：${event.data.error}`);
+        if (operation === "export") finishExport();
+      }
       return;
     }
     if (event.data.type === "export") { void saveExport(event.data); return; }
@@ -62,11 +67,19 @@ export function TankDecoder({ asset, close }: { asset: Asset; close: () => void 
       setResult(event.data.bitmap ? { bitmap: event.data.bitmap }
         : { pixels: new ImageData(event.data.pixels, event.data.width, event.data.height) });
       setEngine(event.data.engine);
-      if (id === request.current) setBusy(false);
     } catch (error) {
-      if (id === request.current) { setError(error instanceof Error ? error.message : String(error)); setBusy(false); }
+      if (id === request.current) setError(error instanceof Error ? error.message : String(error));
     }
   });
+  function finishExport() {
+    exportRequested.current = false;
+    if (!worker.current) return;
+    setExporting(false);
+    if (renderedRequest.current < request.current) {
+      pending.current = { type: "decode", id: request.current, options };
+      dispatch();
+    }
+  }
   async function saveExport(data: { id: number; pixels: Uint8ClampedArray<ArrayBuffer>; width: number; height: number }) {
     const id = data.id;
     try {
@@ -88,14 +101,16 @@ export function TankDecoder({ asset, close }: { asset: Asset; close: () => void 
     } catch (error) {
       if (id === request.current && worker.current) setError(error instanceof Error ? error.message : String(error));
     } finally {
-      if (worker.current) setExporting(false);
+      finishExport();
     }
   }
   function download() {
-    if (!result || busy || error || exporting || !worker.current) return;
+    if (!ready || !result || error || exportRequested.current || !worker.current) return;
+    exportRequested.current = true;
     setExporting(true);
-    inFlight.current = true;
-    worker.current.postMessage({ type: "export", id: request.current, options });
+    // Export the selected parameters after any running preview, without waiting for its paint.
+    pending.current = { type: "export", id: request.current, options };
+    dispatch();
   }
   useEffect(() => {
     const abort = new AbortController();
@@ -136,11 +151,11 @@ export function TankDecoder({ asset, close }: { asset: Asset; close: () => void 
           const instance = new Worker(new URL("./tank-decode.worker.ts", import.meta.url), { type: "module" });
           worker.current = instance;
           instance.onmessage = message;
-          instance.onerror = () => { setError("显形处理器启动失败，请关闭后重试"); setBusy(false); setReady(false); };
+          instance.onerror = () => { setError("显形处理器启动失败，请关闭后重试"); setReady(false); exportRequested.current = false; setExporting(false); };
           instance.postMessage({ type: "init", width: bitmap.width, height: bitmap.height, pixels }, [pixels.buffer]);
         } finally { bitmap.close(); }
       } catch (error) {
-        if (!abort.signal.aborted) { setError(error instanceof Error ? error.message : String(error)); setBusy(false); }
+        if (!abort.signal.aborted) setError(error instanceof Error ? error.message : String(error));
       }
     }
     void load();
@@ -153,10 +168,9 @@ export function TankDecoder({ asset, close }: { asset: Asset; close: () => void 
     };
   }, [asset.id]);
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || exportRequested.current) return;
     const id = ++request.current;
-    setBusy(true);
-    pending.current = { id, options };
+    pending.current = { type: "decode", id, options };
     const frame = window.requestAnimationFrame(dispatch);
     return () => window.cancelAnimationFrame(frame);
   }, [ready, options]);
@@ -165,7 +179,7 @@ export function TankDecoder({ asset, close }: { asset: Asset; close: () => void 
     <div className="tank-decoder">
       <div className="tank-preview">
         <ImageViewer asset={viewingAsset} sourceOverride={original || undefined} pixels={compare ? undefined : result?.pixels} bitmap={compare ? undefined : result?.bitmap} />
-        <div className="tank-preview-status" role="status">{compare ? "原图" : busy ? <><RotateCw size={12} className="spin" />{ready ? "正在更新预览" : "正在读取原图"}</> : result ? `快速预览 · 浏览器 ${engine}` : "原图"}</div>
+        <div className="tank-preview-status" role="status">{compare ? "原图" : result ? `快速预览 · 浏览器 ${engine}` : error ? "原图" : <><RotateCw size={12} className="spin" />{ready ? "正在生成预览" : "正在读取原图"}</>}</div>
       </div>
       <div className="tank-controls">
         <p className="form-help">在本机浏览器中读取原件并显形，不向第三方发送图片，也不修改素材。</p>
@@ -183,7 +197,7 @@ export function TankDecoder({ asset, close }: { asset: Asset; close: () => void 
         {error && <div className="inline-error" role="alert">{error}</div>}
         <p className="form-help">仅处理静态位图，最多 64 MiB / 1600 万像素。压缩或缩放过的图片可能无法恢复里图。</p>
         <p className="form-help">快速预览最长边 {tankPreviewEdge} 像素；下载仍使用原图完整分辨率。</p>
-        <button className="button primary" disabled={!result || busy || !!error || exporting} onClick={() => void download()}>{exporting ? <RotateCw size={15} className="spin" /> : <Download size={15} />}{exporting ? "正在导出 PNG" : "下载显形 PNG"}</button>
+        <button className="button primary" disabled={!ready || !result || !!error || exporting} onClick={() => void download()}>{exporting ? <RotateCw size={15} className="spin" /> : <Download size={15} />}{exporting ? "正在导出 PNG" : "下载显形 PNG"}</button>
         <a className="tank-credit" href="https://prism.uyanide.com/" target="_blank" rel="noreferrer">算法来源：Prism / Uyanide</a>
         <a className="tank-credit" href={`data:text/plain;charset=utf-8,${encodeURIComponent(thirdPartyNotices)}`} download="Curio-Third-Party-Notices.txt">MIT 开源许可</a>
       </div>
