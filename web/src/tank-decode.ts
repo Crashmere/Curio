@@ -10,6 +10,34 @@ export type TankOptions = {
 export const tankDefaults: TankOptions = { mode: "prism", lower: 0, upper: 24, contrast: 0, fill: "ltavg", iterations: 16 };
 export const tankMaxBytes = 64 * 1024 * 1024;
 export const tankMaxPixels = 16_000_000;
+export const tankPreviewEdge = 1280;
+
+export function resizeTankPreview(source: Uint8ClampedArray, width: number, height: number) {
+  const scale = Math.min(1, tankPreviewEdge / Math.max(width, height));
+  const previewWidth = Math.max(1, Math.round(width * scale));
+  const previewHeight = Math.max(1, Math.round(height * scale));
+  if (scale === 1) return { pixels: source.slice(), width, height };
+  const pixels = new Uint8ClampedArray(previewWidth * previewHeight * 4);
+  for (let y = 0; y < previewHeight; y++) {
+    const sourceY = (y + 0.5) * height / previewHeight - 0.5;
+    const top = Math.max(0, Math.floor(sourceY));
+    const bottom = Math.min(height - 1, top + 1);
+    const dy = sourceY - top;
+    for (let x = 0; x < previewWidth; x++) {
+      const sourceX = (x + 0.5) * width / previewWidth - 0.5;
+      const left = Math.max(0, Math.floor(sourceX));
+      const right = Math.min(width - 1, left + 1);
+      const dx = sourceX - left;
+      const target = (y * previewWidth + x) * 4;
+      for (let c = 0; c < 4; c++) pixels[target + c] =
+        source[(top * width + left) * 4 + c] * (1 - dx) * (1 - dy)
+        + source[(top * width + right) * 4 + c] * dx * (1 - dy)
+        + source[(bottom * width + left) * 4 + c] * (1 - dx) * dy
+        + source[(bottom * width + right) * 4 + c] * dx * dy;
+    }
+  }
+  return { pixels, width: previewWidth, height: previewHeight };
+}
 
 export function decodeTankCPU(source: Uint8ClampedArray, width: number, options: TankOptions) {
   const output = new Uint8ClampedArray(source.length);

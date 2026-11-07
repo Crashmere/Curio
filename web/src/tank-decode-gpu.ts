@@ -66,21 +66,39 @@ void main() {
   }
   if (weight > 0.0) { color = sum / weight; mask = vec4(0.0); }
 }`;
+const displayFragment = `#version 300 es
+precision highp float;
+in vec2 uv;
+uniform sampler2D image;
+uniform float contrast;
+uniform bool flipY;
+layout(location = 0) out vec4 color;
+void main() {
+  vec4 source = texture(image, vec2(uv.x, flipY ? 1.0 - uv.y : uv.y));
+  float factor = 259.0 * (contrast + 255.0) / (255.0 * (259.0 - contrast));
+  color = vec4(clamp((factor * (source.rgb * 255.0 - 128.0) + 128.0) / 255.0, 0.0, 1.0), source.a);
+}`;
 
 export class TankGPU {
   private gl: WebGL2RenderingContext;
   private scale: WebGLProgram;
   private fill: WebGLProgram;
+  private display: WebGLProgram;
+  private canvas: OffscreenCanvas;
   private textures: WebGLTexture[] = [];
   private framebuffer: WebGLFramebuffer;
+  private decoded: WebGLTexture | null = null;
+  private decodedKey = "";
 
   constructor(private width: number, private height: number, pixels: Uint8ClampedArray) {
     const canvas = new OffscreenCanvas(width, height);
     const gl = canvas.getContext("webgl2", { alpha: true, antialias: false, premultipliedAlpha: false });
     if (!gl || width > gl.getParameter(gl.MAX_TEXTURE_SIZE) || height > gl.getParameter(gl.MAX_TEXTURE_SIZE)) throw new Error("WebGL2 unavailable");
     this.gl = gl;
+    this.canvas = canvas;
     this.scale = this.program(scaleFragment);
     this.fill = this.program(fillFragment);
+    this.display = this.program(displayFragment);
     this.framebuffer = gl.createFramebuffer()!;
     gl.bindVertexArray(gl.createVertexArray());
     gl.viewport(0, 0, width, height);
@@ -116,7 +134,9 @@ export class TankGPU {
     return program;
   }
 
-  decode(options: TankOptions) {
+  private decodeBase(options: TankOptions) {
+    const key = JSON.stringify([options.mode, options.lower, options.upper, options.fill, options.iterations]);
+    if (key === this.decodedKey && this.decoded) return this.decoded;
     const gl = this.gl;
     const bind = (texture: WebGLTexture, unit: number) => {
       gl.activeTexture(gl.TEXTURE0 + unit);
@@ -129,6 +149,7 @@ export class TankGPU {
       if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error("GPU framebuffer unavailable");
     };
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
+    gl.viewport(0, 0, this.width, this.height);
     let [, source, destination, sourceMask, destinationMask] = this.textures;
     target(source, sourceMask);
     bind(this.textures[0], 0);
@@ -151,10 +172,47 @@ export class TankGPU {
         [sourceMask, destinationMask] = [destinationMask, sourceMask];
       }
     }
-    const output = new Uint8ClampedArray(this.width * this.height * 4);
-    gl.readBuffer(gl.COLOR_ATTACHMENT0);
-    gl.readPixels(0, 0, this.width, this.height, gl.RGBA, gl.UNSIGNED_BYTE, output);
     if (gl.isContextLost() || gl.getError() !== gl.NO_ERROR) throw new Error("GPU decode failed");
+    this.decoded = source;
+    this.decodedKey = key;
+    return source;
+  }
+
+  private draw(options: TankOptions, width: number, height: number, flipY: boolean) {
+    const gl = this.gl;
+    const source = this.decodeBase(options);
+    if (this.canvas.width !== width || this.canvas.height !== height) {
+      this.canvas.width = width; this.canvas.height = height;
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, width, height);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, source);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.useProgram(this.display);
+    gl.uniform1i(gl.getUniformLocation(this.display, "image"), 0);
+    gl.uniform1f(gl.getUniformLocation(this.display, "contrast"), options.contrast);
+    gl.uniform1i(gl.getUniformLocation(this.display, "flipY"), flipY ? 1 : 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    if (gl.isContextLost() || gl.getError() !== gl.NO_ERROR) throw new Error("GPU display failed");
+  }
+
+  preview(options: TankOptions, maxEdge: number) {
+    const scale = Math.min(1, maxEdge / Math.max(this.width, this.height));
+    // Resize only already-revealed pixels; resizing encoded originals destroys their levels.
+    this.draw(options, Math.max(1, Math.round(this.width * scale)), Math.max(1, Math.round(this.height * scale)), true);
+    return this.canvas.transferToImageBitmap();
+  }
+
+  decode(options: TankOptions) {
+    this.draw(options, this.width, this.height, false);
+    const gl = this.gl;
+    const output = new Uint8ClampedArray(this.width * this.height * 4);
+    gl.readPixels(0, 0, this.width, this.height, gl.RGBA, gl.UNSIGNED_BYTE, output);
+    if (gl.isContextLost() || gl.getError() !== gl.NO_ERROR) throw new Error("GPU export failed");
     return output;
   }
 }
