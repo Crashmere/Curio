@@ -60,7 +60,7 @@ h1, h2, h3, p { margin: 0; }
 .sidebar-tag-list > button span, .sidebar-tag-list .tag-drag-source span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-tag-list > button:hover, .sidebar-tag-list .tag-chip-with-remove:hover > .tag-drag-source, .sidebar-tag-list .tag-drag-source.active { background: #dce1cd; color: #5b694b; }
 .tag-chip-with-remove { position: relative; display: inline-flex; min-width: 0; max-width: 100%; }
-.tag-chip-remove { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 18px; height: 18px; border-radius: 3px; color: #5b694b; background: #dce1cd; opacity: 0; visibility: hidden; }
+.tag-chip-remove { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 18px; height: 18px; border-radius: 3px; color: #5b694b; background: linear-gradient(to right, #dce1cd00, #dce1cd 6px); opacity: 0; visibility: hidden; }
 .tag-chip-with-remove:hover:not(.is-dragging) > .tag-chip-remove { opacity: 1; visibility: visible; }
 .tag-chip-remove:hover:not(:disabled) { color: var(--danger); }
 .sidebar-tag-list .sidebar-placeholder { background: transparent; padding: 5px 0 !important; }
