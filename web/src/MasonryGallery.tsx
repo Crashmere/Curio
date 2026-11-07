@@ -46,7 +46,9 @@ export function MasonryGallery({ children, formation }: { children: ReactNode; f
       const heights = tiles.map(tile => tile.offsetHeight);
       const bottoms = Array<number>(columns).fill(0);
       tiles.forEach((tile, index) => {
-        const column = bottoms.indexOf(Math.min(...bottoms));
+        const shortest = Math.min(...bottoms);
+        // Tiny aspect-ratio differences must not scatter a nearly level partial row.
+        const column = bottoms.findIndex(bottom => bottom <= shortest + gap);
         tile.style.left = `${column * (columnWidth + gap) + (columnWidth - widths[index]) / 2}px`;
         tile.style.top = `${bottoms[column]}px`;
         bottoms[column] += heights[index] + gap;
