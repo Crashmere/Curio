@@ -14,7 +14,8 @@ export function canDecodeTank(asset: Asset) {
 export function TankDecoder({ asset, close }: { asset: Asset; close: () => void }) {
   const worker = useRef<Worker | null>(null);
   const request = useRef(0);
-  const currentUrl = useRef("");
+  const exportUrl = useRef("");
+  const renderedRequest = useRef(0);
   const inFlight = useRef(false);
   const pending = useRef<{ id: number; options: TankOptions } | null>(null);
   const [options, setOptions] = useState<TankOptions>({ ...tankDefaults });
@@ -24,7 +25,8 @@ export function TankDecoder({ asset, close }: { asset: Asset; close: () => void 
   const [preset, setPreset] = useState(false);
   const [compare, setCompare] = useState(false);
   const [original, setOriginal] = useState("");
-  const [result, setResult] = useState("");
+  const [result, setResult] = useState<ImageData>();
+  const [exporting, setExporting] = useState(false);
   const [engine, setEngine] = useState("");
   const [dimensions, setDimensions] = useState({ width: asset.width, height: asset.height });
   function update(patch: Partial<TankOptions>) {
@@ -39,35 +41,53 @@ export function TankDecoder({ asset, close }: { asset: Asset; close: () => void 
     worker.current.postMessage({ type: "decode", ...pending.current });
     pending.current = null;
   }
-  const message = useEffectEvent(async (event: MessageEvent) => {
+  const message = useEffectEvent((event: MessageEvent) => {
     if (event.data.type === "ready") { setReady(true); return; }
     // Keep only the latest pending parameters while one full-size decode is running.
     inFlight.current = false;
     dispatch();
     const id = event.data.id;
-    if (id !== request.current) return;
-    if (event.data.type === "error") { setError(`显形失败：${event.data.error}`); setBusy(false); return; }
+    if (!worker.current || id < renderedRequest.current) return;
+    if (event.data.type === "error") {
+      if (id === request.current) { setError(`显形失败：${event.data.error}`); setBusy(false); }
+      return;
+    }
     try {
-      const canvas = document.createElement("canvas");
-      canvas.width = dimensions.width; canvas.height = dimensions.height;
-      const context = canvas.getContext("2d");
-      if (!context) throw new Error("浏览器不支持图片导出");
-      context.putImageData(new ImageData(event.data.pixels, canvas.width, canvas.height), 0, 0);
-      const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("PNG 导出失败")), "image/png"));
-      canvas.width = canvas.height = 0;
-      const url = URL.createObjectURL(blob);
-      const image = new Image();
-      image.src = url;
-      try { await image.decode(); } catch (error) { URL.revokeObjectURL(url); throw error; }
-      if (id !== request.current) { URL.revokeObjectURL(url); return; }
-      const previous = currentUrl.current;
-      currentUrl.current = url;
-      setResult(url); setEngine(event.data.engine); setBusy(false);
-      if (previous) URL.revokeObjectURL(previous);
+      // Present completed frames during a drag, even while newer parameters are queued.
+      renderedRequest.current = id;
+      setResult(new ImageData(event.data.pixels, dimensions.width, dimensions.height));
+      setEngine(event.data.engine);
+      if (id === request.current) setBusy(false);
     } catch (error) {
       if (id === request.current) { setError(error instanceof Error ? error.message : String(error)); setBusy(false); }
     }
   });
+  async function download() {
+    if (!result || busy || error || exporting) return;
+    const id = request.current;
+    setExporting(true);
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = result.width; canvas.height = result.height;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("浏览器不支持图片导出");
+      context.putImageData(result, 0, 0);
+      const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("PNG 导出失败")), "image/png"));
+      canvas.width = canvas.height = 0;
+      if (id !== request.current || !worker.current) return;
+      const url = URL.createObjectURL(blob);
+      if (exportUrl.current) URL.revokeObjectURL(exportUrl.current);
+      exportUrl.current = url;
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${asset.name.replace(/\.[^.]+$/, "")}-显形.png`;
+      link.click();
+    } catch (error) {
+      if (id === request.current && worker.current) setError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (worker.current) setExporting(false);
+    }
+  }
   useEffect(() => {
     const abort = new AbortController();
     let originalUrl = "";
@@ -119,21 +139,22 @@ export function TankDecoder({ asset, close }: { asset: Asset; close: () => void 
       abort.abort(); request.current++;
       worker.current?.terminate(); worker.current = null;
       if (originalUrl) URL.revokeObjectURL(originalUrl);
-      if (currentUrl.current) URL.revokeObjectURL(currentUrl.current);
+      if (exportUrl.current) URL.revokeObjectURL(exportUrl.current);
     };
   }, [asset.id]);
   useEffect(() => {
     if (!ready) return;
     const id = ++request.current;
     setBusy(true);
-    const timer = window.setTimeout(() => { pending.current = { id, options }; dispatch(); }, 120);
-    return () => window.clearTimeout(timer);
+    pending.current = { id, options };
+    const frame = window.requestAnimationFrame(dispatch);
+    return () => window.cancelAnimationFrame(frame);
   }, [ready, options]);
   const viewingAsset = { ...asset, ...dimensions, hasAlpha: compare ? asset.hasAlpha : options.mode === "prism", previewUrl: original || asset.previewUrl };
   return <Dialog title="坦克显形" close={close} wide>
     <div className="tank-decoder">
       <div className="tank-preview">
-        <ImageViewer asset={viewingAsset} sourceOverride={compare ? original || undefined : result || original || undefined} />
+        <ImageViewer asset={viewingAsset} sourceOverride={original || undefined} pixels={compare ? undefined : result} />
         <div className="tank-preview-status" role="status">{compare ? "原图" : busy ? <><RotateCw size={12} className="spin" />{ready ? "正在显形" : "正在读取原图"}</> : result ? `显形结果 · 浏览器 ${engine}` : "原图"}</div>
       </div>
       <div className="tank-controls">
@@ -141,17 +162,17 @@ export function TankDecoder({ asset, close }: { asset: Asset; close: () => void 
         <label>显形方式<select value={options.mode} disabled={!ready} onChange={event => update({ mode: event.target.value as TankOptions["mode"] })}><option value="prism">光棱坦克（Prism 色阶）</option><option value="black">幻影坦克（黑底）</option><option value="white">幻影坦克（白底）</option></select></label>
         {options.mode === "prism" ? <>
           <p className="form-help">{preset ? "已读取图片内的 Prism 显形参数。" : "未找到显形参数，先使用 0–24 色阶；可手动调整。"}</p>
-          <label>色阶下限 <span className="tank-value">{options.lower}</span><input type="range" min={0} max={options.upper - 1} value={options.lower} disabled={!ready} onChange={event => update({ lower: Number(event.target.value) })} /></label>
-          <label>色阶上限 <span className="tank-value">{options.upper}</span><input type="range" min={options.lower + 1} max={255} value={options.upper} disabled={!ready} onChange={event => update({ upper: Number(event.target.value) })} /></label>
+          <label>色阶下限 <span className="tank-value">{options.lower}</span><input type="range" min={0} max={options.upper - 1} value={options.lower} disabled={!ready} onInput={event => update({ lower: Number(event.currentTarget.value) })} /></label>
+          <label>色阶上限 <span className="tank-value">{options.upper}</span><input type="range" min={options.lower + 1} max={255} value={options.upper} disabled={!ready} onInput={event => update({ upper: Number(event.currentTarget.value) })} /></label>
           <label>表图填充<select value={options.fill} disabled={!ready} onChange={event => update({ fill: event.target.value as TankOptions["fill"] })}><option value="ltavg">邻域填充</option><option value="black">黑色</option><option value="white">白色</option><option value="transparent">透明</option><option value="lcopy">复制左侧像素</option><option value="tcopy">复制上方像素</option></select></label>
-          {options.fill === "ltavg" && <label>填充轮数 <span className="tank-value">{options.iterations}</span><input type="range" min={0} max={32} value={options.iterations} disabled={!ready} onChange={event => update({ iterations: Number(event.target.value) })} /></label>}
+          {options.fill === "ltavg" && <label>填充轮数 <span className="tank-value">{options.iterations}</span><input type="range" min={0} max={32} value={options.iterations} disabled={!ready} onInput={event => update({ iterations: Number(event.currentTarget.value) })} /></label>}
         </> : <p className="form-help">用纯{options.mode === "black" ? "黑" : "白"}色合成透明像素，查看传统幻影坦克的另一幅图。</p>}
-        <label>对比度 <span className="tank-value">{Math.round(options.contrast)}</span><input type="range" min={-255} max={255} value={options.contrast} disabled={!ready} onChange={event => update({ contrast: Number(event.target.value) })} /></label>
+        <label>对比度 <span className="tank-value">{Math.round(options.contrast)}</span><input type="range" min={-255} max={255} value={options.contrast} disabled={!ready} onInput={event => update({ contrast: Number(event.currentTarget.value) })} /></label>
         <div className="tank-buttons"><button className="button" disabled={!original} aria-pressed={compare} onClick={() => setCompare(!compare)}>{compare ? "查看显形" : "对比原图"}</button><button className="button subtle" disabled={!ready} onClick={() => update({ ...tankDefaults })}>重置参数</button></div>
         {engine === "CPU" && options.mode === "prism" && options.fill === "ltavg" && <p className="form-help">当前使用 CPU 兼容填充：逐像素平均左上邻域，不使用填充轮数。</p>}
         {error && <div className="inline-error" role="alert">{error}</div>}
         <p className="form-help">仅处理静态位图，最多 64 MiB / 1600 万像素。压缩或缩放过的图片可能无法恢复里图。</p>
-        <a className={`button primary ${!result || busy || error ? "is-disabled" : ""}`} aria-disabled={!result || busy || !!error} href={result && !busy && !error ? result : undefined} download={`${asset.name.replace(/\.[^.]+$/, "")}-显形.png`} onClick={event => { if (!result || busy || error) event.preventDefault(); }}><Download size={15} />下载显形 PNG</a>
+        <button className="button primary" disabled={!result || busy || !!error || exporting} onClick={() => void download()}>{exporting ? <RotateCw size={15} className="spin" /> : <Download size={15} />}{exporting ? "正在导出 PNG" : "下载显形 PNG"}</button>
         <a className="tank-credit" href="https://prism.uyanide.com/" target="_blank" rel="noreferrer">算法来源：Prism / Uyanide</a>
         <a className="tank-credit" href={`data:text/plain;charset=utf-8,${encodeURIComponent(thirdPartyNotices)}`} download="Curio-Third-Party-Notices.txt">MIT 开源许可</a>
       </div>
