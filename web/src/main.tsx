@@ -8,6 +8,7 @@ import { TagChip } from "./TagChip";
 import { CollectionGallery, collectionEntries } from "./CollectionGallery";
 import { GroupFormation } from "./MasonryGallery";
 import { prepareGroupMedia } from "./groupMedia";
+import { navigationPath, readNavigation } from "./navigation";
 import { UploadPanel } from "./UploadPanel";
 import { Viewer } from "./Viewer";
 import * as importer from "./upload";
@@ -20,9 +21,8 @@ const viewLabels: Record<View, string> = { all: "全部素材", inbox: "未整�
 
 function App() {
   const [scope, setScope] = useState<Scope>("normal");
-  const [view, setView] = useState<View>("all");
-  const [tagId, setTagId] = useState("");
-  const [collectionId, setCollectionId] = useState("");
+  const [navigation, setNavigation] = useState(() => readNavigation(window.location.pathname, base));
+  const { view, tagId, collectionId } = navigation;
   const [query, setQuery] = useState("");
   const search = useDeferredValue(query);
   const [filters, setFilters] = useState<Filter>(emptyFilter);
@@ -82,7 +82,7 @@ function App() {
   const selectedInGroups = groups.some(group => group.assetIds.some(id => selected.has(id)));
   const allSelected = total > 0 && selected.size === total;
   const activeEntity = collectionId ? collections.find(item => item.id === collectionId) : tagId ? tags.find(item => item.id === tagId) : undefined;
-  const title = activeEntity?.name || viewLabels[view];
+  const title = activeEntity?.name || (collectionId ? "收藏集" : tagId ? "标签" : viewLabels[view]);
   const activeFilters = Object.entries(filters).filter(([, value]) => value);
   const tagDragKey = `${scope}:${view}:${tagId}:${collectionId}:${viewer?.id || ""}:${modal?.type || ""}`;
   const tagBusy = busy || loading || selectingAll;
@@ -97,15 +97,29 @@ function App() {
     setSelected(new Set()); setSelecting(false);
     lastSelected.current = -1;
   }
-  function navigate(next: View, tag = "", collection = "") {
+  function navigate(next: View, tag = "", collection = "", history: "push" | "replace" | "none" = "push") {
+    const target = { view: next, tagId: tag, collectionId: collection };
+    const path = navigationPath(target, base);
+    if (history !== "none" && window.location.pathname !== path) {
+      window.history[history === "replace" ? "replaceState" : "pushState"](null, "", path);
+    }
     cancelSelectAll();
-    setView(next); setTagId(tag); setCollectionId(collection); setSelected(new Set()); setSelecting(false); setSidebarOpen(false); setViewer(null);
+    setNavigation(target); setSelected(new Set()); setSelecting(false); setSidebarOpen(false); setViewer(null);
   }
+  const restoreNavigationEvent = useEffectEvent(() => {
+    const target = readNavigation(window.location.pathname, base);
+    navigate(target.view, target.tagId, target.collectionId, "none");
+  });
+  useEffect(() => {
+    const restore = () => restoreNavigationEvent();
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, []);
   function switchScope() {
-    cancelSelectAll();
+    navigate(view, "", "", "replace");
     setScope(value => value === "normal" ? "hidden" : "normal");
     setAssets([]); setGroups([]); setGroupPages({}); setInfo(undefined); setTags([]); setCollections([]); setJobs([]); setTotal(0); setNextOffset(null);
-    setSelected(new Set()); setSelecting(false); setViewer(null); setModal(null); setTagId(""); setCollectionId(""); setQuery(""); setFilters(emptyFilter); setFilterOpen(false); setToast("");
+    setModal(null); setQuery(""); setFilters(emptyFilter); setFilterOpen(false); setToast("");
   }
   const switchScopeEvent = useEffectEvent(switchScope);
   const selectionKeyEvent = useEffectEvent((event: KeyboardEvent) => {
