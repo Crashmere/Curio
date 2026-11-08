@@ -275,7 +275,9 @@ func requestScope(q url.Values) string {
 	return "normal"
 }
 
-const organizedSQL = `(EXISTS(SELECT 1 FROM asset_tags j WHERE j.asset_id=a.id) OR EXISTS(SELECT 1 FROM asset_collections j WHERE j.asset_id=a.id))`
+const screenshotSQL = `EXISTS(SELECT 1 FROM screenshots s WHERE s.asset_id=a.id AND s.enabled=1)`
+
+const organizedSQL = `(EXISTS(SELECT 1 FROM asset_tags j WHERE j.asset_id=a.id) OR EXISTS(SELECT 1 FROM asset_collections j WHERE j.asset_id=a.id) OR ` + screenshotSQL + `)`
 
 const assetColumns = `a.id,a.name,a.title,a.notes,a.source_url,a.author,a.kind,a.format,a.mime,a.size,a.width,a.height,a.duration,a.has_alpha,a.hidden,` + organizedSQL + `,a.starred,a.trashed_at,a.created_at,a.updated_at,a.status,a.stage,a.error,a.engine,a.progress,a.thumbnail_ext,a.preview_ext,a.purge_pending`
 

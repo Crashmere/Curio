@@ -50,6 +50,8 @@ Normal and hidden modes use the same data and recovery rules. New page loads def
 
 Game screenshot activation adds catalog tables and performs one transactional filename-recognition pass over existing assets and source observations. It does not rewrite original files, existing asset rows or memberships. The `catalog_features` marker prevents repeated backfills; manual screenshot corrections survive restarts and duplicate imports. Rehearse this migration on isolated data and obtain migration authorization before its first production release on `nas`. No new runtime, data root or external game service is required.
 
+Game recordings reuse these catalog tables and the ordinary video processing/playback pipeline. The explicit game-upload target, All Materials exclusion and derived organization predicate require no new backfill, database rewrite, runtime or filesystem layout. Existing classifications and originals remain in place when deploying these rules on `nas`.
+
 ## Initial Installation
 
 Use server-operations and explicitly read each target's `/opt/AGENTS.md`. Verify the complete application inventory and live port 18088 on `nas`, `ali` and `vps` before adding resources. Installation creates a new empty Curio catalog only; it refuses existing directories, units or identities and does not import user media.

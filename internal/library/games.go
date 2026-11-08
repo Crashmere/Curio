@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -22,7 +23,7 @@ type Game struct {
 	LastCapturedAt string `json:"lastCapturedAt,omitempty"`
 }
 
-var steamScreenshotName = regexp.MustCompile(`(?i)^([1-9][0-9]{0,9})_([0-9]{14})_[0-9]+\.(png|jpg|jpeg)$`)
+var steamScreenshotName = regexp.MustCompile(`(?i)^([1-9][0-9]{0,9})_([0-9]{14})_[0-9]+\.([a-z0-9]+)$`)
 
 func validSteamAppID(value string) bool {
 	n, err := strconv.ParseUint(value, 10, 32)
@@ -32,6 +33,10 @@ func validSteamAppID(value string) bool {
 func parseSteamScreenshot(name string) (string, string) {
 	parts := steamScreenshotName.FindStringSubmatch(name)
 	if parts == nil || !validSteamAppID(parts[1]) {
+		return "", ""
+	}
+	format := strings.ToLower(parts[3])
+	if format != "png" && format != "jpg" && format != "jpeg" && allowedFormats[format] != "video" {
 		return "", ""
 	}
 	t, err := time.Parse("20060102150405", parts[2])
@@ -57,6 +62,9 @@ func ensureSteamGame(tx *sql.Tx, appID, scope string) (string, error) {
 }
 
 func recordScreenshot(tx *sql.Tx, hash string, h UploadHints) error {
+	if !h.Screenshot && h.GameID == "" {
+		return nil
+	}
 	var present int
 	if err := tx.QueryRow("SELECT count(*) FROM screenshots WHERE asset_id=?", hash).Scan(&present); err != nil {
 		return err
@@ -67,11 +75,11 @@ func recordScreenshot(tx *sql.Tx, hash string, h UploadHints) error {
 	}
 	appID, captured := parseSteamScreenshot(h.Name)
 	gameID, source := h.GameID, "steam"
-	if gameID == "" && appID == "" && !h.Screenshot {
-		return nil
+	var kind string
+	if err := tx.QueryRow("SELECT kind FROM assets WHERE id=?", hash).Scan(&kind); err != nil {
+		return err
 	}
-	format := strings.ToLower(h.Name[strings.LastIndex(h.Name, ".")+1:])
-	if allowedFormats[format] != "image" {
+	if !supportsGameMedia(kind) {
 		return nil
 	}
 	if gameID != "" {
@@ -138,7 +146,7 @@ func backfillScreenshots(db *sql.DB) error {
 		return err
 	}
 	for _, c := range candidates {
-		if err = recordScreenshot(tx, c.hash, UploadHints{Name: c.name, Scope: c.scope}); err != nil {
+		if err = recordScreenshot(tx, c.hash, UploadHints{Name: c.name, Scope: c.scope, Screenshot: true}); err != nil {
 			return err
 		}
 	}
@@ -148,16 +156,62 @@ func backfillScreenshots(db *sql.DB) error {
 	return tx.Commit()
 }
 
+func supportsGameMedia(kind string) bool {
+	return kind == "image" || kind == "video"
+}
+
 func patchScreenshot(tx *sql.Tx, hash string, p assetPatch) error {
 	if p.Screenshot == nil && p.GameID == nil && p.CapturedAt == nil {
 		return nil
 	}
-	var kind string
-	if err := tx.QueryRow("SELECT kind FROM assets WHERE id=?", hash).Scan(&kind); err != nil {
+	var kind, name, scope string
+	if err := tx.QueryRow("SELECT a.kind,a.name,CASE WHEN "+effectiveHidden+" THEN 'hidden' ELSE 'normal' END FROM assets a WHERE a.id=?", hash).Scan(&kind, &name, &scope); err != nil {
 		return err
 	}
-	if kind != "image" {
-		return fmt.Errorf("游戏截图仅支持静态图片")
+	if !supportsGameMedia(kind) {
+		return fmt.Errorf("游戏截图支持静态图片和视频")
+	}
+	if p.Screenshot != nil && *p.Screenshot && p.GameID == nil {
+		var enabled bool
+		err := tx.QueryRow("SELECT enabled FROM screenshots WHERE asset_id=?", hash).Scan(&enabled)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if enabled && p.CapturedAt == nil {
+			return nil
+		}
+		// Explicit organization can re-enable an opt-out; duplicate imports cannot.
+		if _, err = tx.Exec("DELETE FROM screenshots WHERE asset_id=? AND enabled=0", hash); err != nil {
+			return err
+		}
+		if appID, _ := parseSteamScreenshot(name); appID == "" {
+			rows, err := tx.Query("SELECT name FROM sources WHERE asset_id=? ORDER BY created_at,id", hash)
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				var candidate string
+				if err = rows.Scan(&candidate); err != nil {
+					rows.Close()
+					return err
+				}
+				if appID, _ := parseSteamScreenshot(candidate); appID != "" {
+					name = candidate
+					break
+				}
+			}
+			err = rows.Err()
+			rows.Close()
+			if err != nil {
+				return err
+			}
+		}
+		if err = recordScreenshot(tx, hash, UploadHints{Name: filepath.Base(name), Scope: scope, Screenshot: true}); err != nil {
+			return err
+		}
+		if p.CapturedAt == nil {
+			return nil
+		}
 	}
 	if p.GameID != nil && *p.GameID != "" {
 		var exists int

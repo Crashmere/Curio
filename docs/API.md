@@ -24,19 +24,21 @@ The same endpoints serve both scopes. Counts, search, tags, collection covers, i
 | `GET /api/jobs` | Up to 120 current/recent scoped processing or deletion tasks, with stage, engine, progress and error |
 | `GET /api/uploads` | Up to 120 incomplete uploads, filtered by their upload scope and associated hidden tags/collections before pagination |
 
-An asset includes `id`, original `name`, editable `title`, `notes`, `sourceUrl`, `author`, `kind`, `format`, `mime`, `size`, `width`, `height`, `duration`, `hasAlpha`, `hidden`, `effectiveHidden`, `hiddenReasons`, `organized`, `starred`, `trashedAt`, timestamps, processing fields, `tags`, `collections` and media/download URLs. `hidden` is only its own flag; `effectiveHidden` includes membership inheritance. Each hidden reason identifies its `kind`, `id` and `name`. `organized` is read-only and true exactly when the asset has at least one tag or collection, including hidden containers. The `unorganized` filter and count use the opposite predicate within the requested scope.
+An asset includes `id`, original `name`, editable `title`, `notes`, `sourceUrl`, `author`, `kind`, `format`, `mime`, `size`, `width`, `height`, `duration`, `hasAlpha`, `hidden`, `effectiveHidden`, `hiddenReasons`, `organized`, `starred`, `trashedAt`, timestamps, processing fields, `tags`, `collections` and media/download URLs. `hidden` is only its own flag; `effectiveHidden` includes membership inheritance. Each hidden reason identifies its `kind`, `id` and `name`. `organized` is read-only and true when the asset has a tag, collection or enabled screenshot classification, including hidden containers and unassigned game media. The `unorganized` filter and count use the opposite predicate within the requested scope.
+
+`GET /api/info` returns `total` for live non-screenshot assets and `screenshots` for live classified game media. Their sum is the live catalog count in that scope. Stars, trash, jobs and `bytes` still span both categories. The browser's All Materials view uses `screenshot=0`; an asset list with neither screenshot nor game filters spans both categories.
 
 Asset list filters are parallel query parameters:
 
 | Parameter | Values or units |
 | --- | --- |
-| `q` | Name, title, notes, source, author, tag or collection keyword |
+| `q` | Name, title, notes, source, author, tag, collection, game name or Steam App ID |
 | `ids` | Optional comma-separated selection of up to 2000 media IDs for scoped status refresh |
 | `kind` | `image`, `animation`, `video` |
 | `tag`, `collection` | One container ID each |
 | `group` | One collection group ID; all other media filters still apply |
 | `grouped` | `1` with `collection` pages by ungrouped media and one anchor per matching group; ignored with `group` or `ids` |
-| `screenshot` | `1` selects game screenshots |
+| `screenshot` | `1` selects game media (images and recordings); `0` excludes it; omitted includes both categories |
 | `game` | Game registry ID, or `unassigned` for screenshots without a game |
 | `format` | Lowercase original extension, such as `png` or `mp4` |
 | `starred`, `unorganized`, `trash` | `1` enables the corresponding selection; ordinary lists exclude trash |
@@ -103,7 +105,9 @@ Assets additionally expose `screenshot`, `capturedAt`, optional `screenshotSourc
 
 `POST /api/games` creates a game from `name` and optional `steamAppId`. At least one must be nonempty; Steam IDs are canonical positive unsigned 32-bit decimal strings and globally unique. An already registered Steam ID returns HTTP 409 rather than changing its name. `PATCH /api/games/{id}` edits `name` for a game available in the request scope. Its Steam identity remains unchanged; non-Steam games require a nonempty name.
 
-Single and batch asset patches accept `screenshot`, `gameId` and `capturedAt`. Setting a game or time enables screenshot classification; an empty `gameId` removes only the game association, and an empty `capturedAt` marks time unknown. `screenshot:false` disables classification and clears the game/time while retaining a manual opt-out. These fields require static-image assets and are applied atomically with the existing metadata patch. Omitted capture time is preserved, including in batch assignment. Reimporting identical bytes never overwrites existing screenshot metadata or a manual opt-out.
+Single and batch asset patches accept `screenshot`, `gameId` and `capturedAt` for static images and videos, applied atomically with the existing metadata patch. `screenshot:true` without `gameId` automatically classifies new or explicitly re-enabled members from original/source filenames; unrecognized names remain unassigned with unknown time. Already enabled members preserve their game, time and source. An accompanying `capturedAt` overrides only the time after classification.
+
+Setting `gameId` or `capturedAt` explicitly enables classification. An empty `gameId` removes only the game association, and an empty `capturedAt` marks time unknown. `screenshot:false` disables classification and clears game/time while retaining a manual opt-out. Omitted capture time is preserved in explicit single/batch game assignment. Reimporting identical bytes never overwrites existing screenshot metadata or a manual opt-out. Classification makes an asset organized and excludes it from `screenshot=0`; disabling it returns the asset to ordinary material and, when it has no tags or collections, to the inbox.
 
 ## Resumable Uploads
 
@@ -130,7 +134,7 @@ Preparation body:
 
 The filename is treated as a basename. `scope` defaults to the request query scope when omitted; it determines only the default hidden flag for a newly committed asset. Optional memberships are applied to the collected asset. Preparation returns `id`, `offset`, `size`, `complete` and `chunkSize`; complete results also include `assetId`. An existing byte-identical asset with its original present returns `complete:true` and `duplicate:true`, records new source observations/memberships and preserves its existing manual flags, metadata and trash state.
 
-Optional `gameId` identifies an explicit screenshot upload target; `screenshot:true` classifies otherwise unrecognized static images without requiring a game. PNG/JPEG basenames matching `<Steam-app-id>_<YYYYMMDDHHmmss>_<numeric-suffix>.<extension>` automatically provide a game and valid local capture time. An explicit game target takes precedence for a newly classified asset. Existing screenshot metadata remains unchanged on duplicate preparation or original repair.
+Optional `gameId` or `screenshot:true` explicitly targets game screenshots, including video recordings. Only uploads with that target recognize PNG/JPEG or supported video basenames matching `<Steam-app-id>_<YYYYMMDDHHmmss>_<numeric-suffix>.<extension>` and supply a game plus valid local capture time. Matching IDs reuse existing games or create a game for a new ID; unmatched names enter unassigned game media. An explicit game target takes precedence for a newly classified asset. Uploads without either target remain ordinary material even with matching Steam names; without tags/collections they enter the inbox. Existing screenshot metadata remains unchanged on duplicate preparation or original repair.
 
 `GET /api/uploads/{id}` is the authoritative upload status. `PUT /api/uploads/{id}` sends `Content-Type: application/octet-stream` and an integer `Upload-Offset` header; an `offset` query parameter is accepted when the header is absent. Each body must fit both the advertised 128 MiB maximum and the remaining original length.
 

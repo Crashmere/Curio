@@ -5,6 +5,7 @@ export type Entity = { id: string; name: string; hidden: boolean; count: number;
 export type Game = { id: string; name: string; steamAppId: string; count: number; coverUrl?: string; lastCapturedAt?: string };
 export const gameLabel = (game: Game) => game.name || `Steam ${game.steamAppId}`;
 export const captureLabel = (time: string) => time ? time.replace("T", " ") : "截图时间未知";
+export const supportsGameMedia = (asset: Asset) => asset.kind === "image" || asset.kind === "video";
 export type HiddenReason = { kind: string; id: string; name: string };
 export type Asset = {
   id: string;
