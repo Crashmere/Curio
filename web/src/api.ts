@@ -1,7 +1,10 @@
 export const base = import.meta.env.BASE_URL;
 export type Scope = "normal" | "hidden";
-export type View = "all" | "inbox" | "starred" | "collections" | "tags" | "trash" | "jobs";
+export type View = "all" | "inbox" | "starred" | "collections" | "tags" | "trash" | "jobs" | "games" | "screenshots";
 export type Entity = { id: string; name: string; hidden: boolean; count: number; coverUrl?: string };
+export type Game = { id: string; name: string; steamAppId: string; count: number; coverUrl?: string; lastCapturedAt?: string };
+export const gameLabel = (game: Game) => game.name || `Steam ${game.steamAppId}`;
+export const captureLabel = (time: string) => time ? time.replace("T", " ") : "截图时间未知";
 export type HiddenReason = { kind: string; id: string; name: string };
 export type Asset = {
   id: string;
@@ -31,6 +34,10 @@ export type Asset = {
   downloadUrl: string;
   tags: Entity[];
   collections: Entity[];
+  screenshot: boolean;
+  game?: Game;
+  capturedAt: string;
+  screenshotSource?: "steam" | "manual";
   status: string;
   error: string;
 };
@@ -43,13 +50,14 @@ export type PlaybackDescriptor = {
 };
 export type Info = {
   name: string; version: string;
-  total: number; starred: number; unorganized: number; trash: number; bytes: number; queued: number; errors: number;
+  total: number; screenshots: number; starred: number; unorganized: number; trash: number; bytes: number; queued: number; errors: number;
   chunkSize: number;
 };
 export type AssetPage = { items: Asset[]; total: number; nextOffset: number | null };
 export type MediaGroup = { id: string; assetIds: string[] };
 export type Patch = {
   title?: string; notes?: string; author?: string; sourceUrl?: string;
+  screenshot?: boolean; gameId?: string; capturedAt?: string;
   hidden?: boolean; starred?: boolean; trash?: boolean;
   addTagIds?: string[]; removeTagIds?: string[];
   addCollectionIds?: string[]; removeCollectionIds?: string[];

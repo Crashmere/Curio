@@ -70,42 +70,46 @@ type Container struct {
 }
 
 type Asset struct {
-	ID              string         `json:"id"`
-	Name            string         `json:"name"`
-	Title           string         `json:"title"`
-	Notes           string         `json:"notes"`
-	SourceURL       string         `json:"sourceUrl"`
-	Author          string         `json:"author"`
-	Kind            string         `json:"kind"`
-	Format          string         `json:"format"`
-	MIME            string         `json:"mime"`
-	Size            int64          `json:"size"`
-	Width           int            `json:"width"`
-	Height          int            `json:"height"`
-	Duration        float64        `json:"duration"`
-	HasAlpha        bool           `json:"hasAlpha"`
-	Hidden          bool           `json:"hidden"`
-	EffectiveHidden bool           `json:"effectiveHidden"`
-	HiddenReasons   []HiddenReason `json:"hiddenReasons"`
-	Organized       bool           `json:"organized"`
-	Starred         bool           `json:"starred"`
-	TrashedAt       string         `json:"trashedAt"`
-	CreatedAt       string         `json:"createdAt"`
-	UpdatedAt       string         `json:"updatedAt"`
-	Status          string         `json:"status"`
-	Stage           string         `json:"stage"`
-	Error           string         `json:"error"`
-	Engine          string         `json:"engine"`
-	Progress        float64        `json:"progress"`
-	Tags            []Container    `json:"tags"`
-	Collections     []Container    `json:"collections"`
-	ThumbnailURL    string         `json:"thumbnailUrl"`
-	PreviewURL      string         `json:"previewUrl"`
-	OriginalURL     string         `json:"originalUrl"`
-	DownloadURL     string         `json:"downloadUrl"`
-	thumbnailExt    string
-	previewExt      string
-	purgePending    bool
+	ID               string         `json:"id"`
+	Name             string         `json:"name"`
+	Title            string         `json:"title"`
+	Notes            string         `json:"notes"`
+	SourceURL        string         `json:"sourceUrl"`
+	Author           string         `json:"author"`
+	Kind             string         `json:"kind"`
+	Format           string         `json:"format"`
+	MIME             string         `json:"mime"`
+	Size             int64          `json:"size"`
+	Width            int            `json:"width"`
+	Height           int            `json:"height"`
+	Duration         float64        `json:"duration"`
+	HasAlpha         bool           `json:"hasAlpha"`
+	Hidden           bool           `json:"hidden"`
+	EffectiveHidden  bool           `json:"effectiveHidden"`
+	HiddenReasons    []HiddenReason `json:"hiddenReasons"`
+	Organized        bool           `json:"organized"`
+	Starred          bool           `json:"starred"`
+	TrashedAt        string         `json:"trashedAt"`
+	CreatedAt        string         `json:"createdAt"`
+	UpdatedAt        string         `json:"updatedAt"`
+	Status           string         `json:"status"`
+	Stage            string         `json:"stage"`
+	Error            string         `json:"error"`
+	Engine           string         `json:"engine"`
+	Progress         float64        `json:"progress"`
+	Tags             []Container    `json:"tags"`
+	Collections      []Container    `json:"collections"`
+	Screenshot       bool           `json:"screenshot"`
+	Game             *Game          `json:"game,omitempty"`
+	CapturedAt       string         `json:"capturedAt"`
+	ScreenshotSource string         `json:"screenshotSource,omitempty"`
+	ThumbnailURL     string         `json:"thumbnailUrl"`
+	PreviewURL       string         `json:"previewUrl"`
+	OriginalURL      string         `json:"originalUrl"`
+	DownloadURL      string         `json:"downloadUrl"`
+	thumbnailExt     string
+	previewExt       string
+	purgePending     bool
 }
 
 const schema = `
@@ -140,6 +144,17 @@ CREATE TABLE IF NOT EXISTS collection_group_assets (
 CREATE INDEX IF NOT EXISTS collection_group_assets_group ON collection_group_assets(group_id,asset_id);
 CREATE TABLE IF NOT EXISTS uploads (id TEXT PRIMARY KEY, hints TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'uploading', offset INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sources (id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE, name TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(asset_id,name));
+CREATE TABLE IF NOT EXISTS games (
+ id TEXT PRIMARY KEY, steam_app_id TEXT UNIQUE, name TEXT NOT NULL DEFAULT '',
+ created_scope TEXT NOT NULL DEFAULT 'normal', created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS screenshots (
+ asset_id TEXT PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
+ game_id TEXT REFERENCES games(id), captured_at TEXT NOT NULL DEFAULT '',
+ enabled INTEGER NOT NULL DEFAULT 1, source TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS screenshots_game_time ON screenshots(game_id,enabled,captured_at,asset_id);
+CREATE TABLE IF NOT EXISTS catalog_features (name TEXT PRIMARY KEY);
 CREATE INDEX IF NOT EXISTS asset_tags_tag ON asset_tags(tag_id,asset_id);
 CREATE INDEX IF NOT EXISTS asset_collections_collection ON asset_collections(collection_id,asset_id);
 CREATE INDEX IF NOT EXISTS assets_time ON assets(trashed_at,created_at DESC,id);
@@ -183,6 +198,10 @@ func open(root string) (*Library, error) {
 	}
 	db.SetMaxOpenConns(1)
 	if _, err = db.Exec(schema); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err = backfillScreenshots(db); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -337,6 +356,30 @@ func (l *Library) hydrate(items []Asset) error {
 	}
 	for i := range items {
 		items[i].EffectiveHidden = len(items[i].HiddenReasons) > 0
+	}
+	rows, err := l.DB.Query(`SELECT s.asset_id,s.captured_at,s.source,g.id,COALESCE(g.steam_app_id,''),COALESCE(g.name,'')
+ FROM screenshots s LEFT JOIN games g ON g.id=s.game_id WHERE s.enabled=1 AND s.asset_id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var hash string
+		var gameID sql.NullString
+		var game Game
+		var captured, source string
+		if err = rows.Scan(&hash, &captured, &source, &gameID, &game.SteamAppID, &game.Name); err != nil {
+			return err
+		}
+		a := &items[lookup[hash]]
+		a.Screenshot, a.CapturedAt, a.ScreenshotSource = true, captured, source
+		if gameID.Valid {
+			game.ID = gameID.String
+			a.Game = &game
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return err
 	}
 	return nil
 }

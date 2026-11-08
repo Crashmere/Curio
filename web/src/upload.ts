@@ -1,7 +1,7 @@
 import { api, ApiError, base, Scope, UploadSession } from "./api";
 
 export type UploadItem = {
-  id: string; file: File; name: string; scope: Scope; tagIds: string[]; collectionIds: string[];
+  id: string; file: File; name: string; scope: Scope; tagIds: string[]; collectionIds: string[]; gameId: string; screenshot: boolean;
   state: "waiting" | "reading" | "uploading" | "verifying" | "done" | "duplicate" | "error";
   progress: number; hash?: string; assetId?: string; error?: string;
 };
@@ -41,16 +41,16 @@ export function subscribe(listener: () => void) {
   listeners.add(listener);
   return () => { listeners.delete(listener); };
 }
-export function addFiles(files: File[], scope: Scope, tagIds: string[] = [], collectionIds: string[] = []) {
+export function addFiles(files: File[], scope: Scope, tagIds: string[] = [], collectionIds: string[] = [], gameId = "", screenshot = false) {
   let skipped = 0;
-  const keyFor = (file: File, scope: Scope, tagIds: string[], collectionIds: string[]) =>
-    JSON.stringify([file.webkitRelativePath || file.name, file.size, file.lastModified, scope, [...tagIds].sort(), [...collectionIds].sort()]);
-  const seen = new Set(state.items.map(item => keyFor(item.file, item.scope, item.tagIds, item.collectionIds)));
+  const keyFor = (file: File, scope: Scope, tagIds: string[], collectionIds: string[], gameId: string, screenshot: boolean) =>
+    JSON.stringify([file.webkitRelativePath || file.name, file.size, file.lastModified, scope, [...tagIds].sort(), [...collectionIds].sort(), gameId, screenshot]);
+  const seen = new Set(state.items.map(item => keyFor(item.file, item.scope, item.tagIds, item.collectionIds, item.gameId, item.screenshot)));
   for (const file of files) {
     if (!file.size || (!supported.test(file.name) && !/^(image|video)\//.test(file.type))) { skipped++; continue; }
-    const key = keyFor(file, scope, tagIds, collectionIds);
+    const key = keyFor(file, scope, tagIds, collectionIds, gameId, screenshot);
     if (seen.has(key)) continue;
-    state.items.push({ id: crypto.randomUUID(), file, name: file.webkitRelativePath || file.name, scope, tagIds: [...tagIds], collectionIds: [...collectionIds], state: "waiting", progress: 0 });
+    state.items.push({ id: crypto.randomUUID(), file, name: file.webkitRelativePath || file.name, scope, tagIds: [...tagIds], collectionIds: [...collectionIds], gameId, screenshot, state: "waiting", progress: 0 });
     seen.add(key);
   }
   emit();
@@ -163,7 +163,7 @@ async function transfer(item: UploadItem, lane: Lane, pending: Map<string, Promi
   await withHash(item.hash, pending, signal, () => upload(item, signal));
 }
 async function upload(item: UploadItem, signal: AbortSignal) {
-  let session = await api<UploadSession>("uploads", { hash: item.hash, name: item.file.name, size: item.file.size, mime: item.file.type, scope: item.scope, tagIds: item.tagIds, collectionIds: item.collectionIds }, undefined, signal);
+  let session = await api<UploadSession>("uploads", { hash: item.hash, name: item.file.name, size: item.file.size, mime: item.file.type, scope: item.scope, tagIds: item.tagIds, collectionIds: item.collectionIds, gameId: item.gameId, screenshot: item.screenshot }, undefined, signal);
   validate(session, item.file.size);
   item.assetId = session.assetId;
   if (session.complete) {

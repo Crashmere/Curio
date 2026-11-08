@@ -15,7 +15,7 @@
       "id": "data",
       "name": "业务数据",
       "path": "/opt/curio/data",
-      "purpose": "媒体目录、标签、收藏集、无名称分组与关联，标题、来源和备注，普通与隐藏展示标记，星标、回收站、持久上传、处理和永久删除意图；未整理按标签与收藏集关联自动判断。",
+      "purpose": "媒体目录、标签、收藏集、无名称分组与关联，游戏 ID 与名称映射、截图时间和手动归类，标题、来源和备注，普通与隐藏展示标记，星标、回收站、持久上传、处理和永久删除意图；未整理按标签与收藏集关联自动判断。",
       "kind": "data",
       "browse": true,
       "cleanup": false
@@ -96,6 +96,9 @@
   "apis": [
     {"method": "GET", "path": "/healthz", "description": "数据库连接健康"},
     {"method": "GET", "path": "/api/info", "description": "当前展示范围的数量、体积、任务状态和上传能力"},
+    {"method": "GET", "path": "/api/games", "description": "当前范围的游戏、Steam App ID、截图数量、时间与封面"},
+    {"method": "POST", "path": "/api/games", "description": "创建 Steam ID 映射或其他平台游戏"},
+    {"method": "PATCH", "path": "/api/games/{id}", "description": "编辑游戏名称，应用到该游戏全部截图与后续导入"},
     {"method": "GET", "path": "/api/playback/{id}", "description": "视频原件播放能力、按需分段地址和透明视频兼容提示"},
     {"method": "GET", "path": "/api/assets", "description": "按范围、关键词、标签、收藏集、类型、格式、尺寸、时长和大小分页查询媒体"},
     {"method": "PATCH", "path": "/api/assets", "description": "原子批量修改元数据、标签与收藏集关联、星标、隐藏和回收站，整理状态由关联自动判断"},

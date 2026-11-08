@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Check, CircleAlert, EyeOff, Folder, Image, Layers3, RotateCw, Star, Video } from "lucide-react";
-import { Asset, duration, Entity } from "./api";
+import { Asset, captureLabel, duration, Entity, gameLabel } from "./api";
 import { kindNames } from "./components";
 import { TagChip } from "./TagChip";
 
@@ -21,6 +21,7 @@ export function MediaCard({ asset, tagId, collectionId, selected, selecting, act
     </button>
     <button className={`select-media ${selected ? "checked" : ""} ${selecting ? "show" : ""}`} aria-label={selected ? "取消选择" : "选择素材"} aria-pressed={selected} onClick={event => select(event.shiftKey)}>{selected && <Check size={13} />}</button>
     <div className="media-caption"><span title={asset.title || asset.name}>{asset.title || asset.name}</span>{asset.effectiveHidden && <EyeOff size={11} />}</div>
+    {asset.screenshot && <div className="screenshot-caption"><span>{asset.game ? gameLabel(asset.game) : "未指定游戏"}</span><time>{captureLabel(asset.capturedAt)}</time></div>}
     {!!(otherCollections.length || otherTags.length) && <div className="media-memberships" aria-label="收藏集和标签">
       {otherCollections.map(collection => <span className="media-membership collection" key={collection.id} title={`收藏集：${collection.name}`}><Folder size={10} /><span>{collection.name}</span></span>)}
       {otherTags.map(tag => <TagChip className="media-membership tag" key={tag.id} tag={tag} assetId={asset.id} cancelKey={tagDragKey} disabled={tagBusy || !active} change={changeTag} />)}

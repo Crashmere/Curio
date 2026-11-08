@@ -1,7 +1,8 @@
 import { CSSProperties, StrictMode, useDeferredValue, useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowDownWideNarrow, Check, ChevronDown, CircleAlert, Download, Eye, EyeOff, Folder, Grid2X2, Group, Image, Inbox, Layers3, Menu, MoreHorizontal, Plus, RefreshCw, RotateCw, Search, SlidersHorizontal, Star, Tag, Trash2, Ungroup, Unlink, Upload, X } from "lucide-react";
-import { api, Asset, AssetPage, base, bytes, Entity, Info, Job, MediaGroup, Patch, Scope, scoped, View } from "./api";
+import { ArrowDownWideNarrow, Check, ChevronDown, CircleAlert, Download, Eye, EyeOff, Folder, Gamepad2, Grid2X2, Group, Image, Inbox, Layers3, Menu, MoreHorizontal, Plus, RefreshCw, RotateCw, Search, SlidersHorizontal, Star, Tag, Trash2, Ungroup, Unlink, Upload, X } from "lucide-react";
+import { api, Asset, AssetPage, base, bytes, Entity, Game, gameLabel, Info, Job, MediaGroup, Patch, Scope, scoped, View } from "./api";
+import { GameEditor, GamesGrid, ScreenshotEditor } from "./Games";
 import { Dialog, Empty, isTextInput, stateNames } from "./components";
 import { MediaCard } from "./MediaCard";
 import { TagChip } from "./TagChip";
@@ -16,17 +17,17 @@ import "./style.css";
 
 type Filter = { kind: string; format: string; aspect: string; minWidth: string; minHeight: string; maxWidth: string; maxHeight: string; minDuration: string; maxDuration: string; minSize: string; maxSize: string };
 const emptyFilter: Filter = { kind: "", format: "", aspect: "", minWidth: "", minHeight: "", maxWidth: "", maxHeight: "", minDuration: "", maxDuration: "", minSize: "", maxSize: "" };
-type Modal = { type: "upload" } | { type: "entity"; kind: "tags" | "collections"; entity?: Entity } | { type: "organize"; ids: string[] } | { type: "purge"; ids: string[] } | { type: "remove-entity"; kind: "tags" | "collections"; entity: Entity };
-const viewLabels: Record<View, string> = { all: "全部素材", inbox: "未整理", starred: "星标", collections: "收藏集", tags: "标签", trash: "回收站", jobs: "任务中心" };
+type Modal = { type: "upload" } | { type: "game"; game?: Game } | { type: "screenshots"; ids: string[] } | { type: "entity"; kind: "tags" | "collections"; entity?: Entity } | { type: "organize"; ids: string[] } | { type: "purge"; ids: string[] } | { type: "remove-entity"; kind: "tags" | "collections"; entity: Entity };
+const viewLabels: Record<View, string> = { all: "全部素材", inbox: "未整理", starred: "星标", collections: "收藏集", tags: "标签", trash: "回收站", jobs: "任务中心", games: "游戏截图", screenshots: "全部游戏截图" };
 
 function App() {
   const [scope, setScope] = useState<Scope>("normal");
   const [navigation, setNavigation] = useState(() => readNavigation(window.location.pathname, base));
-  const { view, tagId, collectionId } = navigation;
+  const { view, tagId, collectionId, gameId } = navigation;
   const [query, setQuery] = useState("");
   const search = useDeferredValue(query);
   const [filters, setFilters] = useState<Filter>(emptyFilter);
-  const [sort, setSort] = useState("newest");
+  const [sort, setSort] = useState(() => navigation.view === "screenshots" ? "capturedNewest" : "newest");
   const [density, setDensity] = useState(225);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [groups, setGroups] = useState<MediaGroup[]>([]);
@@ -38,9 +39,10 @@ function App() {
   const [info, setInfo] = useState<Info>();
   const [tags, setTags] = useState<Entity[]>([]);
   const [collections, setCollections] = useState<Entity[]>([]);
+  const [games, setGames] = useState<Game[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
-  const contentKey = JSON.stringify([scope, view, tagId, collectionId]);
+  const contentKey = JSON.stringify([scope, view, tagId, collectionId, gameId]);
   const [loadedKey, setLoadedKey] = useState("");
   const contentReady = loadedKey === contentKey;
   const [loadingMore, setLoadingMore] = useState(false);
@@ -71,7 +73,7 @@ function App() {
   const uploading = uploads.filter(item => ["waiting", "reading", "uploading", "verifying"].includes(item.state)).length;
   const notify = (message: string) => setToast(message);
   const changed = () => setRefresh(value => value + 1);
-  const assetView = !["tags", "collections", "jobs"].includes(view);
+  const assetView = !["tags", "collections", "jobs", "games"].includes(view);
   const hasMore = nextOffset !== null && nextOffset !== undefined && nextOffset < total;
   const canAutoLoadMore = assetView && contentReady && hasMore && !loading && !loadingMore && !loadMoreFailed && !error && !selectingAll && !busy && !modal && !viewer;
   const entries = collectionEntries(assets, collectionId ? groups : [], groupPages);
@@ -82,9 +84,10 @@ function App() {
   const selectedInGroups = groups.some(group => group.assetIds.some(id => selected.has(id)));
   const allSelected = total > 0 && selected.size === total;
   const activeEntity = collectionId ? collections.find(item => item.id === collectionId) : tagId ? tags.find(item => item.id === tagId) : undefined;
-  const title = activeEntity?.name || (collectionId ? "收藏集" : tagId ? "标签" : viewLabels[view]);
+  const activeGame = games.find(game => game.id === gameId);
+  const title = activeGame ? gameLabel(activeGame) : gameId === "unassigned" ? "未指定游戏" : activeEntity?.name || (collectionId ? "收藏集" : tagId ? "标签" : viewLabels[view]);
   const activeFilters = Object.entries(filters).filter(([, value]) => value);
-  const tagDragKey = `${scope}:${view}:${tagId}:${collectionId}:${viewer?.id || ""}:${modal?.type || ""}`;
+  const tagDragKey = `${scope}:${view}:${tagId}:${collectionId}:${gameId}:${viewer?.id || ""}:${modal?.type || ""}`;
   const tagBusy = busy || loading || selectingAll;
 
   function cancelSelectAll() {
@@ -97,18 +100,20 @@ function App() {
     setSelected(new Set()); setSelecting(false);
     lastSelected.current = -1;
   }
-  function navigate(next: View, tag = "", collection = "", history: "push" | "replace" | "none" = "push") {
-    const target = { view: next, tagId: tag, collectionId: collection };
+  function navigate(next: View, tag = "", collection = "", history: "push" | "replace" | "none" = "push", game = "") {
+    const target = { view: next, tagId: tag, collectionId: collection, gameId: game };
     const path = navigationPath(target, base);
     if (history !== "none" && window.location.pathname !== path) {
       window.history[history === "replace" ? "replaceState" : "pushState"](null, "", path);
     }
     cancelSelectAll();
+    if (next === "screenshots" && view !== "screenshots") { setSort("capturedNewest"); setFilters(previous => ({ ...previous, kind: "" })); }
+    else if (next !== "screenshots" && view === "screenshots") setSort("newest");
     setNavigation(target); setSelected(new Set()); setSelecting(false); setSidebarOpen(false); setViewer(null);
   }
   const restoreNavigationEvent = useEffectEvent(() => {
     const target = readNavigation(window.location.pathname, base);
-    navigate(target.view, target.tagId, target.collectionId, "none");
+    navigate(target.view, target.tagId, target.collectionId, "none", target.gameId);
   });
   useEffect(() => {
     const restore = () => restoreNavigationEvent();
@@ -118,7 +123,7 @@ function App() {
   function switchScope() {
     navigate(view, "", "", "replace");
     setScope(value => value === "normal" ? "hidden" : "normal");
-    setAssets([]); setGroups([]); setGroupPages({}); setInfo(undefined); setTags([]); setCollections([]); setJobs([]); setTotal(0); setNextOffset(null);
+    setAssets([]); setGroups([]); setGroupPages({}); setInfo(undefined); setTags([]); setCollections([]); setGames([]); setJobs([]); setTotal(0); setNextOffset(null);
     setModal(null); setQuery(""); setFilters(emptyFilter); setFilterOpen(false); setToast("");
   }
   const switchScopeEvent = useEffectEvent(switchScope);
@@ -165,13 +170,13 @@ function App() {
     const timer = setTimeout(() => setToast(""), 4500);
     return () => clearTimeout(timer);
   }, [toast]);
-  function receiveFiles(files: File[], target = { scope, tagId, collectionId }) {
-    const skipped = importer.addFiles(files, target.scope, target.tagId ? [target.tagId] : [], target.collectionId ? [target.collectionId] : []);
+  function receiveFiles(files: File[], target = { scope, tagId, collectionId, gameId, screenshot: view === "screenshots" || view === "games" }) {
+    const skipped = importer.addFiles(files, target.scope, target.tagId ? [target.tagId] : [], target.collectionId ? [target.collectionId] : [], target.gameId === "unassigned" ? "" : target.gameId, target.screenshot);
     setModal({ type: "upload" });
     if (skipped) notify(`已跳过 ${skipped} 个空文件或不支持的文件`);
   }
   const receiveFilesEvent = useEffectEvent(receiveFiles);
-  const dropTargetEvent = useEffectEvent(() => ({ scope, tagId, collectionId }));
+  const dropTargetEvent = useEffectEvent(() => ({ scope, tagId, collectionId, gameId, screenshot: view === "screenshots" || view === "games" }));
   useEffect(() => {
     let depth = 0;
     let internalDrag = false;
@@ -224,6 +229,8 @@ function App() {
     if (view === "starred") params.set("starred", "1");
     if (view === "inbox") params.set("unorganized", "1");
     if (view === "trash") params.set("trash", "1");
+    if (view === "screenshots") params.set("screenshot", "1");
+    if (gameId) params.set("game", gameId);
     for (const [key, value] of Object.entries(filters)) if (value) params.set(key, key === "minSize" || key === "maxSize" ? String(Number(value) * 1024 * 1024) : value);
     return `assets?${params}`;
   }
@@ -265,17 +272,19 @@ function App() {
     setLoading(true); setLoadingMore(false); setLoadMoreFailed(false); setError("");
     const load = async () => {
       try {
-        const [information, tagList, collectionList, content, groupList] = await Promise.all([
+        const [information, tagList, collectionList, content, groupList, gameList] = await Promise.all([
           api<Info>(scoped("info", scope), undefined, undefined, controller.signal),
           api<{ items: Entity[] }>(scoped("tags", scope), undefined, undefined, controller.signal),
           api<{ items: Entity[] }>(scoped("collections", scope), undefined, undefined, controller.signal),
           assetView ? loadPages(controller.signal) : view === "jobs" ? api<{ items: Job[] }>(scoped("jobs", scope), undefined, undefined, controller.signal) : Promise.resolve(null),
-          collectionId ? api<{ items: MediaGroup[] }>(groupsPath(), undefined, undefined, controller.signal) : Promise.resolve({ items: [] })
+          collectionId ? api<{ items: MediaGroup[] }>(groupsPath(), undefined, undefined, controller.signal) : Promise.resolve({ items: [] }),
+          api<{ items: Game[] }>(scoped("games", scope), undefined, undefined, controller.signal)
         ]);
         const prepared = assetView && content && "total" in content ? await prepareGroupMedia(content.items, groupList.items, assetPath(), controller.signal) : {};
         if (controller.signal.aborted) return;
         setLoadedKey(contentKey);
         setInfo(information); setTags(tagList.items || []); setCollections(collectionList.items || []);
+        setGames(gameList.items);
         setGroups(groupList.items);
         setGroupPages(prepared);
         if (assetView && content && "total" in content) {
@@ -293,7 +302,7 @@ function App() {
     };
     void load();
     return () => { controller.abort(); selectionRequest.current?.abort(); galleryRequest.current?.abort(); loadMoreRequest.current?.abort(); };
-  }, [scope, view, tagId, collectionId, search, filters, sort, refresh]);
+  }, [scope, view, tagId, collectionId, gameId, search, filters, sort, refresh]);
   const poll = useEffectEvent(async () => {
     if (polling.current || galleryRequest.current) return;
     polling.current = true;
@@ -301,17 +310,19 @@ function App() {
     const polledIds = [...new Set([...assets, ...Object.values(groupPages).flatMap(page => page.items)].map(asset => asset.id))].slice(0, 2000);
     const signal = AbortSignal.timeout(15000);
     try {
-      const [information, tagList, collectionList, content, currentViewer, groupList] = await Promise.all([
+      const [information, tagList, collectionList, content, currentViewer, groupList, gameList] = await Promise.all([
         api<Info>(scoped("info", scope), undefined, undefined, signal),
         api<{ items: Entity[] }>(scoped("tags", scope), undefined, undefined, signal),
         api<{ items: Entity[] }>(scoped("collections", scope), undefined, undefined, signal),
         assetView && polledIds.length ? api<AssetPage>(`${assetPath(0, 2000)}&ids=${polledIds.join(",")}`, undefined, undefined, signal) : view === "jobs" ? api<{ items: Job[] }>(scoped("jobs", scope), undefined, undefined, signal) : Promise.resolve(null),
         viewer ? api<Asset>(scoped(`assets/${viewer.id}`, scope), undefined, undefined, signal).catch(() => null) : Promise.resolve(null),
-        collectionId ? api<{ items: MediaGroup[] }>(groupsPath(), undefined, undefined, signal) : Promise.resolve({ items: [] })
+        collectionId ? api<{ items: MediaGroup[] }>(groupsPath(), undefined, undefined, signal) : Promise.resolve({ items: [] }),
+        api<{ items: Game[] }>(scoped("games", scope), undefined, undefined, signal)
       ]);
       const prepared = await prepareGroupMedia(content && "total" in content ? content.items : [...assets, ...Object.values(groupPages).flatMap(page => page.items)], groupList.items, assetPath(), signal);
       if (token !== pageToken.current) return;
       setInfo(information); setTags(tagList.items || []); setCollections(collectionList.items || []);
+      setGames(gameList.items);
       setGroups(groupList.items);
       setGroupPages(prepared);
       if (assetView && content && "total" in content) {
@@ -524,7 +535,7 @@ function App() {
     const index = galleryIndices.get(asset.id) ?? -1;
     return <MediaCard key={asset.id} asset={asset} tagId={tagId} collectionId={collectionId} selected={selected.has(asset.id)} selecting={selecting || !!selected.size} active={groupOpen !== false} loading={groupOpen === undefined ? "lazy" : "eager"} open={event => { if (selecting || selected.size || event.ctrlKey || event.metaKey || event.shiftKey) select(asset, index, event.shiftKey); else setViewer(asset); }} select={range => select(asset, index, range)} tagDragKey={tagDragKey} tagBusy={tagBusy} changeTag={(id, tag, remove) => void changeTag(id, tag, remove)} />;
   }
-  const gallery = collectionId ? <CollectionGallery entries={entries} expanded={expandedGroups} formation={groupFormation} selected={selected} selecting={selecting || !!selected.size} busy={busy || loading || selectingAll} render={renderMedia} toggle={toggleGroup} selectGroup={selectGroup} add={group => void editGroup(group, "add")} dissolve={group => void editGroup(group, "dissolve")} /> : <div className={`gallery ${selecting ? "selecting" : ""}`}>{assets.map(asset => renderMedia(asset))}</div>;
+  const gallery = collectionId ? <CollectionGallery entries={entries} expanded={expandedGroups} formation={groupFormation} selected={selected} selecting={selecting || !!selected.size} busy={busy || loading || selectingAll} render={renderMedia} toggle={toggleGroup} selectGroup={selectGroup} add={group => void editGroup(group, "add")} dissolve={group => void editGroup(group, "dissolve")} /> : <div className={`gallery ${view === "screenshots" ? "screenshot-gallery" : ""} ${selecting ? "selecting" : ""}`}>{assets.map(asset => renderMedia(asset))}</div>;
   return <div className={`app ${scope === "hidden" ? "hidden-mode" : ""} ${assetView && (selecting || selected.size) ? "has-selection" : ""}`}>
     <input className="file-input" ref={picker} type="file" multiple accept="image/*,video/*,.svg,.ico,.apng,.mkv,.webm" onChange={event => { receiveFiles(Array.from(event.target.files || [])); event.target.value = ""; }} />
     <input className="file-input" ref={folderPicker} type="file" multiple {...{ webkitdirectory: "" }} onChange={event => { receiveFiles(Array.from(event.target.files || [])); event.target.value = ""; }} />
@@ -534,15 +545,27 @@ function App() {
         <Nav icon={<Grid2X2 size={18} />} label="全部素材" active={view === "all" && !tagId && !collectionId} count={info?.total} click={() => navigate("all")} />
         <Nav icon={<Inbox size={18} />} label="未整理" active={view === "inbox"} count={info?.unorganized} click={() => navigate("inbox")} />
         <Nav icon={<Star size={18} />} label="星标" active={view === "starred"} count={info?.starred} click={() => navigate("starred")} />
+        <Nav icon={<Gamepad2 size={18} />} label="游戏截图" active={view === "games" || view === "screenshots"} count={info?.screenshots} click={() => navigate("games")} />
       </nav>
       <div className="sidebar-section"><div className="sidebar-section-heading"><button onClick={() => navigate("collections")}>收藏集</button><button className="icon-button" aria-label="新建收藏集" onClick={() => setModal({ type: "entity", kind: "collections" })}><Plus size={14} /></button></div><div className="sidebar-entities">{collections.slice(0, 7).map(collection => <button key={collection.id} className={collectionId === collection.id ? "active" : ""} onClick={() => navigate("all", "", collection.id)}><Folder size={15} /><span>{collection.name}</span><small>{collection.count}</small></button>)}{!collections.length && <button className="sidebar-placeholder" onClick={() => setModal({ type: "entity", kind: "collections" })}>新建一个主题收藏集</button>}{collections.length > 7 && <button className="sidebar-more" onClick={() => navigate("collections")}>查看全部 <ChevronDown size={12} /></button>}</div></div>
       <div className="sidebar-section"><div className="sidebar-section-heading"><button onClick={() => navigate("tags")}>标签</button><button className="icon-button" aria-label="新建标签" onClick={() => setModal({ type: "entity", kind: "tags" })}><Plus size={14} /></button></div><div className="sidebar-tag-list">{tags.slice(0, 10).map(tag => <TagChip className={tagId === tag.id ? "active" : ""} key={tag.id} tag={tag} cancelKey={tagDragKey} disabled={tagBusy} click={() => navigate("all", tag.id)} remove={() => setModal({ type: "remove-entity", kind: "tags", entity: tag })} change={(id, tag, remove) => void changeTag(id, tag, remove)} />)}{!tags.length && <button className="sidebar-placeholder" onClick={() => setModal({ type: "entity", kind: "tags" })}>添加用途或主题标签</button>}{tags.length > 10 && <button className="sidebar-more" onClick={() => navigate("tags")}>全部标签</button>}</div></div>
       <div className="sidebar-bottom">{!!uploading && <button className="transfer-mini" onClick={() => setModal({ type: "upload" })}><Upload size={18} /><div><strong>{uploadState.paused ? "收集已暂停" : "正在收集素材"}</strong><small>{uploading} 个文件待完成</small></div></button>}<nav className="navigation secondary"><Nav icon={<Layers3 size={17} />} label="任务中心" active={view === "jobs"} count={(info?.queued || 0) + (info?.errors || 0) || undefined} click={() => navigate("jobs")} /><Nav icon={<Trash2 size={17} />} label="回收站" active={view === "trash"} count={info?.trash || undefined} click={() => navigate("trash")} /></nav><div className="sidebar-storage"><span className="mode-dot" /><span>{info ? `${info.total.toLocaleString()} 个素材 · ${bytes(info.bytes)}` : "连接素材库…"}</span></div></div>
     </aside>
-    <main className="main"><header className="topbar"><div className="breadcrumb"><button className="icon-button mobile-menu" aria-label="打开导航" onClick={() => setSidebarOpen(true)}><Menu size={22} /></button><span className="desktop-label">视觉收藏库</span><span className="crumb-separator">/</span><span>{title}</span></div><div className="top-actions"><label className="search"><Search size={16} /><input type="search" value={query} onChange={event => { setQuery(event.target.value); if (!assetView) navigate("all"); }} placeholder="搜索名称、标签、备注" aria-label="搜索素材" />{query && <button className="icon-button" aria-label="清空搜索" onClick={() => setQuery("")}><X size={14} /></button>}</label><button className="button primary collect-button" onClick={() => setModal({ type: "upload" })}><Plus size={17} /><span>收集素材</span></button></div></header>
+    <main className="main"><header className="topbar"><div className="breadcrumb"><button className="icon-button mobile-menu" aria-label="打开导航" onClick={() => setSidebarOpen(true)}><Menu size={22} /></button><span className="desktop-label">视觉收藏库</span><span className="crumb-separator">/</span><span>{title}</span></div><div className="top-actions"><label className="search"><Search size={16} /><input type="search" value={query} onChange={event => { setQuery(event.target.value); if (!assetView && view !== "games") navigate("all"); }} placeholder={view === "games" ? "搜索游戏名、Steam ID" : "搜索名称、游戏、标签、备注"} aria-label="搜索素材" />{query && <button className="icon-button" aria-label="清空搜索" onClick={() => setQuery("")}><X size={14} /></button>}</label><button className="button primary collect-button" onClick={() => setModal({ type: "upload" })}><Plus size={17} /><span>收集素材</span></button></div></header>
       {scope === "hidden" && <div className="hidden-banner"><span><EyeOff size={15} />隐藏模式</span><button onClick={switchScope}>返回普通模式 <Eye size={14} /></button></div>}
-      <div className="page"><div className="page-heading"><div><div className="page-caption">{activeEntity ? collectionId ? "收藏集" : "标签" : "Curio"}</div><h1>{title}{!loading && <span className="heading-count">{assetView ? total.toLocaleString() : view === "collections" ? collections.length : view === "tags" ? tags.length : jobs.length}</span>}</h1></div><div className="heading-actions">{activeEntity && <button className="button" onClick={() => setModal({ type: "entity", kind: collectionId ? "collections" : "tags", entity: activeEntity })}><MoreHorizontal size={16} />管理</button>}{(view === "collections" || view === "tags") && <button className="button" onClick={() => setModal({ type: "entity", kind: view })}><Plus size={16} />新建{view === "collections" ? "收藏集" : "标签"}</button>}<button className="icon-button" aria-label="刷新" title="刷新" onClick={changed}><RefreshCw size={17} className={loading ? "spin" : ""} /></button></div></div>
-        {assetView && <><div className="library-toolbar"><div className="kind-tabs">{[["", "全部"], ["image", "图片"], ["animation", "动图"], ["video", "视频"]].map(([kind, label]) => <button key={kind} className={filters.kind === kind ? "active" : ""} onClick={() => setFilters({ ...filters, kind })}>{label}</button>)}</div><div className="toolbar-right"><label className="sort"><ArrowDownWideNarrow size={15} /><select value={sort} aria-label="排序" onChange={event => setSort(event.target.value)}><option value="newest">最近收集</option><option value="oldest">最早收集</option><option value="name">名称</option><option value="size">文件大小</option></select></label><button className={`filter-toggle ${filterOpen || activeFilters.some(([key]) => key !== "kind") ? "active" : ""}`} onClick={() => setFilterOpen(!filterOpen)}><SlidersHorizontal size={15} />筛选</button><button className={`icon-button ${selecting ? "is-active" : ""}`} title="批量选择" aria-label="批量选择" onClick={() => { cancelSelectAll(); setSelecting(!selecting); setSelected(new Set()); }}><Check size={17} /></button><label className="density" title="显示密度"><Grid2X2 size={13} /><input type="range" min="140" max="340" value={density} aria-label="缩略图大小" onChange={event => setDensity(Number(event.target.value))} /></label></div></div>
+      <div className="page"><div className="page-heading"><div><div className="page-caption">{view === "games" || view === "screenshots" ? "游戏截图" : activeEntity ? collectionId ? "收藏集" : "标签" : "Curio"}</div><h1>{title}{!loading && <span className="heading-count">{assetView ? total.toLocaleString() : view === "games" ? games.length : view === "collections" ? collections.length : view === "tags" ? tags.length : jobs.length}</span>}</h1></div><div className="heading-actions">{activeGame && <button className="button" onClick={() => setModal({ type: "game", game: activeGame })}><MoreHorizontal size={16} />编辑游戏名称</button>}{view === "games" && <button className="button" onClick={() => setModal({ type: "game" })}><Plus size={16} />新建游戏</button>}{activeEntity && <button className="button" onClick={() => setModal({ type: "entity", kind: collectionId ? "collections" : "tags", entity: activeEntity })}><MoreHorizontal size={16} />管理</button>}{(view === "collections" || view === "tags") && <button className="button" onClick={() => setModal({ type: "entity", kind: view })}><Plus size={16} />新建{view === "collections" ? "收藏集" : "标签"}</button>}<button className="icon-button" aria-label="刷新" title="刷新" onClick={changed}><RefreshCw size={17} className={loading ? "spin" : ""} /></button></div></div>
+        {(view === "games" || view === "screenshots") && <div className="game-context"><button className="button subtle" onClick={() => navigate("games")}><Gamepad2 size={14} />按游戏浏览</button><button className="button subtle" onClick={() => navigate("screenshots")}>全部截图</button><button className="button subtle" onClick={() => navigate("screenshots", "", "", "push", "unassigned")}>未指定游戏</button>{activeGame?.steamAppId && <span>Steam App ID：{activeGame.steamAppId}</span>}<span>Steam 文件名自动识别 · 未知时间排在最后</span></div>}
+        {assetView && <><div className="library-toolbar">
+          <div className="kind-tabs">{(view === "screenshots" ? [["", "截图"]] : [["", "全部"], ["image", "图片"], ["animation", "动图"], ["video", "视频"]]).map(([kind, label]) => <button key={kind} className={filters.kind === kind ? "active" : ""} onClick={() => setFilters({ ...filters, kind })}>{label}</button>)}</div>
+          <div className="toolbar-right"><label className="sort"><ArrowDownWideNarrow size={15} />
+            <select value={sort} aria-label="排序" onChange={event => setSort(event.target.value)}>
+              <option value="capturedNewest">截图：新到旧</option><option value="capturedOldest">截图：旧到新</option>
+              <option value="newest">最近收集</option><option value="oldest">最早收集</option><option value="name">名称</option><option value="size">文件大小</option>
+            </select></label>
+            <button className={`filter-toggle ${filterOpen || activeFilters.some(([key]) => key !== "kind") ? "active" : ""}`} onClick={() => setFilterOpen(!filterOpen)}><SlidersHorizontal size={15} />筛选</button>
+            <button className={`icon-button ${selecting ? "is-active" : ""}`} title="批量选择" aria-label="批量选择" onClick={() => { cancelSelectAll(); setSelecting(!selecting); setSelected(new Set()); }}><Check size={17} /></button>
+            <label className="density" title="显示密度"><Grid2X2 size={13} /><input type="range" min="140" max="340" value={density} aria-label="缩略图大小" onChange={event => setDensity(Number(event.target.value))} /></label>
+          </div></div>
           {filterOpen && <FilterPanel value={filters} change={setFilters} clear={() => setFilters(emptyFilter)} />}
           {!!activeFilters.filter(([key]) => key !== "kind").length && <div className="active-filters">{activeFilters.filter(([key]) => key !== "kind").map(([key, value]) => <button key={key} onClick={() => setFilters({ ...filters, [key]: "" })}>{filterLabel(key, value)}<X size={11} /></button>)}<button className="clear" onClick={() => setFilters({ ...emptyFilter, kind: filters.kind })}>清除筛选</button></div>}
         </>}
@@ -551,7 +574,7 @@ function App() {
           {collectionId && !groups.length && <p className="group-help"><Layers3 size={13} />选中多个素材，即可组成一组，无需命名。</p>}
           <div className="gallery-results" aria-busy={loading} inert={loading || !!error} style={{ "--tile-width": `${density}px` } as CSSProperties}>{gallery}</div>
           {hasMore && <div className="load-more" ref={loadMoreTarget}><button className="button" onClick={() => void loadMore()} disabled={loading || !!error || loadingMore || selectingAll || busy}>{loadingMore && <RotateCw size={15} className="spin" />}{loadingMore ? "正在加载…" : loadMoreFailed ? "重试加载" : "加载更多"} {!collectionId && <span>{assets.length} / {total}</span>}</button></div>}
-        </> : <Empty icon={view === "trash" ? <Trash2 size={30} /> : search || activeFilters.length ? <Search size={30} /> : view === "inbox" ? <Inbox size={30} /> : view === "starred" ? <Star size={30} /> : <Image size={32} strokeWidth={1.3} />} title={search || activeFilters.length ? "没有找到匹配的素材" : view === "trash" ? "回收站是空的" : view === "inbox" ? "没有待整理的素材" : view === "starred" ? "还没有星标素材" : scope === "hidden" ? "隐藏模式暂无素材" : activeEntity ? "这里还没有素材" : "开始你的视觉收藏"} description={search || activeFilters.length ? "试试其他关键词，或减少筛选条件。" : view === "trash" ? "移除的素材会先保留在这里，可以随时恢复。" : view === "starred" ? "给常用或喜欢的素材添加星标，方便再次找到。" : view === "inbox" ? "没有标签或收藏集的素材会显示在这里，添加任意一个即可完成整理。" : "图标、头像、壁纸、梗图、截图和录像，都可以收集到这里。"}>{!["trash", "starred"].includes(view) && !search && !activeFilters.length && <button className="button primary" onClick={() => setModal({ type: "upload" })}><Plus size={17} />收集素材</button>}</Empty> : view === "collections" || view === "tags" ? <EntityGrid items={view === "collections" ? collections : tags} kind={view} open={entity => navigate("all", view === "tags" ? entity.id : "", view === "collections" ? entity.id : "")} edit={entity => setModal({ type: "entity", kind: view, entity })} remove={entity => setModal({ type: "remove-entity", kind: view, entity })} create={() => setModal({ type: "entity", kind: view })} /> : <Jobs items={jobs} retry={retry} open={async id => { try { setViewer(await api<Asset>(scoped(`assets/${id}`, scope))); } catch (error) { notify(error instanceof Error ? error.message : String(error)); } }} />}
+        </> : <Empty icon={view === "trash" ? <Trash2 size={30} /> : search || activeFilters.length ? <Search size={30} /> : view === "screenshots" ? <Gamepad2 size={32} /> : view === "inbox" ? <Inbox size={30} /> : view === "starred" ? <Star size={30} /> : <Image size={32} strokeWidth={1.3} />} title={search || activeFilters.length ? "没有找到匹配的素材" : view === "trash" ? "回收站是空的" : view === "screenshots" ? "这里还没有游戏截图" : view === "inbox" ? "没有待整理的素材" : view === "starred" ? "还没有星标素材" : scope === "hidden" ? "隐藏模式暂无素材" : activeEntity ? "这里还没有素材" : "开始你的视觉收藏"} description={search || activeFilters.length ? "试试其他关键词，或减少筛选条件。" : view === "screenshots" ? "导入 Steam 截图自动识别；其他来源可在素材信息里或批量选择后指定游戏。" : view === "trash" ? "移除的素材会先保留在这里，可以随时恢复。" : view === "starred" ? "给常用或喜欢的素材添加星标，方便再次找到。" : view === "inbox" ? "没有标签或收藏集的素材会显示在这里，添加任意一个即可完成整理。" : "图标、头像、壁纸、梗图、截图和录像，都可以收集到这里。"}>{!["trash", "starred"].includes(view) && !search && !activeFilters.length && <button className="button primary" onClick={() => setModal({ type: "upload" })}><Plus size={17} />收集素材</button>}</Empty> : view === "games" ? <GamesGrid games={games} query={search} open={game => navigate("screenshots", "", "", "push", game.id)} edit={game => setModal({ type: "game", game })} create={() => setModal({ type: "game" })} /> : view === "collections" || view === "tags" ? <EntityGrid items={view === "collections" ? collections : tags} kind={view} open={entity => navigate("all", view === "tags" ? entity.id : "", view === "collections" ? entity.id : "")} edit={entity => setModal({ type: "entity", kind: view, entity })} remove={entity => setModal({ type: "remove-entity", kind: view, entity })} create={() => setModal({ type: "entity", kind: view })} /> : <Jobs items={jobs} retry={retry} open={async id => { try { setViewer(await api<Asset>(scoped(`assets/${id}`, scope))); } catch (error) { notify(error instanceof Error ? error.message : String(error)); } }} />}
       </div>
     </main>
     {assetView && (selecting || !!selected.size) && <div className="selection-bar" inert={loading || !!error || !contentReady}>
@@ -559,11 +582,14 @@ function App() {
       <strong>已选 {selected.size} 项</strong>
       <button className="button subtle" title="全选当前筛选结果，包含尚未加载的素材" disabled={loading || loadingMore || selectingAll || busy || !total || !!error} onClick={() => void selectAll()}>{selectingAll ? <><RotateCw size={14} className="spin" />正在全选</> : allSelected ? "取消全选" : "全选"}</button>
       {!!selected.size && !selectingAll && <><span className="selection-divider" />{view !== "trash" ? <>
+        {selectedAssets.length === selected.size && selectedAssets.every(asset => asset.kind === "image") && <button className="button" disabled={busy} onClick={() => setModal({ type: "screenshots", ids: [...selected] })}><Gamepad2 size={15} />指定游戏</button>}
         {collectionId && <><button className="button group-create" title="将所选素材组成无名称的分组" disabled={busy || loading || selected.size < 2 || selected.size > 2000} onClick={() => void editGroup(null, "create")}><Group size={15} />组成一组</button>{selectedInGroups && <button className="button" disabled={busy || loading} onClick={() => void editGroup(null, "remove")}><Ungroup size={15} />移出分组</button>}</>}
         <button className="button" disabled={busy} onClick={() => setModal({ type: "organize", ids: [...selected] })}><Tag size={15} /><span>整理</span></button>{(collectionId || tagId) && <button className="button" title="仅移除当前关联，保留素材与其他标签、收藏集" disabled={busy} onClick={() => void patch([...selected], collectionId ? { removeCollectionIds: [collectionId] } : { removeTagIds: [tagId] }, collectionId ? "已移出当前收藏集" : "已移出当前标签")}><Unlink size={15} />{collectionId ? "移出当前收藏集" : "移出当前标签"}</button>}<button className="icon-button" title={selectedAreStarred ? "取消星标" : "添加星标"} aria-label={selectedAreStarred ? "取消星标" : "添加星标"} disabled={busy} onClick={() => void patch([...selected], { starred: !selectedAreStarred }, "星标已更新")}><Star size={17} /></button><button className="icon-button" title="单独隐藏" aria-label="单独隐藏" disabled={busy} onClick={() => void patch([...selected], { hidden: true }, "已标记隐藏")}><EyeOff size={17} /></button><button className="icon-button" title="取消单独隐藏" aria-label="取消单独隐藏" disabled={busy} onClick={() => void patch([...selected], { hidden: false }, "已取消单独隐藏；标签或收藏集的隐藏仍会生效")}><Eye size={17} /></button><a className="icon-button" title="打包下载" aria-label="打包下载" href={`${base}api/download?ids=${[...selected].join(",")}`}><Download size={17} /></a><button className="icon-button danger" title="移入回收站" aria-label="移入回收站" disabled={busy} onClick={() => void patch([...selected], { trash: true }, "已移入回收站")}><Trash2 size={17} /></button></> : <><button className="button" disabled={busy} onClick={() => void patch([...selected], { trash: false }, "素材已恢复")}><RotateCw size={15} />恢复</button><button className="button danger" disabled={busy} onClick={() => setModal({ type: "purge", ids: [...selected] })}><Trash2 size={15} />永久删除</button></>}</>}
     </div>}
-    {viewer && <Viewer asset={viewer} scope={scope} tags={tags} collections={collections} close={() => setViewer(null)} previous={viewerIndex > 0 ? () => setViewer(galleryAssets[viewerIndex - 1]) : undefined} next={viewerIndex >= 0 && viewerIndex < galleryAssets.length - 1 ? () => setViewer(galleryAssets[viewerIndex + 1]) : undefined} changed={changed} notify={notify} tagDragKey={tagDragKey} tagBusy={tagBusy} changeTag={(id, tag, remove) => void changeTag(id, tag, remove)} />}
+    {viewer && <Viewer asset={viewer} scope={scope} tags={tags} collections={collections} games={games} close={() => setViewer(null)} previous={viewerIndex > 0 ? () => setViewer(galleryAssets[viewerIndex - 1]) : undefined} next={viewerIndex >= 0 && viewerIndex < galleryAssets.length - 1 ? () => setViewer(galleryAssets[viewerIndex + 1]) : undefined} changed={changed} notify={notify} tagDragKey={tagDragKey} tagBusy={tagBusy} changeTag={(id, tag, remove) => void changeTag(id, tag, remove)} />}
     {modal?.type === "upload" && <UploadPanel scope={scope} close={() => setModal(null)} pick={() => picker.current?.click()} folder={() => folderPicker.current?.click()} />}
+    {modal?.type === "game" && <GameEditor game={modal.game} scope={scope} close={() => setModal(null)} saved={() => { setModal(null); changed(); notify("游戏名称已保存"); }} />}
+    {modal?.type === "screenshots" && <ScreenshotEditor count={modal.ids.length} games={games} scope={scope} close={() => setModal(null)} save={async patch => { await api(scoped("assets", scope), { ids: modal.ids, ...patch }, "PATCH"); setModal(null); exitSelection(); changed(); notify("游戏截图归类已保存"); }} />}
     {modal?.type === "entity" && <EntityEditor kind={modal.kind} entity={modal.entity} scope={scope} close={() => setModal(null)} saved={() => { changed(); setModal(null); notify("已保存"); }} remove={modal.entity && modal.kind === "collections" ? () => setModal({ type: "remove-entity", kind: modal.kind, entity: modal.entity! }) : undefined} />}
     {modal?.type === "organize" && <Organize ids={modal.ids} tags={tags} collections={collections} close={() => setModal(null)} save={async value => { await api(scoped("assets", scope), { ids: modal.ids, ...value }, "PATCH"); setModal(null); setSelected(new Set()); changed(); notify("标签与收藏集已更新"); }} />}
     {modal?.type === "purge" && <Purge count={modal.ids.length} close={() => setModal(null)} confirm={async () => { await api("assets/purge", { ids: modal.ids, confirm: true }); setModal(null); setSelected(new Set()); changed(); notify("永久删除已提交"); }} />}

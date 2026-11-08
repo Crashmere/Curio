@@ -80,6 +80,9 @@ func (l *Library) Handler(frontend fs.FS) http.Handler {
 		writeJSON(w, 200, map[string]string{"status": "ok", "service": "Curio"})
 	})
 	r.Get("/api/info", l.info)
+	r.Get("/api/games", l.listGames)
+	r.Post("/api/games", l.saveGame)
+	r.Patch("/api/games/{id}", l.saveGame)
 	r.Get("/api/playback/{id}", l.playbackInfo)
 	r.Get("/api/assets", l.listAssets)
 	r.Patch("/api/assets", l.batchUpdate)
@@ -166,7 +169,7 @@ func (l *Library) info(w http.ResponseWriter, r *http.Request) {
 	scope := requestScope(r.URL.Query())
 	base := " FROM assets a WHERE a.purge_pending=0 AND " + scopeSQL(scope)
 	out := map[string]any{"name": "Curio", "version": Version, "chunkSize": ChunkSize, "workers": l.Workers, "gpuSlots": cap(l.GPU), "scope": scope}
-	for key, condition := range map[string]string{"total": "a.trashed_at=''", "starred": "a.trashed_at='' AND a.starred=1", "unorganized": "a.trashed_at='' AND NOT " + organizedSQL, "trash": "a.trashed_at!=''", "queued": "a.status IN ('queued','processing')", "errors": "a.status='error'"} {
+	for key, condition := range map[string]string{"total": "a.trashed_at=''", "screenshots": "a.trashed_at='' AND EXISTS(SELECT 1 FROM screenshots s WHERE s.asset_id=a.id AND s.enabled=1)", "starred": "a.trashed_at='' AND a.starred=1", "unorganized": "a.trashed_at='' AND NOT " + organizedSQL, "trash": "a.trashed_at!=''", "queued": "a.status IN ('queued','processing')", "errors": "a.status='error'"} {
 		var n int64
 		if err := l.DB.QueryRow("SELECT count(*)" + base + " AND " + condition).Scan(&n); err != nil {
 			fail(w, 500, err)
@@ -197,12 +200,26 @@ func assetFilter(q url.Values) (string, []any, error) {
 	if q.Get("unorganized") == "1" {
 		where += " AND NOT " + organizedSQL
 	}
+	if q.Get("screenshot") == "1" {
+		where += " AND EXISTS(SELECT 1 FROM screenshots s WHERE s.asset_id=a.id AND s.enabled=1)"
+	}
+	if value := q.Get("game"); value != "" {
+		if value == "unassigned" {
+			where += " AND EXISTS(SELECT 1 FROM screenshots s WHERE s.asset_id=a.id AND s.enabled=1 AND s.game_id IS NULL)"
+		} else {
+			if !validID.MatchString(value) {
+				return "", nil, fmt.Errorf("游戏编号无效")
+			}
+			where += " AND EXISTS(SELECT 1 FROM screenshots s WHERE s.asset_id=a.id AND s.enabled=1 AND s.game_id=?)"
+			args = append(args, value)
+		}
+	}
 	if value := q.Get("q"); value != "" {
 		if len(value) > 512 {
 			return "", nil, fmt.Errorf("搜索内容太长")
 		}
-		where += ` AND (instr(lower(a.name),lower(?))>0 OR instr(lower(a.title),lower(?))>0 OR instr(lower(a.notes),lower(?))>0 OR instr(lower(a.source_url),lower(?))>0 OR instr(lower(a.author),lower(?))>0 OR EXISTS(SELECT 1 FROM asset_tags j JOIN tags t ON t.id=j.tag_id WHERE j.asset_id=a.id AND instr(lower(t.name),lower(?))>0) OR EXISTS(SELECT 1 FROM asset_collections j JOIN collections c ON c.id=j.collection_id WHERE j.asset_id=a.id AND instr(lower(c.name),lower(?))>0))`
-		for i := 0; i < 7; i++ {
+		where += ` AND (instr(lower(a.name),lower(?))>0 OR instr(lower(a.title),lower(?))>0 OR instr(lower(a.notes),lower(?))>0 OR instr(lower(a.source_url),lower(?))>0 OR instr(lower(a.author),lower(?))>0 OR EXISTS(SELECT 1 FROM asset_tags j JOIN tags t ON t.id=j.tag_id WHERE j.asset_id=a.id AND instr(lower(t.name),lower(?))>0) OR EXISTS(SELECT 1 FROM asset_collections j JOIN collections c ON c.id=j.collection_id WHERE j.asset_id=a.id AND instr(lower(c.name),lower(?))>0) OR EXISTS(SELECT 1 FROM screenshots s JOIN games g ON g.id=s.game_id WHERE s.asset_id=a.id AND s.enabled=1 AND (instr(lower(g.name),lower(?))>0 OR instr(g.steam_app_id,?)>0)))`
+		for i := 0; i < 9; i++ {
 			args = append(args, value)
 		}
 	}
@@ -267,6 +284,12 @@ func pageNumber(q url.Values, key string, defaultValue, minValue, maxValue int) 
 
 func assetOrder(q url.Values) (string, error) {
 	switch q.Get("sort") {
+	case "capturedNewest", "capturedOldest":
+		direction := "DESC"
+		if q.Get("sort") == "capturedOldest" {
+			direction = "ASC"
+		}
+		return "CASE WHEN COALESCE(" + screenshotTimeSQL + ",'')='' THEN 1 ELSE 0 END," + screenshotTimeSQL + " " + direction + ",a.id " + direction, nil
 	case "oldest":
 		return "a.created_at ASC,a.id ASC", nil
 	case "name":

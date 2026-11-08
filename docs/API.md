@@ -20,6 +20,7 @@ The same endpoints serve both scopes. Counts, search, tags, collection covers, i
 | `GET /api/assets/{id}` | Scoped asset details, memberships and hidden reasons |
 | `GET /api/tags` | Scoped tag `items`, counts and covers |
 | `GET /api/collections` | Scoped collection `items`, counts and covers |
+| `GET /api/games` | Scoped game `items`, screenshot counts, latest capture time and covers |
 | `GET /api/jobs` | Up to 120 current/recent scoped processing or deletion tasks, with stage, engine, progress and error |
 | `GET /api/uploads` | Up to 120 incomplete uploads, filtered by their upload scope and associated hidden tags/collections before pagination |
 
@@ -35,13 +36,15 @@ Asset list filters are parallel query parameters:
 | `tag`, `collection` | One container ID each |
 | `group` | One collection group ID; all other media filters still apply |
 | `grouped` | `1` with `collection` pages by ungrouped media and one anchor per matching group; ignored with `group` or `ids` |
+| `screenshot` | `1` selects game screenshots |
+| `game` | Game registry ID, or `unassigned` for screenshots without a game |
 | `format` | Lowercase original extension, such as `png` or `mp4` |
 | `starred`, `unorganized`, `trash` | `1` enables the corresponding selection; ordinary lists exclude trash |
 | `aspect` | `square`, `landscape`, `portrait` |
 | `minWidth`, `maxWidth`, `minHeight`, `maxHeight` | Pixels |
 | `minDuration`, `maxDuration` | Seconds |
 | `minSize`, `maxSize` | Bytes |
-| `sort` | `newest` (default), `oldest`, `name`, `size` |
+| `sort` | `newest` (default), `oldest`, `name`, `size`, `capturedNewest`, `capturedOldest`; capture sorts place unknown times last |
 | `limit`, `offset` | Default limit 120, maximum 240 (2000 with `ids`); next request uses `nextOffset` |
 
 With `grouped=1`, `total` remains the number of matching media, while `limit`, `offset` and `nextOffset` count gallery entries. Each group's anchor is its first matching media in the selected sort order. Requests selecting every media item must omit `grouped`.
@@ -74,6 +77,8 @@ Both container types use the same contract:
 
 Tag names are globally case-insensitive unique. Creating an existing same-visibility tag can reuse its ID; visibility is not changed by that reuse. Collection names do not identify physical storage or duplicate originals.
 
+`POST /api/assets/retry` takes `{"ids":["<asset-sha256>"]}` and requeues derived processing without changing originals. `POST /api/assets/purge` takes the same selection plus `confirm:true`, accepts only trash assets and returns HTTP 202 after persisting the selected cleanup intent. Cleanup resumes after interruption; it does not affect unrelated originals or existing backups.
+
 ### Collection Groups
 
 Groups are unnamed and local to one collection. Each media item can belong to one group in that collection, independently of its grouping in other collections.
@@ -90,7 +95,15 @@ Group edits accept up to 2000 media per request and validate live membership in 
 
 Fetch a group's media through `GET /api/assets?collection=<id>&group=<group-id>` with the same scope and filters. Group membership survives trash and restore, but removing a collection membership removes its group link. Replacing `collectionIds` retains group links for collections that remain present.
 
-`POST /api/assets/retry` takes `{"ids":["<asset-sha256>"]}` and requeues derived processing without changing originals. `POST /api/assets/purge` takes the same selection plus `confirm:true`, accepts only trash assets and returns HTTP 202 after persisting the selected cleanup intent. Cleanup resumes after interruption; it does not affect unrelated originals or existing backups.
+### Game Screenshots
+
+Assets additionally expose `screenshot`, `capturedAt`, optional `screenshotSource` (`steam` or `manual`) and optional `game` with `id`, `name` and `steamAppId`. `capturedAt` is either empty or a timezone-free `YYYY-MM-DDTHH:mm:ss` local time; it is not a UTC instant. `GET /api/info` adds the scoped live `screenshots` count. Keyword searches also match associated game names and Steam App IDs.
+
+`GET /api/games` returns `items` with `id`, `name`, `steamAppId`, `count`, optional `coverUrl` and optional `lastCapturedAt`. Games with live screenshots exclusively outside the requested scope are omitted; empty games appear in their creation scope. Counts, capture time and covers exclude trash and follow effective hiding.
+
+`POST /api/games` creates a game from `name` and optional `steamAppId`. At least one must be nonempty; Steam IDs are canonical positive unsigned 32-bit decimal strings and globally unique. An already registered Steam ID returns HTTP 409 rather than changing its name. `PATCH /api/games/{id}` edits `name` for a game available in the request scope. Its Steam identity remains unchanged; non-Steam games require a nonempty name.
+
+Single and batch asset patches accept `screenshot`, `gameId` and `capturedAt`. Setting a game or time enables screenshot classification; an empty `gameId` removes only the game association, and an empty `capturedAt` marks time unknown. `screenshot:false` disables classification and clears the game/time while retaining a manual opt-out. These fields require static-image assets and are applied atomically with the existing metadata patch. Omitted capture time is preserved, including in batch assignment. Reimporting identical bytes never overwrites existing screenshot metadata or a manual opt-out.
 
 ## Resumable Uploads
 
@@ -116,6 +129,8 @@ Preparation body:
 ```
 
 The filename is treated as a basename. `scope` defaults to the request query scope when omitted; it determines only the default hidden flag for a newly committed asset. Optional memberships are applied to the collected asset. Preparation returns `id`, `offset`, `size`, `complete` and `chunkSize`; complete results also include `assetId`. An existing byte-identical asset with its original present returns `complete:true` and `duplicate:true`, records new source observations/memberships and preserves its existing manual flags, metadata and trash state.
+
+Optional `gameId` identifies an explicit screenshot upload target; `screenshot:true` classifies otherwise unrecognized static images without requiring a game. PNG/JPEG basenames matching `<Steam-app-id>_<YYYYMMDDHHmmss>_<numeric-suffix>.<extension>` automatically provide a game and valid local capture time. An explicit game target takes precedence for a newly classified asset. Existing screenshot metadata remains unchanged on duplicate preparation or original repair.
 
 `GET /api/uploads/{id}` is the authoritative upload status. `PUT /api/uploads/{id}` sends `Content-Type: application/octet-stream` and an integer `Upload-Offset` header; an `offset` query parameter is accepted when the header is absent. Each body must fit both the advertised 128 MiB maximum and the remaining original length.
 

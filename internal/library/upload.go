@@ -27,6 +27,8 @@ type UploadHints struct {
 	Scope         string   `json:"scope"`
 	TagIDs        []string `json:"tagIds,omitempty"`
 	CollectionIDs []string `json:"collectionIds,omitempty"`
+	GameID        string   `json:"gameId,omitempty"`
+	Screenshot    bool     `json:"screenshot,omitempty"`
 }
 
 var allowedFormats = map[string]string{
@@ -35,6 +37,9 @@ var allowedFormats = map[string]string{
 }
 
 func (h *UploadHints) validate() error {
+	if h.GameID != "" && !validID.MatchString(h.GameID) {
+		return fmt.Errorf("游戏编号无效")
+	}
 	h.Name = filepath.Base(strings.ReplaceAll(h.Name, "\\", "/"))
 	format := strings.ToLower(strings.TrimPrefix(filepath.Ext(h.Name), "."))
 	if !validHash.MatchString(h.Hash) || h.Size <= 0 || h.Size > 1<<40 || len(h.Name) > 512 || h.Name == "." || h.Name == "" || allowedFormats[format] == "" {
@@ -149,6 +154,9 @@ func (l *Library) rememberExisting(a Asset, h UploadHints) error {
 		return err
 	}
 	if err = changeMemberships(tx, a.ID, "collections", nil, h.CollectionIDs, nil); err != nil {
+		return err
+	}
+	if err = recordScreenshot(tx, a.ID, h); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -479,6 +487,9 @@ func (l *Library) completeUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		err = changeMemberships(tx, hash, "collections", nil, h.CollectionIDs, nil)
+	}
+	if err == nil {
+		err = recordScreenshot(tx, hash, h)
 	}
 	if err == nil {
 		_, err = tx.Exec("UPDATE uploads SET state='complete' WHERE id=?", hash)

@@ -42,6 +42,22 @@ Clicking the stack expands the group; clicking an expanded member's group mark o
 
 Refreshes and filters within the same media view retain gallery and image nodes, including collection groups, with a brief opacity change and progress on the refresh control. Pending or failed result updates suspend gallery actions; failures keep the previous content with an error and retry entry. Changing mode, section, tag or collection requires new scoped data before presenting a gallery, so old-scope results are not shown under the new selection. Follow the shared [refresh diagnosis](https://github.com/Crashmere/agent-config/blob/main/skills/server-operations/references/common-issues.md#a-data-refresh-flashes-or-resets-the-page).
 
+## Game Screenshots
+
+Game screenshots use the same assets, original store, media gallery, viewer and batch editing as other media. A separate game registry gives each game a stable identity and an optional unique Steam App ID. Names are editable display metadata: naming a Steam ID applies to all associated screenshots and future imports. Games from other platforms can be created by name and associated manually; tags and collections remain independent.
+
+Browser routes are `/curio/games` for the game index, `/curio/games/<id>` for one game, `/curio/screenshots` for all screenshots and `/curio/games/unassigned` for screenshots without a game. Deep links restore the same shared gallery; ordinary scope-reset and SPA mode-retention rules still apply.
+
+Static PNG/JPEG filenames matching `<positive-app-id>_<YYYYMMDDHHmmss>_<digits>.<extension>` are recognized during upload commitment, including exact-byte duplicate preparation. The complete date must be valid and the App ID must fit an unsigned 32-bit integer. The final numeric component is accepted without assigning it a meaning. Filenames that do not match receive no inferred game or time. Uploading inside a game supplies an explicit game target; uploading inside the game index or screenshot view marks otherwise unrecognized static images as screenshots. Queued uploads retain this target through navigation and retries.
+
+Capture time is stored separately from collection time as a timezone-free local timestamp. Steam filenames do not carry a UTC offset, so no server/browser timezone conversion is performed. Screenshot browsing defaults to capture time descending, supports ascending order and puts unknown times last in either direction. Its grid reads left to right before starting the next row, preserving visual chronology instead of column-first packing. Single-item editing can correct or clear the time; batch game assignment preserves each item's capture time.
+
+Screenshot metadata records a manual opt-out as well as active membership. Reimporting identical bytes preserves existing screenshot metadata, including manual game/time corrections and opt-outs. Other source observations still accumulate under the existing deduplication contract. Game assignment does not imply tag or collection membership and therefore does not change the existing inbox predicate.
+
+The game list, counts, latest capture time and covers use the asset's common effective-visibility predicate and exclude trash. A game with live screenshots only in another scope is omitted. Empty games appear in their creation scope so they can be selected before an upload. Game identity and name are shared across modes; game assignment itself adds no hiding inheritance.
+
+Opening an older catalog creates only additive `games`, `screenshots` and `catalog_features` tables. A one-time transactional pass recognizes original filenames and recorded source filenames without updating existing assets, memberships or uploaded bytes. The completion marker and screenshot rows commit together, and reopening does not overwrite later manual edits. Older programs can ignore the added tables; ordinary media behavior and exact-byte identity remain unchanged.
+
 ## Durable Uploads
 
 Dropping external files inside a tag or collection captures the current scope and container at drop time, before any asynchronous folder traversal. Each queue entry retains that target through navigation and retries. Queue deduplication includes scope and memberships, so a file already queued for one container can also be imported into another. Upload preparation adds the requested memberships to exact duplicates without replacing their existing memberships or manual hidden flag.

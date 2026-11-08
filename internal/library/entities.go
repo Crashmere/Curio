@@ -18,6 +18,9 @@ type assetPatch struct {
 	Notes               *string   `json:"notes"`
 	SourceURL           *string   `json:"sourceUrl"`
 	Author              *string   `json:"author"`
+	Screenshot          *bool     `json:"screenshot"`
+	GameID              *string   `json:"gameId"`
+	CapturedAt          *string   `json:"capturedAt"`
 	Hidden              *bool     `json:"hidden"`
 	Starred             *bool     `json:"starred"`
 	Trash               *bool     `json:"trash"`
@@ -42,6 +45,14 @@ func validateContainers(ids []string) error {
 }
 
 func (p *assetPatch) validate() error {
+	if p.GameID != nil && *p.GameID != "" && !validID.MatchString(*p.GameID) {
+		return fmt.Errorf("游戏编号无效")
+	}
+	if p.CapturedAt != nil && *p.CapturedAt != "" {
+		if t, err := time.Parse("2006-01-02T15:04:05", *p.CapturedAt); err != nil || t.Format("2006-01-02T15:04:05") != *p.CapturedAt {
+			return fmt.Errorf("截图时间格式无效")
+		}
+	}
 	if err := parseIDs(p.IDs); err != nil {
 		return err
 	}
@@ -130,6 +141,9 @@ func (l *Library) patch(p assetPatch) error {
 			return err
 		}
 		if err = changeMemberships(tx, hash, "collections", p.CollectionIDs, p.AddCollectionIDs, p.RemoveCollectionIDs); err != nil {
+			return err
+		}
+		if err = patchScreenshot(tx, hash, p); err != nil {
 			return err
 		}
 	}

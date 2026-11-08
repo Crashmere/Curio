@@ -1,21 +1,23 @@
 import { useEffect, useEffectEvent, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, Copy, Download, EyeOff, Info, Pencil, Plus, RotateCw, ScanEye, Star, Trash2, X } from "lucide-react";
-import { api, Asset, bytes, duration, Entity, Patch, Scope, scoped } from "./api";
+import { Check, ChevronLeft, ChevronRight, Copy, Download, EyeOff, Gamepad2, Info, Pencil, Plus, RotateCw, ScanEye, Star, Trash2, X } from "lucide-react";
+import { api, Asset, bytes, captureLabel, duration, Entity, Game, gameLabel, Patch, Scope, scoped } from "./api";
+import { ScreenshotEditor } from "./Games";
 import { Dialog, isTextInput, kindNames, stateNames } from "./components";
 import { VideoPlayer } from "./VideoPlayer";
 import { ImageViewer } from "./ImageViewer";
 import { TagChip } from "./TagChip";
 import { canDecodeTank, TankDecoder } from "./TankDecoder";
 
-type Props = { asset: Asset; scope: Scope; tags: Entity[]; collections: Entity[]; close: () => void; previous?: () => void; next?: () => void; changed: () => void; notify: (text: string) => void; tagDragKey: string; tagBusy: boolean; changeTag: (assetId: string, tag: Entity, remove: boolean) => void };
-export function Viewer({ asset, scope, tags, collections, close, previous, next, changed, notify, tagDragKey, tagBusy, changeTag }: Props) {
+type Props = { asset: Asset; scope: Scope; tags: Entity[]; collections: Entity[]; games: Game[]; close: () => void; previous?: () => void; next?: () => void; changed: () => void; notify: (text: string) => void; tagDragKey: string; tagBusy: boolean; changeTag: (assetId: string, tag: Entity, remove: boolean) => void };
+export function Viewer({ asset, scope, tags, collections, games, close, previous, next, changed, notify, tagDragKey, tagBusy, changeTag }: Props) {
   const [details, setDetails] = useState(true);
   const [edit, setEdit] = useState(false);
   const [busy, setBusy] = useState(false);
   const [tank, setTank] = useState(false);
-  useEffect(() => { setEdit(false); setTank(false); }, [asset.id]);
+  const [screenshotEdit, setScreenshotEdit] = useState(false);
+  useEffect(() => { setEdit(false); setTank(false); setScreenshotEdit(false); }, [asset.id]);
   const keyboard = useEffectEvent((event: KeyboardEvent) => {
-    if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey || isTextInput(event.target) || edit || tank) return;
+    if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey || isTextInput(event.target) || edit || tank || screenshotEdit) return;
     if (event.key === "Escape") close();
     if (event.key === "ArrowLeft" || event.key.toLowerCase() === "a") { event.preventDefault(); previous?.(); }
     if (event.key === "ArrowRight" || event.key.toLowerCase() === "d") { event.preventDefault(); next?.(); }
@@ -62,7 +64,8 @@ export function Viewer({ asset, scope, tags, collections, close, previous, next,
       </div>
       {details && <aside className="viewer-details"><div className="details-title"><h2>素材信息</h2><button className="button subtle" onClick={() => setEdit(true)}><Pencil size={14} />编辑</button></div><dl className="metadata-grid"><dt>原文件名</dt><dd>{asset.name}</dd><dt>格式</dt><dd>{asset.mime || asset.name.split(".").pop()?.toUpperCase()}</dd><dt>尺寸</dt><dd>{asset.width && asset.height ? `${asset.width} × ${asset.height}` : "读取中"}</dd><dt>大小</dt><dd>{bytes(asset.size)}</dd>{asset.duration > 0 && <><dt>时长</dt><dd>{duration(asset.duration)}</dd></>}<dt>收集时间</dt><dd>{new Date(asset.createdAt).toLocaleString("zh-CN", { hour12: false })}</dd><dt>处理状态</dt><dd>{stateNames[asset.status] || asset.status}</dd></dl>
         {asset.error && <div className="inline-error">{asset.error}<button className="button subtle" onClick={() => void api("assets/retry", { ids: [asset.id] }).then(changed).catch(error => notify(error.message))}><RotateCw size={14} />重试处理</button></div>}
-        {!!asset.tags?.length && <div className="details-section"><h3>标签</h3><div className="entity-chips">{asset.tags.map(tag => <TagChip key={tag.id} tag={tag} assetId={asset.id} className="detail-tag" cancelKey={`${tagDragKey}:${edit}`} disabled={tagBusy || busy} change={changeTag} />)}</div></div>}
+        {asset.kind === "image" && <div className="details-section"><div className="details-title"><h3><Gamepad2 size={14} />游戏截图</h3><button className="button subtle" onClick={() => setScreenshotEdit(true)}>{asset.screenshot ? "编辑" : "设为截图"}</button></div>{asset.screenshot && <dl className="metadata-grid"><dt>游戏</dt><dd>{asset.game ? gameLabel(asset.game) : "未指定游戏"}</dd>{asset.game?.steamAppId && <><dt>Steam ID</dt><dd>{asset.game.steamAppId}</dd></>}<dt>截图时间</dt><dd>{captureLabel(asset.capturedAt)}</dd><dt>识别方式</dt><dd>{asset.screenshotSource === "steam" ? "Steam 文件名" : "手动指定"}</dd></dl>}</div>}
+        {!!asset.tags?.length && <div className="details-section"><h3>标签</h3><div className="entity-chips">{asset.tags.map(tag => <TagChip key={tag.id} tag={tag} assetId={asset.id} className="detail-tag" cancelKey={`${tagDragKey}:${edit}:${screenshotEdit}`} disabled={tagBusy || busy} change={changeTag} />)}</div></div>}
         {!!asset.collections?.length && <div className="details-section"><h3>收藏集</h3><div className="entity-chips">{asset.collections.map(collection => <span key={collection.id}>{collection.name}</span>)}</div></div>}
         {(asset.author || asset.sourceUrl || asset.notes) && <div className="details-section"><h3>来源与备注</h3>{asset.author && <p>{asset.author}</p>}{asset.sourceUrl && <a className="source-link" href={asset.sourceUrl} target="_blank" rel="noreferrer">{asset.sourceUrl}</a>}{asset.notes && <p className="notes">{asset.notes}</p>}</div>}
         {asset.effectiveHidden && <div className="details-section hidden-reasons"><h3><EyeOff size={13} />隐藏原因</h3>{asset.hiddenReasons?.map(reason => <p key={`${reason.kind}-${reason.id}`}>{reason.kind === "media" ? "素材单独隐藏" : `${reason.kind === "tag" ? "标签" : "收藏集"}：${reason.name}`}</p>)}</div>}
@@ -71,6 +74,7 @@ export function Viewer({ asset, scope, tags, collections, close, previous, next,
     </div>
     {edit && <MetadataEditor asset={asset} scope={scope} tags={tags} collections={collections} close={() => setEdit(false)} saved={() => { setEdit(false); changed(); }} notify={notify} />}
     {tank && <TankDecoder key={asset.id} asset={asset} close={() => setTank(false)} />}
+    {screenshotEdit && <ScreenshotEditor asset={asset} count={1} games={games} scope={scope} close={() => setScreenshotEdit(false)} save={async patch => { await api(scoped(`assets/${asset.id}`, scope), patch, "PATCH"); setScreenshotEdit(false); changed(); notify("游戏截图信息已保存"); }} />}
   </div>;
 }
 function MetadataEditor({ asset, scope, tags, collections, close, saved, notify }: { asset: Asset; scope: Scope; tags: Entity[]; collections: Entity[]; close: () => void; saved: () => void; notify: (message: string) => void }) {

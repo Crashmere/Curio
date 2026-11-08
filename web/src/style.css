@@ -33,6 +33,11 @@ input[type="checkbox"] { width: 16px; height: 16px; flex-shrink: 0; }
 svg { flex-shrink: 0; vertical-align: middle; }
 h1, h2, h3, p { margin: 0; }
 .file-input { display: none; }
+.screenshot-caption { display: grid; gap: 3px; padding: 0 9px 8px; color: var(--muted); font-size: 10px; }
+.screenshot-caption span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--accent-dark); }
+.screenshot-caption time, .game-last-capture { font-variant-numeric: tabular-nums; }
+.game-last-capture { display: block; color: var(--muted); font-size: 10px; margin-top: 7px; }
+.game-context { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; color: var(--muted); font-size: 11px; }
 .app { min-height: 100vh; }
 .sidebar { position: fixed; inset: 0 auto 0 0; width: 232px; padding: 26px 16px 18px; background: var(--sidebar); border-right: 1px solid #e0e1d5; display: flex; flex-direction: column; z-index: 20; overflow-y: auto; scrollbar-width: thin; }
 .brand { display: flex; align-items: center; gap: 11px; width: max-content; margin: 0 13px 27px; }
@@ -128,6 +133,8 @@ input[type="search"]::-webkit-search-cancel-button { display: none; }
 .gallery-results[aria-busy="true"] { opacity: .7; }
 @media (prefers-reduced-motion: reduce) { .gallery-results { transition: none; } }
 .gallery, .skeleton-gallery { column-width: var(--tile-width); column-gap: 14px; }
+.gallery.screenshot-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--tile-width)), 1fr)); gap: 14px; align-items: start; }
+.screenshot-gallery > .media-card { margin-bottom: 0; }
 .gallery.collection-gallery { position: relative; column-width: auto; column-count: auto; --masonry-gap: 14px; }
 .collection-gallery > :not([hidden]) { position: absolute; margin: 0; }
 .collection-gallery > .media-card { content-visibility: visible; }
@@ -440,6 +447,7 @@ input[type="search"]::-webkit-search-cancel-button { display: none; }
   .filter-toggle { font-size: 0; gap: 0; padding: 7px; }
   .toolbar-right .icon-button { width: 27px; height: 27px; }
   .gallery, .skeleton-gallery { column-width: calc((100vw - 46px) / 2); column-count: 2; column-gap: 10px; }
+  .gallery.screenshot-gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .gallery.collection-gallery { --masonry-columns: 2; --masonry-gap: 10px; }
   .media-group, .group-member { margin-bottom: 12px; }
   .group-preview { padding: 5px 6px 0; }
