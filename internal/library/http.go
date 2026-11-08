@@ -83,6 +83,7 @@ func (l *Library) Handler(frontend fs.FS) http.Handler {
 	r.Get("/api/games", l.listGames)
 	r.Post("/api/games", l.saveGame)
 	r.Patch("/api/games/{id}", l.saveGame)
+	r.Delete("/api/games/{id}", l.deleteGame)
 	r.Get("/api/playback/{id}", l.playbackInfo)
 	r.Get("/api/assets", l.listAssets)
 	r.Patch("/api/assets", l.batchUpdate)

@@ -1,13 +1,25 @@
 import { useState } from "react";
-import { Check, Gamepad2, MoreHorizontal, Plus, RotateCw } from "lucide-react";
+import { Check, Gamepad2, MoreHorizontal, Plus, RotateCw, Trash2 } from "lucide-react";
 import { api, Asset, captureLabel, Game, gameLabel, Patch, Scope, scoped } from "./api";
 import { Dialog, Empty } from "./components";
 
-export function GamesGrid({ games, query, open, edit, create }: { games: Game[]; query: string; open: (game: Game) => void; edit: (game: Game) => void; create: () => void }) {
+export function GamesGrid({ games, query, open, edit, remove, create }: { games: Game[]; query: string; open: (game: Game) => void; edit: (game: Game) => void; remove: (game: Game) => void; create: () => void }) {
   const search = query.trim().toLocaleLowerCase();
   const items = games.filter(game => `${game.name} ${game.steamAppId}`.toLocaleLowerCase().includes(search));
   if (!items.length) return <Empty icon={<Gamepad2 size={34} strokeWidth={1.3} />} title={search ? "没有匹配的游戏" : "收集你的游戏瞬间"} description={search ? "试试游戏名或 Steam App ID。" : "在这里上传图片或游戏录像，Steam 文件名自动按游戏 ID 分组，其他来源进入未指定游戏。"}><button className="button primary" onClick={create}><Plus size={15} />新建游戏</button></Empty>;
-  return <div className="entity-grid games">{items.map(game => <article className="entity-card" key={game.id}><button className="entity-open" onClick={() => open(game)}><div className="entity-cover">{game.coverUrl ? <img src={game.coverUrl} alt="" loading="lazy" /> : <Gamepad2 size={36} strokeWidth={1.2} />}</div><div className="entity-card-info"><h2>{gameLabel(game)}</h2><span>{game.count} 个素材{game.steamAppId && ` · Steam ${game.steamAppId}`}</span>{game.lastCapturedAt && <time className="game-last-capture">{captureLabel(game.lastCapturedAt)}</time>}</div></button><div className="entity-actions"><button className="icon-button" aria-label={`命名 ${gameLabel(game)}`} title="编辑游戏名称" onClick={() => edit(game)}><MoreHorizontal size={17} /></button></div></article>)}</div>;
+  return <div className="entity-grid games">{items.map(game => <article className="entity-card" key={game.id}><button className="entity-open" onClick={() => open(game)}><div className="entity-cover">{game.coverUrl ? <img src={game.coverUrl} alt="" loading="lazy" /> : <Gamepad2 size={36} strokeWidth={1.2} />}</div><div className="entity-card-info"><h2>{gameLabel(game)}</h2><span>{game.count} 个素材{game.steamAppId && ` · Steam ${game.steamAppId}`}</span>{game.lastCapturedAt && <time className="game-last-capture">{captureLabel(game.lastCapturedAt)}</time>}</div></button><div className="entity-actions"><button className="icon-button" aria-label={`命名 ${gameLabel(game)}`} title="编辑游戏名称" onClick={() => edit(game)}><MoreHorizontal size={17} /></button><button className="icon-button danger" aria-label={`删除游戏夹 ${gameLabel(game)}`} title="删除游戏夹" onClick={() => remove(game)}><Trash2 size={15} /></button></div></article>)}</div>;
+}
+
+export function RemoveGame({ game, close, confirm }: { game: Game; close: () => void; confirm: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function remove() {
+    if (busy) return;
+    setBusy(true); setError("");
+    try { await confirm(); }
+    catch (error) { setError(error instanceof Error ? error.message : String(error)); setBusy(false); }
+  }
+  return <Dialog title="删除游戏夹" close={close}><div className="confirm-content"><p>删除“{gameLabel(game)}”？截图和录像将保留在游戏截图中，并回到“未指定游戏”。</p><p className="muted">会解除该游戏的全部素材关联，包括隐藏及回收站中的素材。截图时间、原件、标签和收藏集均保留。</p>{game.steamAppId && <p className="muted">以后上传 Steam {game.steamAppId} 的新素材时，会再次自动创建游戏夹；重复导入已有素材不会重新归类。</p>}{error && <div className="inline-error">{error}</div>}</div><footer className="dialog-footer"><button className="button" onClick={close} disabled={busy}>取消</button><button className="button danger" disabled={busy} onClick={() => void remove()}>{busy ? <RotateCw size={15} className="spin" /> : <Trash2 size={15} />}确认删除</button></footer></Dialog>;
 }
 
 export function GameEditor({ game, scope, close, saved }: { game?: Game; scope: Scope; close: () => void; saved: () => void }) {

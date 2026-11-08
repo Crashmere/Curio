@@ -60,6 +60,8 @@ Screenshot metadata records a manual opt-out as well as active membership. Reimp
 
 The game list, counts, latest capture time and covers use the asset's common effective-visibility predicate and exclude trash. A game with live screenshots only in another scope is omitted. Empty games appear in their creation scope so they can be selected before an upload. Game identity and name are shared across modes; game assignment itself adds no hiding inheritance.
 
+Confirmed game deletion uses the same availability predicate as the game list. One transaction clears every reference to that shared identity, including hidden and trashed media, then removes the game entry. Detachment preserves capture times and screenshot classification, so live images and recordings return to unassigned game media rather than All Materials or the inbox. Original bytes, visibility and other memberships remain unchanged. New Steam uploads can recreate the deleted identity's game; existing assets retain their manual unassignment on duplicate import.
+
 Initial activation on a legacy catalog creates additive `games`, `screenshots` and `catalog_features` tables and performs one transactional image-filename recognition pass. The completion marker and screenshot rows commit together without updating asset rows, memberships or uploaded bytes. Completed catalogs retain their existing game classifications; adding video support and the new upload/organization rules introduces no second backfill or data rewrite. Older programs can ignore the added tables; original-byte identity remains unchanged.
 
 ## Durable Uploads

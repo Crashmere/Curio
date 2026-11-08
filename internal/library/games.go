@@ -348,13 +348,19 @@ func patchScreenshot(tx *sql.Tx, hash string, p assetPatch, captured string) err
 
 const screenshotTimeSQL = `(SELECT s.captured_at FROM screenshots s WHERE s.asset_id=a.id AND s.enabled=1)`
 
+func gameScopeSQL(scope string) string {
+	return `EXISTS(SELECT 1 FROM screenshots s JOIN assets a ON a.id=s.asset_id WHERE s.game_id=g.id
+ AND s.enabled=1 AND a.purge_pending=0 AND a.trashed_at='' AND ` + scopeSQL(scope) + `)
+ OR (g.created_scope=? AND NOT EXISTS(SELECT 1 FROM screenshots s JOIN assets a ON a.id=s.asset_id
+ WHERE s.game_id=g.id AND s.enabled=1 AND a.purge_pending=0 AND a.trashed_at=''))`
+}
+
 func (l *Library) scopedGames(scope string) ([]Game, error) {
 	predicate := "s.enabled=1 AND a.purge_pending=0 AND a.trashed_at='' AND " + scopeSQL(scope)
 	rows, err := l.DB.Query(`SELECT g.id,COALESCE(g.steam_app_id,''),g.name,
  (SELECT count(*) FROM screenshots s JOIN assets a ON a.id=s.asset_id WHERE s.game_id=g.id AND `+predicate+`),
  COALESCE((SELECT max(s.captured_at) FROM screenshots s JOIN assets a ON a.id=s.asset_id WHERE s.game_id=g.id AND `+predicate+`),'')
- FROM games g WHERE EXISTS(SELECT 1 FROM screenshots s JOIN assets a ON a.id=s.asset_id WHERE s.game_id=g.id AND `+predicate+`)
- OR (g.created_scope=? AND NOT EXISTS(SELECT 1 FROM screenshots s JOIN assets a ON a.id=s.asset_id WHERE s.game_id=g.id AND s.enabled=1 AND a.purge_pending=0 AND a.trashed_at=''))
+ FROM games g WHERE `+gameScopeSQL(scope)+`
  ORDER BY COALESCE(NULLIF(g.name,''),g.steam_app_id) COLLATE NOCASE,g.id`, scope)
 	if err != nil {
 		return nil, err
@@ -479,4 +485,56 @@ func (l *Library) saveGame(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, 200, map[string]string{"id": gameID})
+}
+
+func (l *Library) deleteGame(w http.ResponseWriter, r *http.Request) {
+	var p struct {
+		Confirm bool `json:"confirm"`
+	}
+	if !decode(w, r, &p) {
+		return
+	}
+	if !p.Confirm {
+		fail(w, 400, "请确认删除游戏夹")
+		return
+	}
+	gameID := chi.URLParam(r, "id")
+	if !validID.MatchString(gameID) {
+		fail(w, 404, "游戏不存在于当前模式")
+		return
+	}
+	tx, err := l.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		fail(w, 500, err)
+		return
+	}
+	defer tx.Rollback()
+	var available int
+	scope := requestScope(r.URL.Query())
+	if err = tx.QueryRow("SELECT count(*) FROM games g WHERE g.id=? AND ("+gameScopeSQL(scope)+")", gameID, scope).Scan(&available); err != nil {
+		fail(w, 500, err)
+		return
+	}
+	if available == 0 {
+		fail(w, 404, "游戏不存在于当前模式")
+		return
+	}
+	// Game identity is shared across scopes; detach every reference, including trash.
+	if _, err = tx.Exec("UPDATE assets SET updated_at=? WHERE id IN (SELECT asset_id FROM screenshots WHERE game_id=?)", now(), gameID); err != nil {
+		fail(w, 500, err)
+		return
+	}
+	if _, err = tx.Exec("UPDATE screenshots SET game_id=NULL,source='manual' WHERE game_id=?", gameID); err != nil {
+		fail(w, 500, err)
+		return
+	}
+	if _, err = tx.Exec("DELETE FROM games WHERE id=?", gameID); err != nil {
+		fail(w, 500, err)
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		fail(w, 500, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
 }
