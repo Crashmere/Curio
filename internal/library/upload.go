@@ -1,6 +1,7 @@
 package library
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -141,7 +142,15 @@ func uploadResult(h UploadHints, offset int64, complete bool) map[string]any {
 	return out
 }
 
-func (l *Library) rememberExisting(a Asset, h UploadHints) error {
+func (l *Library) rememberExisting(ctx context.Context, a Asset, h UploadHints) error {
+	var captured string
+	if h.Screenshot || h.GameID != "" {
+		var err error
+		captured, err = l.captureTimeForAsset(ctx, a.ID, h.Name, false)
+		if err != nil {
+			return err
+		}
+	}
 	tx, err := l.DB.Begin()
 	if err != nil {
 		return err
@@ -156,7 +165,7 @@ func (l *Library) rememberExisting(a Asset, h UploadHints) error {
 	if err = changeMemberships(tx, a.ID, "collections", nil, h.CollectionIDs, nil); err != nil {
 		return err
 	}
-	if err = recordScreenshot(tx, a.ID, h); err != nil {
+	if err = recordScreenshot(tx, a.ID, h, captured); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -192,7 +201,7 @@ func (l *Library) prepareUpload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if present {
-			if err = l.rememberExisting(a, h); err != nil {
+			if err = l.rememberExisting(r.Context(), a, h); err != nil {
 				fail(w, 400, err)
 				return
 			}
@@ -458,6 +467,18 @@ func (l *Library) completeUpload(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, err)
 		return
 	}
+	var captured string
+	if h.Screenshot || h.GameID != "" {
+		if repair {
+			captured, err = l.captureTimeForAsset(r.Context(), hash, h.Name, false)
+			if err != nil {
+				fail(w, 500, err)
+				return
+			}
+		} else if supportsGameMedia(allowedFormats[strings.ToLower(strings.TrimPrefix(filepath.Ext(h.Name), "."))]) {
+			captured = l.screenshotCaptureTime(r.Context(), hash, h.Name)
+		}
+	}
 	tx, err := l.DB.Begin()
 	if err != nil {
 		fail(w, 500, err)
@@ -489,7 +510,7 @@ func (l *Library) completeUpload(w http.ResponseWriter, r *http.Request) {
 		err = changeMemberships(tx, hash, "collections", nil, h.CollectionIDs, nil)
 	}
 	if err == nil {
-		err = recordScreenshot(tx, hash, h)
+		err = recordScreenshot(tx, hash, h, captured)
 	}
 	if err == nil {
 		_, err = tx.Exec("UPDATE uploads SET state='complete' WHERE id=?", hash)

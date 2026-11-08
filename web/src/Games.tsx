@@ -52,7 +52,7 @@ export function ScreenshotEditor({ asset, count, games, scope, close, save }: { 
     const patch: Patch = enabled ? {
       screenshot: true,
       ...(gameId === "auto" ? {} : { gameId }),
-      ...(asset && (gameId !== "auto" || time !== asset.capturedAt) ? { capturedAt: time } : {})
+      ...(asset && time !== asset.capturedAt ? { capturedAt: time } : {})
     } : { screenshot: false };
     try { await save(patch); }
     catch (error) { setError(error instanceof Error ? error.message : String(error)); setBusy(false); }
@@ -68,7 +68,7 @@ export function ScreenshotEditor({ asset, count, games, scope, close, save }: { 
         <button className="button subtle" type="button" onClick={() => setNewGame(!newGame)}><Plus size={14} />新建游戏</button>
         {newGame && <div className="form-section"><label>游戏名称<input value={name} onChange={event => setName(event.target.value)} maxLength={200} /></label><label>Steam App ID（可选）<input value={appId} onChange={event => setAppId(event.target.value)} inputMode="numeric" /></label><button type="button" className="button" disabled={busy || (!name.trim() && !appId)} onClick={() => void create()}>创建并选择</button></div>}
         {asset && <label>截图 / 录像时间<input type="datetime-local" step="1" value={capturedAt} onChange={event => setCapturedAt(event.target.value)} /></label>}
-        <p className="form-help">{gameId === "auto" ? "新归入的素材按 Steam 文件名识别游戏和时间，无法识别的进入未指定游戏。已归类素材保留原有信息。" : asset ? "时间按截图或录像时的本地时间保存。无法确定时可留空，排序时放在最后。" : "只修改游戏归属，保留每个素材各自的时间。"}</p>
+        <p className="form-help">{gameId === "auto" ? "新归入的素材按 Steam 文件名识别游戏和时间；时间无法识别时尝试读取文件元数据，游戏无法识别时进入未指定游戏。已归类素材保留原有信息。" : asset ? "时间优先从 Steam 文件名获取，否则尝试读取文件元数据。可手动修改或清空，未知时间排在最后。" : "已归类素材保留各自的时间；新归入素材优先读取 Steam 文件名，否则尝试文件元数据。"}</p>
       </>}
       {!enabled && <p className="form-help">移出游戏截图后回到全部素材；没有标签或收藏集时也会进入未整理。原件与其他关联保留，重复导入不会重新覆盖这一选择。</p>}
       {error && <div className="inline-error">{error}</div>}

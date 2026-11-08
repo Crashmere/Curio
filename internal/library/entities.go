@@ -1,6 +1,7 @@
 package library
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -88,9 +89,23 @@ func (p *assetPatch) validate() error {
 	return nil
 }
 
-func (l *Library) patch(p assetPatch) error {
+func (l *Library) patch(ctx context.Context, p assetPatch) error {
 	if err := p.validate(); err != nil {
 		return err
+	}
+	captureTimes := map[string]string{}
+	enablingScreenshot := p.GameID != nil
+	if p.Screenshot != nil {
+		enablingScreenshot = *p.Screenshot
+	}
+	if p.CapturedAt == nil && enablingScreenshot {
+		for _, hash := range p.IDs {
+			captured, err := l.captureTimeForAsset(ctx, hash, "", true)
+			if err != nil {
+				return err
+			}
+			captureTimes[hash] = captured
+		}
 	}
 	tx, err := l.DB.Begin()
 	if err != nil {
@@ -143,7 +158,7 @@ func (l *Library) patch(p assetPatch) error {
 		if err = changeMemberships(tx, hash, "collections", p.CollectionIDs, p.AddCollectionIDs, p.RemoveCollectionIDs); err != nil {
 			return err
 		}
-		if err = patchScreenshot(tx, hash, p); err != nil {
+		if err = patchScreenshot(tx, hash, p, captureTimes[hash]); err != nil {
 			return err
 		}
 	}
@@ -199,7 +214,7 @@ func (l *Library) batchUpdate(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &p) {
 		return
 	}
-	if err := l.patch(p); err != nil {
+	if err := l.patch(r.Context(), p); err != nil {
 		fail(w, 400, err)
 		return
 	}
@@ -212,7 +227,7 @@ func (l *Library) updateAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.IDs = []string{chi.URLParam(r, "id")}
-	if err := l.patch(p); err != nil {
+	if err := l.patch(r.Context(), p); err != nil {
 		fail(w, 400, err)
 		return
 	}

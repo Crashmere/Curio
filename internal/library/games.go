@@ -1,7 +1,9 @@
 package library
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -61,7 +63,78 @@ func ensureSteamGame(tx *sql.Tx, appID, scope string) (string, error) {
 	return gameID, err
 }
 
-func recordScreenshot(tx *sql.Tx, hash string, h UploadHints) error {
+func (l *Library) screenshotCaptureTime(ctx context.Context, hash string, names ...string) string {
+	for _, name := range names {
+		if _, captured := parseSteamScreenshot(name); captured != "" {
+			return captured
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	raw, err := l.cpuCommand(ctx, "exiftool", "-j", "-n", "-api", "LargeFileSupport=1",
+		"-DateTimeOriginal", "-CreateDate", "-CreationDate", "-CreationTime",
+		"-DateCreated", "-MediaCreateDate", "-TrackCreateDate", l.Object(hash))
+	if err != nil {
+		return ""
+	}
+	var values []map[string]any
+	if json.Unmarshal(raw, &values) != nil || len(values) == 0 {
+		return ""
+	}
+	return metadataCaptureTime(values[0])
+}
+
+func metadataCaptureTime(metadata map[string]any) string {
+	for _, key := range []string{"DateTimeOriginal", "CreateDate", "CreationDate", "CreationTime", "DateCreated", "MediaCreateDate", "TrackCreateDate"} {
+		value := strings.TrimSpace(metaString(metadata, key))
+		for _, layout := range []string{
+			"2006:01:02 15:04:05Z07:00", "2006:01:02 15:04:05-0700", "2006:01:02 15:04:05",
+			time.RFC3339Nano, "2006-01-02T15:04:05", "2006-01-02 15:04:05Z07:00", "2006-01-02 15:04:05",
+		} {
+			if t, err := time.Parse(layout, value); err == nil && t.Year() > 0 {
+				// Keep the recorded wall clock, matching Steam's timezone-free timestamps.
+				return t.Format("2006-01-02T15:04:05")
+			}
+		}
+	}
+	return ""
+}
+
+func (l *Library) captureTimeForAsset(ctx context.Context, hash, name string, reenable bool) (string, error) {
+	var original, kind string
+	var pending bool
+	var enabled sql.NullBool
+	err := l.DB.QueryRow(`SELECT a.name,a.kind,a.purge_pending,s.enabled FROM assets a
+ LEFT JOIN screenshots s ON s.asset_id=a.id WHERE a.id=?`, hash).Scan(&original, &kind, &pending, &enabled)
+	if err != nil {
+		return "", err
+	}
+	if pending || !supportsGameMedia(kind) || (enabled.Valid && (enabled.Bool || !reenable)) {
+		return "", nil
+	}
+	names := []string{name, original}
+	rows, err := l.DB.Query("SELECT name FROM sources WHERE asset_id=? ORDER BY created_at,id", hash)
+	if err != nil {
+		return "", err
+	}
+	for rows.Next() {
+		var source string
+		if err = rows.Scan(&source); err != nil {
+			rows.Close()
+			return "", err
+		}
+		names = append(names, source)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return "", err
+	}
+	// Read embedded metadata before opening the catalog's write transaction.
+	return l.screenshotCaptureTime(ctx, hash, names...), nil
+}
+
+func recordScreenshot(tx *sql.Tx, hash string, h UploadHints, fallbackTime string) error {
 	if !h.Screenshot && h.GameID == "" {
 		return nil
 	}
@@ -74,6 +147,9 @@ func recordScreenshot(tx *sql.Tx, hash string, h UploadHints) error {
 		return nil
 	}
 	appID, captured := parseSteamScreenshot(h.Name)
+	if captured == "" {
+		captured = fallbackTime
+	}
 	gameID, source := h.GameID, "steam"
 	var kind string
 	if err := tx.QueryRow("SELECT kind FROM assets WHERE id=?", hash).Scan(&kind); err != nil {
@@ -146,7 +222,7 @@ func backfillScreenshots(db *sql.DB) error {
 		return err
 	}
 	for _, c := range candidates {
-		if err = recordScreenshot(tx, c.hash, UploadHints{Name: c.name, Scope: c.scope, Screenshot: true}); err != nil {
+		if err = recordScreenshot(tx, c.hash, UploadHints{Name: c.name, Scope: c.scope, Screenshot: true}, ""); err != nil {
 			return err
 		}
 	}
@@ -160,7 +236,7 @@ func supportsGameMedia(kind string) bool {
 	return kind == "image" || kind == "video"
 }
 
-func patchScreenshot(tx *sql.Tx, hash string, p assetPatch) error {
+func patchScreenshot(tx *sql.Tx, hash string, p assetPatch, captured string) error {
 	if p.Screenshot == nil && p.GameID == nil && p.CapturedAt == nil {
 		return nil
 	}
@@ -206,7 +282,7 @@ func patchScreenshot(tx *sql.Tx, hash string, p assetPatch) error {
 				return err
 			}
 		}
-		if err = recordScreenshot(tx, hash, UploadHints{Name: filepath.Base(name), Scope: scope, Screenshot: true}); err != nil {
+		if err = recordScreenshot(tx, hash, UploadHints{Name: filepath.Base(name), Scope: scope, Screenshot: true}, captured); err != nil {
 			return err
 		}
 		if p.CapturedAt == nil {
@@ -222,13 +298,17 @@ func patchScreenshot(tx *sql.Tx, hash string, p assetPatch) error {
 			return fmt.Errorf("游戏已不存在")
 		}
 	}
-	if _, err := tx.Exec("INSERT OR IGNORE INTO screenshots(asset_id,source) VALUES(?,'manual')", hash); err != nil {
+	if _, err := tx.Exec("INSERT OR IGNORE INTO screenshots(asset_id,captured_at,source) VALUES(?,?,'manual')", hash, captured); err != nil {
 		return err
 	}
 	set, args := []string{"source='manual'"}, []any{}
 	if p.Screenshot != nil && !*p.Screenshot {
 		set = append(set, "enabled=0", "game_id=NULL", "captured_at=''")
 	} else {
+		if p.CapturedAt == nil {
+			set = append(set, "captured_at=CASE WHEN enabled=0 THEN ? ELSE captured_at END")
+			args = append(args, captured)
+		}
 		set = append(set, "enabled=1")
 		if p.GameID != nil {
 			set = append(set, "game_id=?")
