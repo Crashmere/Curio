@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -25,7 +26,7 @@ func main() {
 }
 func run() error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("usage: curio init|serve|check [--data PATH]")
+		return fmt.Errorf("usage: curio init|serve|check|recalculate-screenshot-times [--data PATH]")
 	}
 	name := os.Args[1]
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
@@ -34,6 +35,10 @@ func run() error {
 	workers := flags.Int("workers", 2, "parallel media jobs (1-8)")
 	gpu := flags.Int("gpu-slots", 1, "simultaneous GPU operations")
 	full := flags.Bool("full", false, "verify original SHA-256 checksums")
+	var apply *bool
+	if name == "recalculate-screenshot-times" {
+		apply = flags.Bool("apply", false, "replace capture times for live unassigned game media in both scopes; default is read-only preview")
+	}
 	if err := flags.Parse(os.Args[2:]); err != nil {
 		return err
 	}
@@ -41,6 +46,13 @@ func run() error {
 	defer stop()
 	if name == "check" {
 		return library.CheckData(ctx, *data, *full)
+	}
+	if name == "recalculate-screenshot-times" {
+		result, err := library.RecalculateUnassignedScreenshotTimes(ctx, *data, *apply)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
 	}
 	var l *library.Library
 	var err error

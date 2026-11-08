@@ -83,6 +83,19 @@ NAS releases hold the shared maintenance lock and Curio deployment lock, verify 
 
 `make portal` publishes declaration-only changes without rebuilding or restarting. `make rollback COMMIT=<compatible-full-commit>` reuses a retained verified program through the same health and protection flow. Program, declaration and documentation provenance are separate: `current-commit`, `config/portal-source.json` and `docs/SOURCE` respectively. A program rollback does not restore data or undo permanent deletion.
 
+## Screenshot Time Recalculation
+
+The maintenance command previews or recalculates capture times only for live, enabled game media without an assigned game, across normal and hidden scopes. Assigned games, trash, permanent-cleanup candidates and manual opt-outs are excluded. It uses the same Steam-first, earliest-embedded-time rule as new imports and changes only `screenshots.captured_at`; originals, game associations, classification source, asset metadata and memberships remain unchanged.
+
+```sh
+bin/curio recalculate-screenshot-times --data /path/to/isolated-data
+bin/curio recalculate-screenshot-times --data /path/to/isolated-data --apply
+```
+
+The default opens the existing catalog read-only and reports `selected`, `changed`, `known`, `unknown` and `applied` without exposing filenames or timestamps. `--apply` replaces selected times, including manually corrected or cleared values. Reads finish before the write transaction; an extraction error aborts the batch, and concurrent changes to a row being updated roll back the entire transaction. No automatic restart or startup recalculation exists.
+
+On `nas`, obtain explicit recalculation authorization, preview the selection, and protect only `curio.sqlite` through the shared [temporary database protection](https://github.com/Crashmere/agent-config/blob/main/skills/server-operations/references/retention.md#temporary-upgrade-backups). Hold the shared maintenance and Curio deployment locks, stop only Curio for capture/apply/independent database comparison, then resume it and accept protection after affected-data and health checks pass. Verify exact changes to selected capture times and preservation of all other catalog rows and columns. Keep originals and non-database files in place; missing embedded/source-name timestamps remain unknown rather than adopting NAS upload dates.
+
 ## Backup, Recovery and Diagnosis
 
 Full `nas` / `vps` backups and restoration are exclusively server-operations agent workflows. Curio's declaration covers all catalog tables, originals, stored derivatives, durable uploads and work. Include recovery-critical private configuration and identities through the shared full external package. Downloadable media runtimes and dependency caches are excluded and reconstructed from pinned sources; keep the live runtime intact. Do not add internal backup schedules or browser backup controls.

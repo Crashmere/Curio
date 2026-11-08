@@ -64,28 +64,42 @@ func ensureSteamGame(tx *sql.Tx, appID, scope string) (string, error) {
 }
 
 func (l *Library) screenshotCaptureTime(ctx context.Context, hash string, names ...string) string {
+	captured, _ := l.readScreenshotCaptureTime(ctx, hash, names...)
+	return captured
+}
+
+func (l *Library) readScreenshotCaptureTime(ctx context.Context, hash string, names ...string) (string, error) {
 	for _, name := range names {
 		if _, captured := parseSteamScreenshot(name); captured != "" {
-			return captured
+			return captured, nil
 		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	raw, err := l.cpuCommand(ctx, "exiftool", "-j", "-n", "-api", "LargeFileSupport=1",
 		"-DateTimeOriginal", "-CreateDate", "-CreationDate", "-CreationTime",
-		"-DateCreated", "-MediaCreateDate", "-TrackCreateDate", l.Object(hash))
+		"-DateCreated", "-MediaCreateDate", "-TrackCreateDate",
+		"-ModifyDate", "-ModificationDate", "-ModificationTime", "-DateModified",
+		"-MediaModifyDate", "-TrackModifyDate", l.Object(hash))
 	if err != nil {
-		return ""
+		return "", err
 	}
 	var values []map[string]any
-	if json.Unmarshal(raw, &values) != nil || len(values) == 0 {
-		return ""
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return "", err
 	}
-	return metadataCaptureTime(values[0])
+	if len(values) == 0 {
+		return "", errors.New("metadata reader returned no result")
+	}
+	return metadataCaptureTime(values[0]), nil
 }
 
 func metadataCaptureTime(metadata map[string]any) string {
-	for _, key := range []string{"DateTimeOriginal", "CreateDate", "CreationDate", "CreationTime", "DateCreated", "MediaCreateDate", "TrackCreateDate"} {
+	earliest := ""
+	for _, key := range []string{
+		"DateTimeOriginal", "CreateDate", "CreationDate", "CreationTime", "DateCreated", "MediaCreateDate", "TrackCreateDate",
+		"ModifyDate", "ModificationDate", "ModificationTime", "DateModified", "MediaModifyDate", "TrackModifyDate",
+	} {
 		value := strings.TrimSpace(metaString(metadata, key))
 		for _, layout := range []string{
 			"2006:01:02 15:04:05Z07:00", "2006:01:02 15:04:05-0700", "2006:01:02 15:04:05",
@@ -93,11 +107,15 @@ func metadataCaptureTime(metadata map[string]any) string {
 		} {
 			if t, err := time.Parse(layout, value); err == nil && t.Year() > 0 {
 				// Keep the recorded wall clock, matching Steam's timezone-free timestamps.
-				return t.Format("2006-01-02T15:04:05")
+				captured := t.Format("2006-01-02T15:04:05")
+				if earliest == "" || captured < earliest {
+					earliest = captured
+				}
+				break
 			}
 		}
 	}
-	return ""
+	return earliest
 }
 
 func (l *Library) captureTimeForAsset(ctx context.Context, hash, name string, reenable bool) (string, error) {
