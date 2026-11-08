@@ -28,7 +28,7 @@ Quick tag edits update loaded cards and viewer details from the saved asset resp
 
 ### Collection Groups
 
-Collections support unnamed groups of media. A media item belongs to at most one group within each collection and can be grouped independently in other collections. Selecting at least two items creates a group; adding selected items to an existing group moves only their grouping in that collection. Removing items from a group or dissolving a group keeps the media in the collection. Groups have no separate visibility flag or effect on organization status.
+Collections support unnamed groups of media. A media item belongs to at most one group within each collection and can be grouped independently in other collections. Creating a group ignores selected media already grouped in that collection and requires at least two remaining distinct items. The toolbar disables creation when fewer than two ungrouped items are selected. Adding selected items to an existing group moves only their grouping in that collection. Removing items from a group or dissolving a group keeps the media in the collection. Groups have no separate visibility flag or effect on organization status.
 
 Group membership is stored in additive catalog tables with foreign keys to both the group and the asset's collection membership. Removing that collection membership or permanently deleting an asset removes its corresponding group link. Replacing a membership set preserves links for retained collections. Trash changes only asset state, so restoring an asset restores its group placement. Opening an existing catalog creates the new tables without rewriting existing tables or media.
 

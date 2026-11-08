@@ -88,12 +88,12 @@ Groups are unnamed and local to one collection. Each media item can belong to on
 | Method and path | Behavior |
 | --- | --- |
 | `GET /api/collections/{id}/groups` | `items` containing group `id` and ordered `assetIds`; applies the media list's scope, search, filters and sorting before forming groups, without pagination |
-| `POST /api/collections/{id}/groups` | Create with `{"ids":["<asset-sha256>","<asset-sha256>"]}`; requires at least two distinct media and returns `{"id":"<group-id>"}` |
+| `POST /api/collections/{id}/groups` | Create with `{"ids":["<asset-sha256>","<asset-sha256>"]}`; ignores media already grouped in this collection, requires at least two remaining distinct media and returns `{"id":"<group-id>"}` |
 | `PATCH /api/collections/{id}/groups/{group}` | Incrementally change members using `addIds` and/or `removeIds` |
 | `PATCH /api/collections/{id}/groups` | Remove selected media from any groups in this collection using `removeIds` |
 | `DELETE /api/collections/{id}/groups/{group}` | Dissolve the entire group, preserving media, collection memberships, metadata and originals |
 
-Group edits accept up to 2000 media per request and validate live membership in the collection and requested scope atomically. Adding media already grouped elsewhere in the same collection moves only those selected media. A group's matched subset can contain one media after filtering or visibility changes. Groups with no matching live members are omitted from browsing; groups with no remaining membership links are removed during group edits.
+Group edits accept up to 2000 media per request and validate live membership in the collection and requested scope atomically. Creation checks existing group links in that same transaction and returns HTTP 400 without changing groups when fewer than two distinct ungrouped media remain. Adding media to an existing group with `PATCH` moves only those selected media from other groups in the same collection. A group's matched subset can contain one media after filtering or visibility changes. Groups with no matching live members are omitted from browsing; groups with no remaining membership links are removed during group edits.
 
 Fetch a group's media through `GET /api/assets?collection=<id>&group=<group-id>` with the same scope and filters. Group membership survives trash and restore, but removing a collection membership removes its group link. Replacing `collectionIds` retains group links for collections that remain present.
 

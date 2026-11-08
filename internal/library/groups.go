@@ -110,14 +110,6 @@ func (l *Library) createGroup(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &p) {
 		return
 	}
-	unique := map[string]bool{}
-	for _, hash := range p.IDs {
-		unique[hash] = true
-	}
-	if len(unique) < 2 {
-		fail(w, 400, "至少选择两个素材组成一组")
-		return
-	}
 	collectionID := chi.URLParam(r, "id")
 	groupID := id()
 	err := l.editGroup(collectionID, groupID, requestScope(r.URL.Query()), p.IDs, nil, true)
@@ -144,6 +136,25 @@ func (l *Library) editGroup(collectionID, groupID, scope string, add, remove []s
 		return err
 	}
 	if create {
+		ungrouped := make([]string, 0, len(add))
+		seen := map[string]bool{}
+		for _, hash := range add {
+			if seen[hash] {
+				continue
+			}
+			seen[hash] = true
+			var grouped bool
+			if err = tx.QueryRow("SELECT EXISTS(SELECT 1 FROM collection_group_assets WHERE collection_id=? AND asset_id=?)", collectionID, hash).Scan(&grouped); err != nil {
+				return err
+			}
+			if !grouped {
+				ungrouped = append(ungrouped, hash)
+			}
+		}
+		if len(ungrouped) < 2 {
+			return fmt.Errorf("至少选择两个未分组的素材组成一组")
+		}
+		add = ungrouped
 		_, err = tx.Exec("INSERT INTO collection_groups(id,collection_id,created_at) VALUES(?,?,?)", groupID, collectionID, now())
 	} else if groupID != "" {
 		var exists bool

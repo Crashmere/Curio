@@ -82,7 +82,9 @@ function App() {
   const selectedAssets = entries.flatMap(entry => entry.asset ? [entry.asset] : entry.items).filter(asset => selected.has(asset.id));
   const selectedAreStarred = selectedAssets.length === selected.size && selectedAssets.every(asset => asset.starred);
   const selectedSupportGames = selectedAssets.length === selected.size && selectedAssets.every(supportsGameMedia);
-  const selectedInGroups = groups.some(group => group.assetIds.some(id => selected.has(id)));
+  const groupedAssetIds = new Set(groups.flatMap(group => group.assetIds));
+  const selectedUngroupedIds = [...selected].filter(id => !groupedAssetIds.has(id));
+  const selectedInGroups = [...selected].some(id => groupedAssetIds.has(id));
   const allSelected = total > 0 && selected.size === total;
   const activeEntity = collectionId ? collections.find(item => item.id === collectionId) : tagId ? tags.find(item => item.id === tagId) : undefined;
   const activeGame = games.find(game => game.id === gameId);
@@ -412,7 +414,7 @@ function App() {
   }
   async function editGroup(group: MediaGroup | null, action: "create" | "add" | "remove" | "dissolve") {
     if (busy || loading || selectingAll) return;
-    const ids = [...selected];
+    const ids = action === "create" ? selectedUngroupedIds : [...selected];
     if (action !== "dissolve" && (!ids.length || ids.length > 2000)) return;
     if (action === "create" && ids.length < 2) return;
     const controller = new AbortController();
@@ -588,7 +590,7 @@ function App() {
       <button className="button subtle" title="全选当前筛选结果，包含尚未加载的素材" disabled={loading || loadingMore || selectingAll || busy || !total || !!error} onClick={() => void selectAll()}>{selectingAll ? <><RotateCw size={14} className="spin" />正在全选</> : allSelected ? "取消全选" : "全选"}</button>
       {!!selected.size && !selectingAll && <><span className="selection-divider" />{view !== "trash" ? <>
         {selectedSupportGames && <button className="button" disabled={busy} onClick={() => setModal({ type: "screenshots", ids: [...selected] })}><Gamepad2 size={15} />指定游戏</button>}
-        {collectionId && <><button className="button group-create" title="将所选素材组成无名称的分组" disabled={busy || loading || selected.size < 2 || selected.size > 2000} onClick={() => void editGroup(null, "create")}><Group size={15} />组成一组</button>{selectedInGroups && <button className="button" disabled={busy || loading} onClick={() => void editGroup(null, "remove")}><Ungroup size={15} />移出分组</button>}</>}
+        {collectionId && <><button className="button group-create" title="将所选未分组素材组成一组，已分组素材会被忽略" disabled={busy || loading || selectedUngroupedIds.length < 2 || selected.size > 2000} onClick={() => void editGroup(null, "create")}><Group size={15} />组成一组</button>{selectedInGroups && <button className="button" disabled={busy || loading} onClick={() => void editGroup(null, "remove")}><Ungroup size={15} />移出分组</button>}</>}
         <button className="button" disabled={busy} onClick={() => setModal({ type: "organize", ids: [...selected] })}><Tag size={15} /><span>整理</span></button>{(collectionId || tagId) && <button className="button" title="仅移除当前关联，保留素材与其他标签、收藏集" disabled={busy} onClick={() => void patch([...selected], collectionId ? { removeCollectionIds: [collectionId] } : { removeTagIds: [tagId] }, collectionId ? "已移出当前收藏集" : "已移出当前标签")}><Unlink size={15} />{collectionId ? "移出当前收藏集" : "移出当前标签"}</button>}<button className="icon-button" title={selectedAreStarred ? "取消星标" : "添加星标"} aria-label={selectedAreStarred ? "取消星标" : "添加星标"} disabled={busy} onClick={() => void patch([...selected], { starred: !selectedAreStarred }, "星标已更新")}><Star size={17} /></button><button className="icon-button" title="单独隐藏" aria-label="单独隐藏" disabled={busy} onClick={() => void patch([...selected], { hidden: true }, "已标记隐藏")}><EyeOff size={17} /></button><button className="icon-button" title="取消单独隐藏" aria-label="取消单独隐藏" disabled={busy} onClick={() => void patch([...selected], { hidden: false }, "已取消单独隐藏；标签或收藏集的隐藏仍会生效")}><Eye size={17} /></button><a className="icon-button" title="打包下载" aria-label="打包下载" href={`${base}api/download?ids=${[...selected].join(",")}`}><Download size={17} /></a><button className="icon-button danger" title="移入回收站" aria-label="移入回收站" disabled={busy} onClick={() => void patch([...selected], { trash: true }, "已移入回收站")}><Trash2 size={17} /></button></> : <><button className="button" disabled={busy} onClick={() => void patch([...selected], { trash: false }, "素材已恢复")}><RotateCw size={15} />恢复</button><button className="button danger" disabled={busy} onClick={() => setModal({ type: "purge", ids: [...selected] })}><Trash2 size={15} />永久删除</button></>}</>}
     </div>}
     {viewer && <Viewer asset={viewer} scope={scope} tags={tags} collections={collections} games={games} close={() => setViewer(null)} previous={viewerIndex > 0 ? () => setViewer(galleryAssets[viewerIndex - 1]) : undefined} next={viewerIndex >= 0 && viewerIndex < galleryAssets.length - 1 ? () => setViewer(galleryAssets[viewerIndex + 1]) : undefined} changed={changed} notify={notify} tagDragKey={tagDragKey} tagBusy={tagBusy} changeTag={(id, tag, remove) => void changeTag(id, tag, remove)} />}
