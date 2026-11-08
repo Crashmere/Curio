@@ -85,7 +85,7 @@ NAS releases hold the shared maintenance lock and Curio deployment lock, verify 
 
 ## Screenshot Time Recalculation
 
-The maintenance command previews or recalculates capture times only for live, enabled game media without an assigned game, across normal and hidden scopes. Assigned games, trash, permanent-cleanup candidates and manual opt-outs are excluded. It uses the same Steam-first, earliest-embedded-time rule as new imports and changes only `screenshots.captured_at`; originals, game associations, classification source, asset metadata and memberships remain unchanged.
+The maintenance command previews or recalculates capture times only for live, enabled game media without an assigned game, across normal and hidden scopes. Assigned games, trash, permanent-cleanup candidates and manual opt-outs are excluded. It uses the same capture-time precedence as new imports: valid Steam filenames, underscore-delimited or underscore-prefixed trailing `YYYYMMDDHHmmss` tokens, then the earliest embedded capture, creation or modification time. It changes only `screenshots.captured_at`; originals, game associations, classification source, asset metadata and memberships remain unchanged.
 
 ```sh
 bin/curio recalculate-screenshot-times --data /path/to/isolated-data

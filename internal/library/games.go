@@ -41,12 +41,35 @@ func parseSteamScreenshot(name string) (string, string) {
 	if format != "png" && format != "jpg" && format != "jpeg" && allowedFormats[format] != "video" {
 		return "", ""
 	}
-	t, err := time.Parse("20060102150405", parts[2])
-	if err != nil {
+	captured := parseScreenshotTimestamp(parts[2])
+	if captured == "" {
 		return "", ""
 	}
-	// Steam filenames contain wall-clock time, not a timezone or UTC offset.
-	return parts[1], t.Format("2006-01-02T15:04:05")
+	return parts[1], captured
+}
+
+func parseScreenshotTimestamp(value string) string {
+	if len(value) != 14 {
+		return ""
+	}
+	t, err := time.Parse("20060102150405", value)
+	if err != nil {
+		return ""
+	}
+	// Filename timestamps contain wall-clock time, not a timezone or UTC offset.
+	return t.Format("2006-01-02T15:04:05")
+}
+
+func parseScreenshotFilenameTime(name string) string {
+	name = filepath.Base(name)
+	stem := strings.TrimSuffix(name, filepath.Ext(name))
+	// Tokens after the first have a leading underscore and end at '_' or the stem boundary.
+	for _, token := range strings.Split(stem, "_")[1:] {
+		if captured := parseScreenshotTimestamp(token); captured != "" {
+			return captured
+		}
+	}
+	return ""
 }
 
 func ensureSteamGame(tx *sql.Tx, appID, scope string) (string, error) {
@@ -71,6 +94,11 @@ func (l *Library) screenshotCaptureTime(ctx context.Context, hash string, names 
 func (l *Library) readScreenshotCaptureTime(ctx context.Context, hash string, names ...string) (string, error) {
 	for _, name := range names {
 		if _, captured := parseSteamScreenshot(name); captured != "" {
+			return captured, nil
+		}
+	}
+	for _, name := range names {
+		if captured := parseScreenshotFilenameTime(name); captured != "" {
 			return captured, nil
 		}
 	}
