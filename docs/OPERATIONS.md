@@ -85,14 +85,16 @@ NAS releases hold the shared maintenance lock and Curio deployment lock, verify 
 
 ## Screenshot Time Recalculation
 
-The maintenance command previews or recalculates capture times only for live, enabled game media without an assigned game, across normal and hidden scopes. Assigned games, trash, permanent-cleanup candidates and manual opt-outs are excluded. It uses the same capture-time precedence as new imports: valid Steam filenames, underscore-delimited or underscore-prefixed trailing `YYYYMMDDHHmmss` tokens, then the earliest embedded capture, creation or modification time. It changes only `screenshots.captured_at`; originals, game associations, classification source, asset metadata and memberships remain unchanged.
+The maintenance command previews or recalculates capture times for live, enabled game media across normal and hidden scopes. By default it selects media without an assigned game; `--assigned` selects only media already in game folders. Both selections exclude trash, permanent-cleanup candidates and manual opt-outs. It uses the same capture-time precedence as new imports: valid Steam filenames, underscore-delimited or underscore-prefixed trailing `YYYYMMDDHHmmss` tokens, then the earliest embedded capture, creation or modification time. It changes only `screenshots.captured_at`; originals, game associations, classification source, asset metadata and memberships remain unchanged.
 
 ```sh
 bin/curio recalculate-screenshot-times --data /path/to/isolated-data
 bin/curio recalculate-screenshot-times --data /path/to/isolated-data --apply
+bin/curio recalculate-screenshot-times --data /path/to/isolated-data --assigned
+bin/curio recalculate-screenshot-times --data /path/to/isolated-data --assigned --apply
 ```
 
-The default opens the existing catalog read-only and reports `selected`, `changed`, `known`, `unknown` and `applied` without exposing filenames or timestamps. `--apply` replaces selected times, including manually corrected or cleared values. Reads finish before the write transaction; an extraction error aborts the batch, and concurrent changes to a row being updated roll back the entire transaction. No automatic restart or startup recalculation exists.
+Without `--apply`, the command opens the existing catalog read-only and reports `selected`, `changed`, `known`, `unknown` and `applied` without exposing filenames or timestamps. `--apply` replaces selected times, including manually corrected or cleared values. Reads finish before the write transaction; an extraction error aborts the batch, and concurrent changes to a row's time, game assignment or eligibility roll back the entire transaction. No automatic restart or startup recalculation exists.
 
 On `nas`, obtain explicit recalculation authorization, preview the selection, and protect only `curio.sqlite` through the shared [temporary database protection](https://github.com/Crashmere/agent-config/blob/main/skills/server-operations/references/retention.md#temporary-upgrade-backups). Hold the shared maintenance and Curio deployment locks, stop only Curio for capture/apply/independent database comparison, then resume it and accept protection after affected-data and health checks pass. Verify exact changes to selected capture times and preservation of all other catalog rows and columns. Keep originals and non-database files in place; missing embedded/source-name timestamps remain unknown rather than adopting NAS upload dates.
 

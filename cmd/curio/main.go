@@ -35,9 +35,10 @@ func run() error {
 	workers := flags.Int("workers", 2, "parallel media jobs (1-8)")
 	gpu := flags.Int("gpu-slots", 1, "simultaneous GPU operations")
 	full := flags.Bool("full", false, "verify original SHA-256 checksums")
-	var apply *bool
+	var apply, assigned *bool
 	if name == "recalculate-screenshot-times" {
-		apply = flags.Bool("apply", false, "replace capture times for live unassigned game media in both scopes; default is read-only preview")
+		apply = flags.Bool("apply", false, "replace capture times for selected live game media in both visibility scopes; default is read-only preview")
+		assigned = flags.Bool("assigned", false, "select media already in game folders instead of unassigned game media")
 	}
 	if err := flags.Parse(os.Args[2:]); err != nil {
 		return err
@@ -48,7 +49,7 @@ func run() error {
 		return library.CheckData(ctx, *data, *full)
 	}
 	if name == "recalculate-screenshot-times" {
-		result, err := library.RecalculateUnassignedScreenshotTimes(ctx, *data, *apply)
+		result, err := library.RecalculateScreenshotTimes(ctx, *data, *apply, *assigned)
 		if err != nil {
 			return err
 		}

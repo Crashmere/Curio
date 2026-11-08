@@ -16,7 +16,7 @@ type CaptureTimeRecalculation struct {
 	Applied  bool `json:"applied"`
 }
 
-func RecalculateUnassignedScreenshotTimes(ctx context.Context, root string, apply bool) (CaptureTimeRecalculation, error) {
+func RecalculateScreenshotTimes(ctx context.Context, root string, apply, assigned bool) (CaptureTimeRecalculation, error) {
 	var result CaptureTimeRecalculation
 	path, err := filepath.Abs(filepath.Join(root, "curio.sqlite"))
 	if err != nil {
@@ -40,16 +40,23 @@ func RecalculateUnassignedScreenshotTimes(ctx context.Context, root string, appl
 	}
 	l := &Library{DB: db, Root: filepath.Dir(path), CPU: make(chan struct{}, 1), backgroundCPU: make(chan struct{}, 1)}
 	const live = "a.purge_pending=0 AND a.trashed_at='' AND a.kind IN ('image','video')"
-	rows, err := db.QueryContext(ctx, `SELECT a.id,a.name,s.captured_at FROM screenshots s JOIN assets a ON a.id=s.asset_id
- WHERE s.enabled=1 AND s.game_id IS NULL AND `+live+` ORDER BY a.id`)
+	assignment := "s.game_id IS NULL"
+	if assigned {
+		assignment = "s.game_id IS NOT NULL"
+	}
+	rows, err := db.QueryContext(ctx, `SELECT a.id,a.name,s.captured_at,s.game_id FROM screenshots s JOIN assets a ON a.id=s.asset_id
+ WHERE s.enabled=1 AND `+assignment+` AND `+live+` ORDER BY a.id`)
 	if err != nil {
 		return result, err
 	}
-	type candidate struct{ hash, name, before, after string }
+	type candidate struct {
+		hash, name, before, after string
+		gameID                    sql.NullString
+	}
 	var candidates []candidate
 	for rows.Next() {
 		var c candidate
-		if err = rows.Scan(&c.hash, &c.name, &c.before); err != nil {
+		if err = rows.Scan(&c.hash, &c.name, &c.before, &c.gameID); err != nil {
 			rows.Close()
 			return result, err
 		}
@@ -109,8 +116,8 @@ func RecalculateUnassignedScreenshotTimes(ctx context.Context, root string, appl
 			continue
 		}
 		updated, err := tx.ExecContext(ctx, `UPDATE screenshots SET captured_at=?
- WHERE asset_id=? AND captured_at=? AND enabled=1 AND game_id IS NULL
- AND EXISTS(SELECT 1 FROM assets a WHERE a.id=screenshots.asset_id AND `+live+`)`, c.after, c.hash, c.before)
+ WHERE asset_id=? AND captured_at=? AND enabled=1 AND game_id IS ?
+ AND EXISTS(SELECT 1 FROM assets a WHERE a.id=screenshots.asset_id AND `+live+`)`, c.after, c.hash, c.before, c.gameID)
 		if err != nil {
 			return result, err
 		}
