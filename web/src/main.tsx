@@ -4,6 +4,7 @@ import { ArrowDownWideNarrow, Check, ChevronDown, CircleAlert, Download, Eye, Ey
 import { api, Asset, AssetPage, base, bytes, Entity, Game, gameLabel, Info, Job, MediaGroup, Patch, Scope, scoped, supportsGameMedia, View } from "./api";
 import { GameEditor, GamesGrid, RemoveGame, ScreenshotEditor } from "./Games";
 import { Dialog, Empty, isTextInput, stateNames } from "./components";
+import { Brand } from "./Brand";
 import { MediaCard } from "./MediaCard";
 import { TagChip } from "./TagChip";
 import { CollectionGallery, collectionEntries } from "./CollectionGallery";
@@ -547,7 +548,7 @@ function App() {
     <input className="file-input" ref={picker} type="file" multiple accept="image/*,video/*,.svg,.ico,.apng,.mkv,.webm" onChange={event => { receiveFiles(Array.from(event.target.files || [])); event.target.value = ""; }} />
     <input className="file-input" ref={folderPicker} type="file" multiple {...{ webkitdirectory: "" }} onChange={event => { receiveFiles(Array.from(event.target.files || [])); event.target.value = ""; }} />
     {sidebarOpen && <button className="sidebar-shade" aria-label="关闭导航" onClick={() => setSidebarOpen(false)} />}
-    <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}><button className="brand" onClick={() => navigate("all")} aria-label="Curio 首页"><img src={`${base}favicon.svg`} alt="" /><span>Curio</span></button>
+    <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}><Brand home={() => navigate("all")} switchScope={switchScope} />
       <nav className="navigation">
         <Nav icon={<Grid2X2 size={18} />} label="全部素材" active={view === "all" && !tagId && !collectionId} count={info?.total} click={() => navigate("all")} />
         <Nav icon={<Inbox size={18} />} label="未整理" active={view === "inbox"} count={info?.unorganized} click={() => navigate("inbox")} />
