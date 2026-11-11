@@ -387,9 +387,9 @@ func (l *Library) scopedGames(scope string) ([]Game, error) {
 	predicate := "s.enabled=1 AND a.purge_pending=0 AND a.trashed_at='' AND " + scopeSQL(scope)
 	rows, err := l.DB.Query(`SELECT g.id,COALESCE(g.steam_app_id,''),g.name,
  (SELECT count(*) FROM screenshots s JOIN assets a ON a.id=s.asset_id WHERE s.game_id=g.id AND `+predicate+`),
- COALESCE((SELECT max(s.captured_at) FROM screenshots s JOIN assets a ON a.id=s.asset_id WHERE s.game_id=g.id AND `+predicate+`),'')
+ COALESCE((SELECT max(s.captured_at) FROM screenshots s JOIN assets a ON a.id=s.asset_id WHERE s.game_id=g.id AND `+predicate+`),'') AS last_captured_at
  FROM games g WHERE `+gameScopeSQL(scope)+`
- ORDER BY COALESCE(NULLIF(g.name,''),g.steam_app_id) COLLATE NOCASE,g.id`, scope)
+ ORDER BY last_captured_at DESC,COALESCE(NULLIF(g.name,''),g.steam_app_id) COLLATE NOCASE,g.id`, scope)
 	if err != nil {
 		return nil, err
 	}

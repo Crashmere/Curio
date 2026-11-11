@@ -101,7 +101,7 @@ Fetch a group's media through `GET /api/assets?collection=<id>&group=<group-id>`
 
 Assets additionally expose `screenshot`, `capturedAt`, optional `screenshotSource` (`steam` or `manual`) and optional `game` with `id`, `name` and `steamAppId`. `capturedAt` is either empty or a timezone-free `YYYY-MM-DDTHH:mm:ss` local time; it is not a UTC instant. `GET /api/info` adds the scoped live `screenshots` count. Keyword searches also match associated game names and Steam App IDs.
 
-`GET /api/games` returns `items` with `id`, `name`, `steamAppId`, `count`, optional `coverUrl` and optional `lastCapturedAt`. Games with live screenshots exclusively outside the requested scope are omitted; empty games appear in their creation scope. Counts, capture time and covers exclude trash and follow effective hiding.
+`GET /api/games` returns `items` with `id`, `name`, `steamAppId`, `count`, optional `coverUrl` and optional `lastCapturedAt`, ordered by `lastCapturedAt` descending. Games without a known capture time appear last; ties use the case-insensitive game name or Steam App ID, then game ID. Games with live screenshots exclusively outside the requested scope are omitted; empty games appear in their creation scope. Counts, capture time and covers exclude trash and follow effective hiding.
 
 `POST /api/games` creates a game from `name` and optional `steamAppId`. At least one must be nonempty; Steam IDs are canonical positive unsigned 32-bit decimal strings and globally unique. An already registered Steam ID returns HTTP 409 rather than changing its name. `PATCH /api/games/{id}` edits `name` for a game available in the request scope. Its Steam identity remains unchanged; non-Steam games require a nonempty name.
 
