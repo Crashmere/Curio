@@ -6,6 +6,8 @@ type PlaybackMode = "source" | "native-hls" | "mse-hls" | "switching";
 type PlaybackCallbacks = {
   onSwitch: () => void;
   onError: (message: string) => void;
+  onReady?: (ready: boolean) => void;
+  onMode?: (mode: "source" | "compatibility") => void;
 };
 
 export class VideoPlayback {
@@ -56,10 +58,11 @@ export class VideoPlayback {
     if (!this.sourceFailed && source && type && (this.video.canPlayType(type) || this.video.canPlayType(source.mime))) {
       this.mode = "source";
       this.video.src = source.url;
+      this.callbacks.onMode?.("source");
     } else {
       await this.bindStream();
     }
-    if (!this.disposed) this.ready = true;
+    if (!this.disposed) { this.ready = true; this.callbacks.onReady?.(true); }
   }
 
   private async bindStream(): Promise<void> {
@@ -69,6 +72,7 @@ export class VideoPlayback {
     if (this.video.canPlayType("application/vnd.apple.mpegurl")) {
       this.mode = "native-hls";
       this.video.src = url;
+      this.callbacks.onMode?.("compatibility");
       return;
     }
     const { default: Hls } = await import("hls.js").catch(() => {
@@ -95,6 +99,7 @@ export class VideoPlayback {
     });
     this.hls = hls;
     this.mode = "mse-hls";
+    this.callbacks.onMode?.("compatibility");
     hls.on(Hls.Events.ERROR, (_event, error) => {
       if (this.disposed || this.hls !== hls || !error.fatal) return;
       this.suspend();
@@ -134,6 +139,14 @@ export class VideoPlayback {
 
   rateChanged(): void {
     this.setRate(this.video.playbackRate);
+  }
+
+  loadFrame(time: number): void {
+    this.wantsPlayback = false;
+    this.suspended = false;
+    this.targetTime = Math.max(0, time);
+    this.startLoading();
+    if (this.video.readyState >= 1) this.restorePosition();
   }
 
   private setRate(rate: number): void {
@@ -187,6 +200,10 @@ export class VideoPlayback {
   }
 
   handleMediaError(): boolean {
+    return this.useCompatibility();
+  }
+
+  useCompatibility(): boolean {
     if (this.mode === "switching") return true;
     if (this.mode !== "source" || !this.descriptor) return false;
     this.sourceFailed = true;
@@ -200,6 +217,7 @@ export class VideoPlayback {
       .then(() => {
         if (this.disposed) return;
         this.ready = true;
+        this.callbacks.onReady?.(true);
         if (this.suspended) return;
         this.startLoading();
         if (this.wantsPlayback) {
@@ -207,6 +225,7 @@ export class VideoPlayback {
             if (this.disposed || error.name === "AbortError") return;
             if (error.name === "NotAllowedError") {
               this.suspend();
+              this.callbacks.onError("点按播放以继续");
               return;
             }
             this.callbacks.onError("视频加载失败，请重试");
@@ -247,6 +266,7 @@ export class VideoPlayback {
 
   private resetMedia(): void {
     this.ready = false;
+    if (!this.disposed) this.callbacks.onReady?.(false);
     this.loaded = false;
     this.hls?.destroy();
     this.hls = undefined;

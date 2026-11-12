@@ -7,18 +7,24 @@ import { VideoPlayer } from "./VideoPlayer";
 import { ImageViewer } from "./ImageViewer";
 import { TagChip } from "./TagChip";
 import { canDecodeTank, TankDecoder } from "./TankDecoder";
+import { useCompactViewer, useViewerControls } from "./viewer-interactions";
 
 type Props = { asset: Asset; scope: Scope; tags: Entity[]; collections: Entity[]; games: Game[]; close: () => void; previous?: () => void; next?: () => void; changed: () => void; notify: (text: string) => void; tagDragKey: string; tagBusy: boolean; changeTag: (assetId: string, tag: Entity, remove: boolean) => void };
 export function Viewer({ asset, scope, tags, collections, games, close, previous, next, changed, notify, tagDragKey, tagBusy, changeTag }: Props) {
-  const [details, setDetails] = useState(true);
+  const compact = useCompactViewer();
+  const [details, setDetails] = useState(!compact);
+  const [playing, setPlaying] = useState(false);
+  const [waiting, setWaiting] = useState(false);
   const [edit, setEdit] = useState(false);
   const [busy, setBusy] = useState(false);
   const [tank, setTank] = useState(false);
   const [screenshotEdit, setScreenshotEdit] = useState(false);
-  useEffect(() => { setEdit(false); setTank(false); setScreenshotEdit(false); }, [asset.id]);
+  const controls = useViewerControls(playing, details || waiting || edit || tank || screenshotEdit);
+  useEffect(() => { setEdit(false); setTank(false); setScreenshotEdit(false); setPlaying(false); setWaiting(false); controls.reveal(); }, [asset.id]);
+  useEffect(() => { if (compact) setDetails(false); }, [compact]);
   const keyboard = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey || isTextInput(event.target) || edit || tank || screenshotEdit) return;
-    if (event.key === "Escape") close();
+    if (event.key === "Escape") { if (details && compact) setDetails(false); else close(); }
     if (event.key === "ArrowLeft" || event.key.toLowerCase() === "a") { event.preventDefault(); previous?.(); }
     if (event.key === "ArrowRight" || event.key.toLowerCase() === "d") { event.preventDefault(); next?.(); }
   });
@@ -55,14 +61,15 @@ export function Viewer({ asset, scope, tags, collections, games, close, previous
     } catch (error) { notify(error instanceof Error ? error.message : "浏览器不支持复制此图片，请下载原件"); }
   }
   const image = asset.kind !== "video";
-  return <div className="viewer" role="dialog" aria-modal="true" aria-label={asset.title || asset.name}>
+  return <div className={`viewer ${compact ? "compact-viewer" : ""} ${controls.hidden ? "is-immersive" : ""}`} role="dialog" aria-modal="true" aria-label={asset.title || asset.name}>
     <header className="viewer-heading"><button className="icon-button" aria-label="关闭预览" onClick={close}><X size={21} /></button><div className="viewer-name"><strong>{asset.title || asset.name}</strong><span>{kindNames[asset.kind]}{asset.effectiveHidden && <> · <EyeOff size={11} /> 隐藏</>}</span></div><div className="viewer-actions">{canDecodeTank(asset) && <button className="icon-button" title="坦克显形" aria-label="坦克显形" onClick={() => setTank(true)}><ScanEye size={18} /></button>}<button className={`icon-button ${asset.starred ? "is-active" : ""}`} title={asset.starred ? "取消星标" : "添加星标"} aria-label={asset.starred ? "取消星标" : "添加星标"} disabled={busy} onClick={() => void update({ starred: !asset.starred })}><Star size={18} fill={asset.starred ? "currentColor" : "none"} /></button><a className="icon-button" title="下载原件" aria-label="下载原件" href={asset.downloadUrl} download><Download size={18} /></a><button className={`icon-button ${details ? "is-active" : ""}`} title="素材信息" aria-label="素材信息" onClick={() => setDetails(!details)}><Info size={18} /></button></div></header>
     <div className={`viewer-body ${details ? "with-details" : ""}`}>
       <div className="viewer-canvas">
-        {image ? <ImageViewer key={asset.id} asset={asset} /> : <div className="media-stage dark"><VideoPlayer key={asset.id} asset={asset} /></div>}
+        {image ? <ImageViewer key={asset.id} asset={asset} previous={previous} next={next} close={close} toggleChrome={controls.toggle} /> : <div className="media-stage dark"><VideoPlayer key={asset.id} asset={asset} compact={compact} hidden={controls.hidden} activity={controls.reveal} toggleChrome={controls.toggle} previous={previous} next={next} close={close} onPlayback={setPlaying} onWaiting={setWaiting} /></div>}
         {previous && <button className="viewer-step previous" aria-label="上一项" onClick={previous}><ChevronLeft size={23} /></button>}{next && <button className="viewer-step next" aria-label="下一项" onClick={next}><ChevronRight size={23} /></button>}
       </div>
-      {details && <aside className="viewer-details"><div className="details-title"><h2>素材信息</h2><button className="button subtle" onClick={() => setEdit(true)}><Pencil size={14} />编辑</button></div><dl className="metadata-grid"><dt>原文件名</dt><dd>{asset.name}</dd><dt>格式</dt><dd>{asset.mime || asset.name.split(".").pop()?.toUpperCase()}</dd><dt>尺寸</dt><dd>{asset.width && asset.height ? `${asset.width} × ${asset.height}` : "读取中"}</dd><dt>大小</dt><dd>{bytes(asset.size)}</dd>{asset.duration > 0 && <><dt>时长</dt><dd>{duration(asset.duration)}</dd></>}<dt>收集时间</dt><dd>{new Date(asset.createdAt).toLocaleString("zh-CN", { hour12: false })}</dd><dt>处理状态</dt><dd>{stateNames[asset.status] || asset.status}</dd></dl>
+      {details && compact && <button className="viewer-details-backdrop" aria-label="收起素材信息" onClick={() => setDetails(false)} />}
+      {details && <aside className="viewer-details"><div className="details-title"><h2>素材信息</h2><button className="button subtle" onClick={() => setEdit(true)}><Pencil size={14} />编辑</button>{compact && <button className="icon-button" aria-label="收起素材信息" onClick={() => setDetails(false)}><X size={18} /></button>}</div><dl className="metadata-grid"><dt>原文件名</dt><dd>{asset.name}</dd><dt>格式</dt><dd>{asset.mime || asset.name.split(".").pop()?.toUpperCase()}</dd><dt>尺寸</dt><dd>{asset.width && asset.height ? `${asset.width} × ${asset.height}` : "读取中"}</dd><dt>大小</dt><dd>{bytes(asset.size)}</dd>{asset.duration > 0 && <><dt>时长</dt><dd>{duration(asset.duration)}</dd></>}<dt>收集时间</dt><dd>{new Date(asset.createdAt).toLocaleString("zh-CN", { hour12: false })}</dd><dt>处理状态</dt><dd>{stateNames[asset.status] || asset.status}</dd></dl>
         {asset.error && <div className="inline-error">{asset.error}<button className="button subtle" onClick={() => void api("assets/retry", { ids: [asset.id] }).then(changed).catch(error => notify(error.message))}><RotateCw size={14} />重试处理</button></div>}
         {supportsGameMedia(asset) && <div className="details-section"><div className="details-title"><h3><Gamepad2 size={14} />游戏截图</h3><button className="button subtle" onClick={() => setScreenshotEdit(true)}>{asset.screenshot ? "编辑" : "移入游戏截图"}</button></div>{asset.screenshot && <dl className="metadata-grid"><dt>游戏</dt><dd>{asset.game ? gameLabel(asset.game) : "未指定游戏"}</dd>{asset.game?.steamAppId && <><dt>Steam ID</dt><dd>{asset.game.steamAppId}</dd></>}<dt>{asset.kind === "video" ? "录像时间" : "截图时间"}</dt><dd>{captureLabel(asset.capturedAt)}</dd><dt>识别方式</dt><dd>{asset.screenshotSource === "steam" ? "Steam 文件名" : "手动指定"}</dd></dl>}</div>}
         {!!asset.tags?.length && <div className="details-section"><h3>标签</h3><div className="entity-chips">{asset.tags.map(tag => <TagChip key={tag.id} tag={tag} assetId={asset.id} className="detail-tag" cancelKey={`${tagDragKey}:${edit}:${screenshotEdit}`} disabled={tagBusy || busy} change={changeTag} />)}</div></div>}

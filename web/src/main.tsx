@@ -54,6 +54,14 @@ function App() {
   const [selecting, setSelecting] = useState(false);
   const [selectingAll, setSelectingAll] = useState(false);
   const [viewer, setViewer] = useState<Asset | null>(null);
+  function openViewer(asset: Asset) {
+    if (!viewer) window.history.pushState({ ...window.history.state, curioViewer: { id: asset.id, scope } }, "");
+    setViewer(asset);
+  }
+  function closeViewer() {
+    if (window.history.state?.curioViewer) window.history.back();
+    else setViewer(null);
+  }
   const [modal, setModal] = useState<Modal | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -117,6 +125,16 @@ function App() {
     setNavigation(target); setSelected(new Set()); setSelecting(false); setSidebarOpen(false); setViewer(null);
   }
   const restoreNavigationEvent = useEffectEvent(() => {
+    const preview = window.history.state?.curioViewer;
+    if (preview && preview.scope === scope && window.location.pathname === navigationPath(navigation, base)) {
+      const asset = galleryAssets.find(item => item.id === preview.id);
+      if (asset) { setViewer(asset); return; }
+    }
+    if (viewer && !window.history.state?.curioViewer &&
+      window.location.pathname === navigationPath(navigation, base)) {
+      setViewer(null);
+      return;
+    }
     const target = readNavigation(window.location.pathname, base);
     navigate(target.view, target.tagId, target.collectionId, "none", target.gameId);
   });
@@ -125,6 +143,21 @@ function App() {
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
   }, []);
+
+  useEffect(() => {
+    if (!viewer) return;
+    const method = window.history.state?.curioViewer ? "replaceState" : "pushState";
+    window.history[method]({ ...window.history.state, curioViewer: { id: viewer.id, scope } }, "");
+    const position = galleryAssets.findIndex(item => item.id === viewer.id);
+    const candidate = galleryAssets[position + 1];
+    const connection = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
+    if (!candidate || candidate.kind !== "image" || document.hidden || !navigator.onLine || connection?.saveData || /(^|-)2g/.test(connection?.effectiveType || "")) return;
+    const image = new window.Image();
+    const timer = setTimeout(() => { image.src = candidate.previewUrl; }, 250);
+    const stop = () => { if (document.hidden || !navigator.onLine) { clearTimeout(timer); image.src = ""; } };
+    document.addEventListener("visibilitychange", stop); window.addEventListener("offline", stop);
+    return () => { clearTimeout(timer); image.src = ""; document.removeEventListener("visibilitychange", stop); window.removeEventListener("offline", stop); };
+  }, [viewer?.id, galleryAssets.length]);
   function switchScope() {
     navigate(view, "", "", "replace");
     setScope(value => value === "normal" ? "hidden" : "normal");
@@ -370,6 +403,10 @@ function App() {
   }
   const loadMoreEvent = useEffectEvent(loadMore);
   useEffect(() => {
+    const position = viewer ? galleryAssets.findIndex(item => item.id === viewer.id) : -1;
+    if (position >= 0 && !collectionId && position >= galleryAssets.length - 5 && !loadMoreFailed) void loadMoreEvent();
+  }, [viewer?.id, galleryAssets.length, nextOffset, loadMoreFailed]);
+  useEffect(() => {
     const target = loadMoreTarget.current;
     if (!canAutoLoadMore || !target) return;
     const observer = new IntersectionObserver(entries => {
@@ -541,7 +578,7 @@ function App() {
   const viewerIndex = viewer ? galleryAssets.findIndex(item => item.id === viewer.id) : -1;
   function renderMedia(asset: Asset, groupOpen?: boolean) {
     const index = galleryIndices.get(asset.id) ?? -1;
-    return <MediaCard key={asset.id} asset={asset} tagId={tagId} collectionId={collectionId} selected={selected.has(asset.id)} selecting={selecting || !!selected.size} active={groupOpen !== false} loading={groupOpen === undefined ? "lazy" : "eager"} open={event => { if (selecting || selected.size || event.ctrlKey || event.metaKey || event.shiftKey) select(asset, index, event.shiftKey); else setViewer(asset); }} select={range => select(asset, index, range)} tagDragKey={tagDragKey} tagBusy={tagBusy} changeTag={(id, tag, remove) => void changeTag(id, tag, remove)} />;
+    return <MediaCard key={asset.id} asset={asset} tagId={tagId} collectionId={collectionId} selected={selected.has(asset.id)} selecting={selecting || !!selected.size} active={groupOpen !== false} loading={groupOpen === undefined ? "lazy" : "eager"} open={event => { if (selecting || selected.size || event.ctrlKey || event.metaKey || event.shiftKey) select(asset, index, event.shiftKey); else openViewer(asset); }} select={range => select(asset, index, range)} tagDragKey={tagDragKey} tagBusy={tagBusy} changeTag={(id, tag, remove) => void changeTag(id, tag, remove)} />;
   }
   const gallery = collectionId ? <CollectionGallery entries={entries} expanded={expandedGroups} formation={groupFormation} selected={selected} selecting={selecting || !!selected.size} busy={busy || loading || selectingAll} render={renderMedia} toggle={toggleGroup} selectGroup={selectGroup} add={group => void editGroup(group, "add")} dissolve={group => void editGroup(group, "dissolve")} /> : <div className={`gallery ${view === "screenshots" ? "screenshot-gallery" : ""} ${selecting ? "selecting" : ""}`}>{assets.map(asset => renderMedia(asset))}</div>;
   return <div className={`app ${scope === "hidden" ? "hidden-mode" : ""} ${assetView && (selecting || selected.size) ? "has-selection" : ""}`}>
@@ -594,7 +631,7 @@ function App() {
         {collectionId && <><button className="button group-create" title="将所选未分组素材组成一组，已分组素材会被忽略" disabled={busy || loading || selectedUngroupedIds.length < 2 || selected.size > 2000} onClick={() => void editGroup(null, "create")}><Group size={15} />组成一组</button>{selectedInGroups && <button className="button" disabled={busy || loading} onClick={() => void editGroup(null, "remove")}><Ungroup size={15} />移出分组</button>}</>}
         <button className="button" disabled={busy} onClick={() => setModal({ type: "organize", ids: [...selected] })}><Tag size={15} /><span>整理</span></button>{(collectionId || tagId) && <button className="button" title="仅移除当前关联，保留素材与其他标签、收藏集" disabled={busy} onClick={() => void patch([...selected], collectionId ? { removeCollectionIds: [collectionId] } : { removeTagIds: [tagId] }, collectionId ? "已移出当前收藏集" : "已移出当前标签")}><Unlink size={15} />{collectionId ? "移出当前收藏集" : "移出当前标签"}</button>}<button className="icon-button" title={selectedAreStarred ? "取消星标" : "添加星标"} aria-label={selectedAreStarred ? "取消星标" : "添加星标"} disabled={busy} onClick={() => void patch([...selected], { starred: !selectedAreStarred }, "星标已更新")}><Star size={17} /></button><button className="icon-button" title="单独隐藏" aria-label="单独隐藏" disabled={busy} onClick={() => void patch([...selected], { hidden: true }, "已标记隐藏")}><EyeOff size={17} /></button><button className="icon-button" title="取消单独隐藏" aria-label="取消单独隐藏" disabled={busy} onClick={() => void patch([...selected], { hidden: false }, "已取消单独隐藏；标签或收藏集的隐藏仍会生效")}><Eye size={17} /></button><a className="icon-button" title="打包下载" aria-label="打包下载" href={`${base}api/download?ids=${[...selected].join(",")}`}><Download size={17} /></a><button className="icon-button danger" title="移入回收站" aria-label="移入回收站" disabled={busy} onClick={() => void patch([...selected], { trash: true }, "已移入回收站")}><Trash2 size={17} /></button></> : <><button className="button" disabled={busy} onClick={() => void patch([...selected], { trash: false }, "素材已恢复")}><RotateCw size={15} />恢复</button><button className="button danger" disabled={busy} onClick={() => setModal({ type: "purge", ids: [...selected] })}><Trash2 size={15} />永久删除</button></>}</>}
     </div>}
-    {viewer && <Viewer asset={viewer} scope={scope} tags={tags} collections={collections} games={games} close={() => setViewer(null)} previous={viewerIndex > 0 ? () => setViewer(galleryAssets[viewerIndex - 1]) : undefined} next={viewerIndex >= 0 && viewerIndex < galleryAssets.length - 1 ? () => setViewer(galleryAssets[viewerIndex + 1]) : undefined} changed={changed} notify={notify} tagDragKey={tagDragKey} tagBusy={tagBusy} changeTag={(id, tag, remove) => void changeTag(id, tag, remove)} />}
+    {viewer && <Viewer asset={viewer} scope={scope} tags={tags} collections={collections} games={games} close={closeViewer} previous={viewerIndex > 0 ? () => setViewer(galleryAssets[viewerIndex - 1]) : undefined} next={viewerIndex >= 0 && viewerIndex < galleryAssets.length - 1 ? () => setViewer(galleryAssets[viewerIndex + 1]) : undefined} changed={changed} notify={notify} tagDragKey={tagDragKey} tagBusy={tagBusy} changeTag={(id, tag, remove) => void changeTag(id, tag, remove)} />}
     {modal?.type === "upload" && <UploadPanel scope={scope} targetLabel={uploadTargetLabel} close={() => setModal(null)} pick={() => picker.current?.click()} folder={() => folderPicker.current?.click()} />}
     {modal?.type === "game" && <GameEditor game={modal.game} scope={scope} close={() => setModal(null)} saved={() => { setModal(null); changed(); notify("游戏名称已保存"); }} />}
     {modal?.type === "remove-game" && <RemoveGame game={modal.game} close={() => setModal(null)} confirm={async () => { await api(scoped(`games/${modal.game.id}`, scope), { confirm: true }, "DELETE"); setGames(previous => previous.filter(game => game.id !== modal.game.id)); setModal(null); if (gameId === modal.game.id) navigate("games", "", "", "replace"); changed(); notify("游戏夹已删除，素材保留在未指定游戏中"); }} />}
