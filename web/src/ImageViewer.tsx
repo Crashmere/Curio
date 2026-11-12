@@ -25,6 +25,9 @@ export function ImageViewer({ asset, sourceOverride, pixels, bitmap, previous, n
   const [quality, setQuality] = useState<"preview" | "loading" | "original" | "fallback">("preview");
   const [requestOriginal, setRequestOriginal] = useState(false);
   const [previewFailed, setPreviewFailed] = useState(false);
+  const [previewLoaded, setPreviewLoaded] = useState(false);
+  const [thumbnailFailed, setThumbnailFailed] = useState(false);
+  const [retryStamp, setRetryStamp] = useState(0);
   const animation = asset.kind === "animation" && !sourceOverride && !pixels && !bitmap;
   const [animating, setAnimating] = useState(!animation || asset.size < 30 * 1024 * 1024);
   const [frozen, setFrozen] = useState<ImageBitmap | null>(null);
@@ -37,6 +40,8 @@ export function ImageViewer({ asset, sourceOverride, pixels, bitmap, previous, n
   const fit = ready ? Math.min(format === "svg" ? Infinity : 1, area.width / size.width, area.height / size.height) : 1;
   const minimum = Math.min(fit, 0.1);
   const maximum = Math.max(8, fit * 8);
+  const widthFit = ready ? area.width / size.width : fit;
+  const longImage = ready && size.height >= size.width * 2.5 && widthFit > fit + 0.001;
   const scale = Math.min(maximum, Math.max(minimum, view.scale ?? fit));
   const zoomed = scale > fit + 0.001;
   const previewLimited = previewPixels.width > 0 && Math.max(size.width, size.height) > Math.max(previewPixels.width, previewPixels.height)
@@ -86,6 +91,18 @@ export function ImageViewer({ asset, sourceOverride, pixels, bitmap, previous, n
     else if (pixels) context.putImageData(pixels, 0, 0);
   }, [pixels, bitmap, frozen]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; clearTimeout(tapTimer.current); }; }, []);
+  function reloadPreview() {
+    setRetryStamp(value => value + 1);
+    setPreviewFailed(false);
+    setPreviewLoaded(false);
+    setThumbnailFailed(false);
+  }
+  useEffect(() => {
+    if (!previewFailed) return;
+    const online = () => reloadPreview();
+    window.addEventListener("online", online);
+    return () => window.removeEventListener("online", online);
+  }, [previewFailed]);
   useEffect(() => () => { frozen?.close(); }, [frozen]);
   useEffect(() => {
     if (!animation) return;
@@ -146,7 +163,9 @@ export function ImageViewer({ asset, sourceOverride, pixels, bitmap, previous, n
     finally { if (mounted.current) setFreezing(false); }
   }
   function restartAnimation() { setFrozen(null); setAnimating(true); setAnimationRevision(value => value + 1); }
-  const source = sourceOverride || (animation && !animating ? asset.thumbnailUrl : quality === "original" ? asset.originalUrl : asset.previewUrl);
+  const mediaSource = animation && !animating ? asset.thumbnailUrl : quality === "original" ? asset.originalUrl : asset.previewUrl;
+  const reloaded = (url: string) => url && retryStamp ? `${url}${url.includes("?") ? "&" : "?"}retry=${retryStamp}` : url;
+  const source = sourceOverride || (quality === "original" ? mediaSource : reloaded(mediaSource));
   const imageStyle: CSSProperties = { width: size.width || undefined, height: size.height || undefined, visibility: ready ? "visible" : "hidden", transform: `translate(-50%, -50%) translate(${view.x}px, ${view.y}px) scale(${scale})` };
   return <>
     <div ref={stage} className={`media-stage image-stage ${asset.hasAlpha ? background : "neutral"} ${dragging ? "is-dragging" : ""} ${zoomed ? "is-zoomed" : ""}`}>
@@ -188,7 +207,7 @@ export function ImageViewer({ asset, sourceOverride, pixels, bitmap, previous, n
             if (last && now - last.time < 280 && Math.hypot(end.x - last.point.x, end.y - last.point.y) < 32) {
               clearTimeout(tapTimer.current); lastTap.current = null;
               if (zoomed) apply({ scale: null, x: 0, y: 0 });
-              else zoomTo(fit >= 0.99 ? fit * 2.5 : Math.min(1, fit * 2.5), end);
+              else zoomTo(longImage ? widthFit : fit >= 0.99 ? fit * 2.5 : Math.min(1, fit * 2.5), end);
             } else {
               lastTap.current = { time: now, point: end };
               tapTimer.current = setTimeout(() => toggleChrome?.(), 280);
@@ -199,18 +218,23 @@ export function ImageViewer({ asset, sourceOverride, pixels, bitmap, previous, n
             else if (dy > 110 && dy > Math.abs(dx) * 1.5) close?.();
           }
         }} onPointerCancel={event => { origin.current = null; release(event.pointerId); }} onLostPointerCapture={event => release(event.pointerId)}>
+        {!pixels && !bitmap && !frozen && !sourceOverride && (!previewLoaded || previewFailed) && asset.thumbnailUrl && !thumbnailFailed && (!animation || animating) && <img className="viewer-image viewer-placeholder" src={reloaded(asset.thumbnailUrl)} alt="" aria-hidden="true" draggable={false} onError={() => setThumbnailFailed(true)} style={imageStyle} />}
         {pixels || bitmap || frozen ? <canvas ref={raster} className="viewer-image" width={(frozen || bitmap || pixels)!.width} height={(frozen || bitmap || pixels)!.height} role="img" aria-label={asset.title || asset.name} style={imageStyle} />
           : source && (sourceOverride || !previewFailed || quality === "original") ? <img key={animationRevision} ref={image} className="viewer-image" src={source} alt={asset.title || asset.name} draggable={false}
           onLoad={event => {
             const dimensions = { width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight };
             if (!size.width || !size.height) setSize(dimensions);
             if (quality !== "original") setPreviewPixels(dimensions);
+            setPreviewLoaded(true);
+            setPreviewFailed(false);
           }}
-          onError={() => { if (quality === "original") setQuality("fallback"); else setPreviewFailed(true); }}
-          style={imageStyle} />
-          : <div className="preview-pending"><RotateCw size={30} className={asset.status === "error" || previewFailed ? "" : "spin"} /><strong>{previewFailed ? "预览暂不可用" : asset.status === "error" ? "预览处理失败" : "预览正在准备"}</strong><span>原件已保存，可以先下载使用。</span></div>}
+          onError={() => { if (quality === "original") setQuality("fallback"); else { setPreviewFailed(true); setPreviewLoaded(false); } }}
+          style={{ ...imageStyle, opacity: previewLoaded || sourceOverride ? 1 : 0 }} />
+          : !previewFailed && <div className="preview-pending"><RotateCw size={30} className={asset.status === "error" ? "" : "spin"} /><strong>{asset.status === "error" ? "预览处理失败" : "预览正在准备"}</strong><span>原件已保存，可以先下载使用。</span></div>}
       </div>
-      {!sourceOverride && !pixels && !bitmap && (zoomed || quality === "loading" || quality === "fallback") && source && <div className="image-quality" role="status">{quality === "loading" ? <><RotateCw size={12} className="spin" />正在加载原图</> : quality === "fallback" ? "预览图 · 原图不可用" : quality === "original" || asset.kind === "animation" ? "原图" : !canLoadOriginal ? "兼容预览" : "预览图"}</div>}
+      {previewFailed && <div className="image-load-feedback" role="alert"><span>{thumbnailFailed ? "预览暂不可用" : "清晰预览暂不可用"}</span><button className="button" onClick={reloadPreview}><RotateCw size={14} />重新加载</button></div>}
+      {!previewLoaded && !previewFailed && source && !sourceOverride && !pixels && !bitmap && !frozen && <div className="image-load-feedback" role="status"><RotateCw size={14} className="spin" /><span>正在加载{animation ? "动图" : "清晰预览"}</span></div>}
+      {!sourceOverride && !pixels && !bitmap && previewLoaded && !previewFailed && (zoomed || quality === "loading" || quality === "fallback") && source && <div className="image-quality" role="status">{quality === "loading" ? <><RotateCw size={12} className="spin" />正在加载原图</> : quality === "fallback" ? "预览图 · 原图不可用" : quality === "original" || asset.kind === "animation" ? "原图" : !canLoadOriginal ? "兼容预览" : "预览图"}</div>}
       {needsOriginal && canLoadOriginal && !requestOriginal && (asset.size > 32 * 1024 * 1024 || size.width * size.height > 40_000_000) && <button className="image-original-action" onClick={() => setRequestOriginal(true)}>载入原图 · {Math.round(asset.size / 1024 / 1024)} MB</button>}
     </div>
     <div className="viewer-tools">
@@ -219,6 +243,7 @@ export function ImageViewer({ asset, sourceOverride, pixels, bitmap, previous, n
       <button className="zoom-label" aria-label="原始尺寸（100%）" title="原始尺寸（100%）" disabled={!ready} onClick={() => zoomTo(1)}>{Math.round(scale * 100)}%</button>
       <button className="icon-button" aria-label="放大" disabled={!ready || scale >= maximum} onClick={() => zoomTo(scale * 1.25)}><Plus size={16} /></button>
       <button className="icon-button" aria-label="适应窗口" title="适应窗口" disabled={!ready} onClick={() => apply({ scale: null, x: 0, y: 0 })}><Maximize size={15} /></button>
+      {longImage && <button className="zoom-label" aria-label="适应宽度阅读" onClick={() => zoomTo(widthFit)}>适应宽度</button>}
       {asset.hasAlpha && <><span className="tool-divider" /><button className={`background-swatch checker ${background === "checker" ? "selected" : ""}`} aria-label="透明棋盘背景" onClick={() => setBackground("checker")} /><button className={`background-swatch light ${background === "light" ? "selected" : ""}`} aria-label="浅色背景" onClick={() => setBackground("light")} /><button className={`background-swatch dark ${background === "dark" ? "selected" : ""}`} aria-label="深色背景" onClick={() => setBackground("dark")} /></>}
     </div>
   </>;
