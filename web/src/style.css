@@ -158,7 +158,7 @@ input[type="search"]::-webkit-search-cancel-button { display: none; }
 .group-heading-copy small { color: #9c8a70; font-size: 10px; font-variant-numeric: tabular-nums; }
 .group-heading-editable { flex: 1; }
 .group-name { min-width: 0; }
-.group-name-text { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 24px; color: inherit; text-align: left; }
+.group-name-text { display: flex; align-items: center; gap: 7px; width: max-content; max-width: 100%; min-height: 24px; color: inherit; text-align: left; }
 .group-name-text strong { min-width: 0; }
 .group-name-text > svg { flex-shrink: 0; }
 .group-name-editor { display: inline-block; position: relative; max-width: 100%; min-height: 24px; vertical-align: top; font-size: 12px; font-weight: 600; }
