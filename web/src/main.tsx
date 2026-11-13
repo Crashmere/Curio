@@ -69,6 +69,7 @@ function App() {
     else setViewer(null);
   }
   const [modal, setModal] = useState<Modal | null>(null);
+  useEffect(() => { importer.setPanelOpen(modal?.type === "upload"); }, [modal?.type]);
   const [filterOpen, setFilterOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -255,8 +256,8 @@ function App() {
   function currentUploadTarget(): UploadTarget {
     return { scope, tagIds: tagId ? [tagId] : [], collectionIds: collectionId ? [collectionId] : [], gameId: gameId === "unassigned" ? "" : gameId, screenshot: view === "screenshots" || view === "games" };
   }
-  function receiveFiles(files: File[], target = currentUploadTarget()) {
-    const skipped = importer.addFiles(files, target.scope, target.tagIds, target.collectionIds, target.gameId, target.screenshot, target.expectedHash, target.displayScope);
+  function receiveFiles(files: File[], target = currentUploadTarget(), useFileTime = true) {
+    const skipped = importer.addFiles(files, target.scope, target.tagIds, target.collectionIds, target.gameId, target.screenshot, target.expectedHash, target.displayScope, useFileTime);
     setModal({ type: "upload" });
     if (skipped) notify(`已跳过 ${skipped} 个空文件或不支持的文件`);
   }
@@ -321,7 +322,7 @@ function App() {
         catch (error) { notify(error instanceof Error ? error.message : "文件夹读取失败"); }
       } else receiveFilesEvent(Array.from(event.dataTransfer.files), target);
     };
-    const paste = (event: ClipboardEvent) => { if (event.clipboardData?.files.length) { event.preventDefault(); receiveFilesEvent(Array.from(event.clipboardData.files)); } };
+    const paste = (event: ClipboardEvent) => { if (event.clipboardData?.files.length) { event.preventDefault(); receiveFilesEvent(Array.from(event.clipboardData.files), undefined, false); } };
     window.addEventListener("dragstart", start, true); window.addEventListener("dragend", end); window.addEventListener("dragenter", enter); window.addEventListener("dragover", over); window.addEventListener("dragleave", leave); window.addEventListener("drop", drop); window.addEventListener("paste", paste);
     return () => { window.removeEventListener("dragstart", start, true); window.removeEventListener("dragend", end); window.removeEventListener("dragenter", enter); window.removeEventListener("dragover", over); window.removeEventListener("dragleave", leave); window.removeEventListener("drop", drop); window.removeEventListener("paste", paste); };
   }, []);

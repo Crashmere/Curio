@@ -1,12 +1,24 @@
-import { useState } from "react";
+import { KeyboardEvent, useRef, useState } from "react";
 import { Check, Gamepad2, MoreHorizontal, Plus, RotateCw, Trash2 } from "lucide-react";
 import { api, Asset, captureLabel, Game, gameLabel, Patch, Scope, scoped } from "./api";
 import { Dialog, Empty } from "./components";
+import { searchScore } from "./searchMatch";
+
+function GameIdentityFields({ name, appId, setName, setAppId, busy, readOnly = false }: { name: string; appId: string; setName: (value: string) => void; setAppId: (value: string) => void; busy: boolean; readOnly?: boolean }) {
+  const nameField = useRef<HTMLInputElement>(null);
+  const appField = useRef<HTMLInputElement>(null);
+  function switchField(event: KeyboardEvent<HTMLInputElement>) {
+    if (readOnly || busy || event.key !== "Tab" || event.nativeEvent.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey) return;
+    event.preventDefault();
+    (event.currentTarget === nameField.current ? appField : nameField).current?.focus();
+  }
+  return <><label>游戏名称<input ref={nameField} autoFocus={!readOnly} value={name} disabled={busy} onKeyDown={switchField} onChange={event => setName(event.target.value)} maxLength={200} placeholder="例如：艾尔登法环" /></label><label>Steam App ID<input ref={appField} value={appId} disabled={busy} onKeyDown={switchField} onChange={event => setAppId(event.target.value)} readOnly={readOnly} inputMode="numeric" placeholder="其他平台的游戏可留空" /></label></>;
+}
 
 export function GamesGrid({ games, query, open, edit, remove, create }: { games: Game[]; query: string; open: (game: Game) => void; edit: (game: Game) => void; remove: (game: Game) => void; create: () => void }) {
   const search = query.trim().toLocaleLowerCase();
-  const items = games.filter(game => `${game.name} ${game.steamAppId}`.toLocaleLowerCase().includes(search));
-  if (!items.length) return <Empty icon={<Gamepad2 size={34} strokeWidth={1.3} />} title={search ? "没有匹配的游戏" : "收集你的游戏瞬间"} description={search ? "试试游戏名或 Steam App ID。" : "在这里上传图片或游戏录像，Steam 文件名自动按游戏 ID 分组，其他来源进入未指定游戏。"}><button className="button primary" onClick={create}><Plus size={15} />新建游戏</button></Empty>;
+  const items = search ? games.map(game => ({ game, rank: searchScore(`${game.name} ${game.steamAppId}`, game.pinyin || "", search) })).filter(item => item.rank > 0).sort((a, b) => b.rank - a.rank).map(item => item.game) : games;
+  if (!items.length) return <Empty icon={<Gamepad2 size={34} strokeWidth={1.3} />} title={search ? "没有匹配的游戏" : "收集你的游戏瞬间"} description={search ? "试试游戏名、拼音、首字母或 Steam App ID。" : "在这里上传图片或游戏录像，Steam 文件名自动按游戏 ID 分组，其他来源进入未指定游戏。"}><button className="button primary" onClick={create}><Plus size={15} />新建游戏</button></Empty>;
   return <div className="entity-grid games">{items.map(game => <article className="entity-card" key={game.id}><button className="entity-open" onClick={() => open(game)}><div className="entity-cover">{game.coverUrl ? <img src={game.coverUrl} alt="" loading="lazy" /> : <Gamepad2 size={36} strokeWidth={1.2} />}</div><div className="entity-card-info"><h2>{gameLabel(game)}</h2><span>{game.count} 个素材{game.steamAppId && ` · Steam ${game.steamAppId}`}</span>{game.lastCapturedAt && <time className="game-last-capture">{captureLabel(game.lastCapturedAt)}</time>}</div></button><div className="entity-actions"><button className="icon-button" aria-label={`命名 ${gameLabel(game)}`} title="编辑游戏名称" onClick={() => edit(game)}><MoreHorizontal size={17} /></button><button className="icon-button danger" aria-label={`删除游戏夹 ${gameLabel(game)}`} title="删除游戏夹" onClick={() => remove(game)}><Trash2 size={15} /></button></div></article>)}</div>;
 }
 
@@ -34,7 +46,7 @@ export function GameEditor({ game, scope, close, saved }: { game?: Game; scope: 
     try { await api(scoped(game ? `games/${game.id}` : "games", scope), { name, steamAppId: appId }, game ? "PATCH" : "POST"); saved(); }
     catch (error) { setError(error instanceof Error ? error.message : String(error)); setBusy(false); }
   }
-  return <Dialog title={game ? "编辑游戏名称" : "新建游戏"} close={close} dirty={dirty} busy={busy}><form className="metadata-form" onSubmit={event => { event.preventDefault(); void save(); }}><label>游戏名称<input value={name} disabled={busy} onChange={event => setName(event.target.value)} maxLength={200} placeholder="例如：艾尔登法环" /></label><label>Steam App ID<input value={appId} disabled={busy} onChange={event => setAppId(event.target.value)} readOnly={!!game} inputMode="numeric" placeholder="其他平台的游戏可留空" /></label><p className="form-help">{game?.steamAppId ? `名称会应用到 Steam ${game.steamAppId} 的全部截图，包括以后导入的截图。` : "Steam 截图自动匹配 App ID；其他来源可以手动加入这个游戏。"}</p>{error && <div className="inline-error">{error}</div>}<footer className="dialog-footer"><button type="button" className="button" data-dialog-close disabled={busy}>取消</button><button type="submit" className="button primary" disabled={busy || (!game && !name.trim() && !appId)}>{busy ? <RotateCw size={15} className="spin" /> : <Check size={15} />}保存</button></footer></form></Dialog>;
+  return <Dialog title={game ? "编辑游戏名称" : "新建游戏"} close={close} dirty={dirty} busy={busy}><form className="metadata-form" onSubmit={event => { event.preventDefault(); void save(); }}><GameIdentityFields name={name} appId={appId} setName={setName} setAppId={setAppId} busy={busy} readOnly={!!game} /><p className="form-help">{game?.steamAppId ? `名称会应用到 Steam ${game.steamAppId} 的全部截图，包括以后导入的截图。` : "Steam 截图自动匹配 App ID；其他来源可以手动加入这个游戏。"}</p>{error && <div className="inline-error">{error}</div>}<footer className="dialog-footer"><button type="button" className="button" data-dialog-close disabled={busy}>取消</button><button type="submit" className="button primary" disabled={busy || (!game && !name.trim() && !appId)}>{busy ? <RotateCw size={15} className="spin" /> : <Check size={15} />}保存</button></footer></form></Dialog>;
 }
 
 export function ScreenshotEditor({ asset, count, games, scope, close, save }: { asset?: Asset; count: number; games: Game[]; scope: Scope; close: () => void; save: (patch: Patch) => Promise<void> }) {
@@ -84,9 +96,9 @@ export function ScreenshotEditor({ asset, count, games, scope, close, save }: { 
           {choices.map(game => <option key={game.id} value={game.id}>{gameLabel(game)}{game.name && game.steamAppId ? ` · Steam ${game.steamAppId}` : ""}</option>)}
         </select></label>
         <button className="button subtle" type="button" disabled={busy} onClick={() => { setNewGame(!newGame); if (newGame) { setName(""); setAppId(""); } }}><Plus size={14} />{newGame ? "取消新建" : "新建游戏"}</button>
-        {newGame && <div className="form-section"><label>游戏名称<input value={name} disabled={busy} onChange={event => setName(event.target.value)} maxLength={200} /></label><label>Steam App ID（可选）<input value={appId} disabled={busy} onChange={event => setAppId(event.target.value)} inputMode="numeric" /></label><button type="button" className="button" disabled={busy || (!name.trim() && !appId.trim())} onClick={() => void create()}>{busy ? <RotateCw size={15} className="spin" /> : <Plus size={15} />}创建并选择</button>{pendingGame && <p className="form-help">先创建并选择新游戏，再保存素材信息。</p>}</div>}
+        {newGame && <div className="form-section"><GameIdentityFields name={name} appId={appId} setName={setName} setAppId={setAppId} busy={busy} /><button type="button" className="button" disabled={busy || (!name.trim() && !appId.trim())} onClick={() => void create()}>{busy ? <RotateCw size={15} className="spin" /> : <Plus size={15} />}创建并选择</button>{pendingGame && <p className="form-help">先创建并选择新游戏，再保存素材信息。</p>}</div>}
         {asset && <label>截图 / 录像时间<input type="datetime-local" step="1" value={capturedAt} disabled={busy} onChange={event => setCapturedAt(event.target.value)} /></label>}
-        <p className="form-help">{gameId === "auto" ? "新归入的素材按 Steam 文件名识别游戏；时间优先读取文件名中的 _YYYYMMDDHHmmss_ 或末尾的 _YYYYMMDDHHmmss，否则取元数据中拍摄、创建与修改时间的最早值。游戏无法识别时进入未指定游戏，已归类素材保留原有信息。" : asset ? "时间优先读取文件名中的 _YYYYMMDDHHmmss_ 或末尾的 _YYYYMMDDHHmmss，否则取元数据中拍摄、创建与修改时间的最早值。可手动修改或清空，未知时间排在最后。" : "已归类素材保留各自的时间；新归入素材优先读取文件名中的年月日时分秒，否则取元数据中拍摄、创建与修改时间的最早值。"}</p>
+        <p className="form-help">时间优先读取 Steam 文件名、_YYYYMMDDHHmmss 或 2025-11-22 22-42-05 / 2025-11-22-22-42-05 格式，其次取文件内部拍摄、创建与修改时间的最早值，最后使用上传时保留的本地修改时间。{gameId === "auto" ? "游戏无法识别时进入未指定游戏；已归类素材保留原有信息。" : asset ? "可手动修改或清空，未知时间排在最后。" : "已归类素材保留各自的时间。"}</p>
       </>}
       {!enabled && <p className="form-help">移出游戏截图后回到全部素材；没有标签或收藏集时也会进入未整理。原件与其他关联保留，重复导入不会重新覆盖这一选择。</p>}
       {error && <div className="inline-error">{error}</div>}

@@ -20,7 +20,8 @@ export type UploadPanelProps = {
 
 export function UploadPanel({ scope, targetLabel, tags = [], collections = [], games = [], close, pick, folder, openAsset }: UploadPanelProps) {
   const transfer = useSyncExternalStore(importer.subscribe, importer.snapshot);
-  const items = transfer.items.filter(item => item.displayScope === scope);
+  const priority = (item: importer.UploadItem) => ["reading", "uploading", "verifying"].includes(item.state) ? 0 : ["done", "duplicate"].includes(item.state) ? 2 : 1;
+  const items = transfer.items.filter(item => item.displayScope === scope).sort((a, b) => priority(a) - priority(b));
   const completed = items.filter(item => item.state === "done" || item.state === "duplicate").length;
   const active = transfer.items.some(item => ["waiting", "reading", "uploading", "verifying"].includes(item.state));
   const resumable = transfer.items.some(item => ["paused", "error"].includes(item.state));
@@ -95,7 +96,7 @@ export function UploadPanel({ scope, targetLabel, tags = [], collections = [], g
     <div className="import-target"><span className={`mode-dot ${scope === "hidden" ? "hidden" : ""}`} />{scope === "hidden" ? "上传到隐藏模式" : "上传到普通模式"}</div>
     {targetLabel && <p className="form-help">新增文件：{targetLabel}</p>}
     <div className="upload-drop-zone" onClick={() => { if (!discardBusy) pick(); }}><Upload size={32} strokeWidth={1.5} /><strong>拖入图片、动图或视频</strong><span>也可以点击选择文件，或粘贴图片</span><div className="upload-choices"><button className="button primary" disabled={discardBusy} onClick={event => { event.stopPropagation(); pick(); }}><FileImage size={16} />选择文件</button><button className="button" disabled={discardBusy} onClick={event => { event.stopPropagation(); folder(); }}><FolderOpen size={16} />选择文件夹</button></div></div>
-    <div className="transfer-info"><span>原件完整保留 · 分段上传</span><span>关闭面板不会停止上传</span></div>
+    <div className="transfer-info"><span>原件完整保留 · 分段上传</span><span>关闭时清除已完成记录，未完成上传继续保留</span></div>
     {loadError && <div className="inline-error">{loadError}<button className="button subtle" onClick={reload}>重新加载</button></div>}
     {notice && <p className="form-help upload-notice" role="status">{notice}</p>}
     {!!items.length && <><div className="section-toolbar"><span>本次收集 <strong>{completed}</strong> / {items.length}</span><div>{active && <button className="button subtle" disabled={discardBusy} title="暂停两种模式的全部上传" onClick={importer.pause}><Pause size={15} />暂停全部</button>}{(resumable || transfer.paused) && <button className="button subtle" disabled={discardBusy} title="继续两种模式的已暂停上传，并重试全部失败项" onClick={importer.resume}><Play size={15} />继续 / 重试全部</button>}<button className="button subtle" disabled={discardBusy || !completed} onClick={() => importer.clearFinished(scope)}>清除已完成</button></div></div>

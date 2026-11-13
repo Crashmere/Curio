@@ -46,7 +46,7 @@ Confirmed partial discard uses the existing `uploads.state='discarding'` as dura
 
 The shared HTTPS servers on `nas`, `ali` and `vps` keep `http2_body_preread_size 4m`; do not enlarge or replace shared server settings just to add Curio. See [Upload throughput and request limits](https://github.com/Crashmere/agent-config/blob/main/skills/server-operations/references/conventions.md#upload-throughput-and-request-limits) for full-path diagnosis. Relative URLs keep large LAN uploads on NAS instead of redirecting them through a public gateway.
 
-Only exact anonymous GET/HEAD requests for `favicon.svg` and `apple-touch-icon.png` bypass Portal authentication. The opaque 180-by-180 PNG is generated from the retained graphics source by `scripts/icons.sh`. Business JavaScript, pages, APIs and uploaded media remain authenticated; no application `add_header` overrides shared cookie renewal. The UI blocks ordinary Tab/Shift+Tab focus traversal and suppresses focus-only decoration while preserving text input and modifier shortcuts.
+Only exact anonymous GET/HEAD requests for `favicon.svg` and `apple-touch-icon.png` bypass Portal authentication. The opaque 180-by-180 PNG is generated from the retained graphics source by `scripts/icons.sh`. Business JavaScript, pages, APIs and uploaded media remain authenticated; no application `add_header` overrides shared cookie renewal. The UI blocks ordinary Tab/Shift+Tab focus traversal, except for the user-requested toggle between new-game name and Steam ID fields. It suppresses focus-only decoration while preserving text input, composition and modifier shortcuts.
 
 Normal and hidden modes use the same data and recovery rules. New page loads default to normal; the current mode is not persisted. Hidden flags are catalog metadata, not a password or encryption boundary.
 
@@ -87,7 +87,7 @@ NAS releases hold the shared maintenance lock and Curio deployment lock, verify 
 
 ## Screenshot Time Recalculation
 
-The maintenance command previews or recalculates capture times for live, enabled game media across normal and hidden scopes. By default it selects media without an assigned game; `--assigned` selects only media already in game folders. Both selections exclude trash, permanent-cleanup candidates and manual opt-outs. It uses the same capture-time precedence as new imports: valid Steam filenames, underscore-delimited or underscore-prefixed trailing `YYYYMMDDHHmmss` tokens, then the earliest embedded capture, creation or modification time. It changes only `screenshots.captured_at`; originals, game associations, classification source, asset metadata and memberships remain unchanged.
+The maintenance command previews or recalculates capture times for live, enabled game media across normal and hidden scopes. By default it selects media without an assigned game; `--assigned` selects only media already in game folders. Both selections exclude trash, permanent-cleanup candidates and manual opt-outs. It uses the same capture-time precedence as new imports: valid Steam filenames, generic compact or separated filename timestamps, the earliest embedded capture, creation or modification time, then source modification time retained in upload hints. See [capture-time inference](ARCHITECTURE.md#game-screenshots) for accepted formats and browser source-date limitations. It changes only `screenshots.captured_at`; originals, game associations, classification source, asset metadata and memberships remain unchanged.
 
 ```sh
 bin/curio recalculate-screenshot-times --data /path/to/isolated-data

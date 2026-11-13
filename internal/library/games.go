@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -23,9 +24,11 @@ type Game struct {
 	Count          int64  `json:"count"`
 	CoverURL       string `json:"coverUrl,omitempty"`
 	LastCapturedAt string `json:"lastCapturedAt,omitempty"`
+	Pinyin         string `json:"pinyin,omitempty"`
 }
 
 var steamScreenshotName = regexp.MustCompile(`(?i)^([1-9][0-9]{0,9})_([0-9]{14})_[0-9]+\.([a-z0-9]+)$`)
+var separatedScreenshotTime = regexp.MustCompile(`(?:^|[^0-9])([0-9]{4}-[0-9]{2}-[0-9]{2}[ -][0-9]{2}-[0-9]{2}-[0-9]{2})`)
 
 func validSteamAppID(value string) bool {
 	n, err := strconv.ParseUint(value, 10, 32)
@@ -69,6 +72,16 @@ func parseScreenshotFilenameTime(name string) string {
 			return captured
 		}
 	}
+	for _, match := range separatedScreenshotTime.FindAllStringSubmatchIndex(stem, -1) {
+		start, end := match[2], match[3]
+		if end < len(stem) && stem[end] >= '0' && stem[end] <= '9' {
+			continue
+		}
+		value := stem[start:start+10] + " " + stem[start+11:end]
+		if t, err := time.Parse("2006-01-02 15-04-05", value); err == nil && t.Year() > 0 {
+			return t.Format("2006-01-02T15:04:05")
+		}
+	}
 	return ""
 }
 
@@ -102,9 +115,24 @@ func (l *Library) readScreenshotCaptureTime(ctx context.Context, hash string, na
 			return captured, nil
 		}
 	}
+	captured, err := l.embeddedScreenshotCaptureTime(ctx, hash)
+	if captured != "" {
+		return captured, nil
+	}
+	h, _, _, _, hintErr := l.uploadState(hash)
+	if hintErr != nil && !errors.Is(hintErr, sql.ErrNoRows) {
+		return "", hintErr
+	}
+	if h.FileModifiedAt != "" {
+		return h.FileModifiedAt, nil
+	}
+	return "", err
+}
+
+func (l *Library) embeddedScreenshotCaptureTime(ctx context.Context, hash string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	raw, err := l.cpuCommand(ctx, "exiftool", "-j", "-n", "-api", "LargeFileSupport=1",
+	raw, err := l.cpuCommand(ctx, "exiftool", "-j", "-n", "-a", "-G1", "-api", "LargeFileSupport=1",
 		"-DateTimeOriginal", "-CreateDate", "-CreationDate", "-CreationTime",
 		"-DateCreated", "-MediaCreateDate", "-TrackCreateDate",
 		"-ModifyDate", "-ModificationDate", "-ModificationTime", "-DateModified",
@@ -124,11 +152,16 @@ func (l *Library) readScreenshotCaptureTime(ctx context.Context, hash string, na
 
 func metadataCaptureTime(metadata map[string]any) string {
 	earliest := ""
-	for _, key := range []string{
+	keys := []string{
 		"DateTimeOriginal", "CreateDate", "CreationDate", "CreationTime", "DateCreated", "MediaCreateDate", "TrackCreateDate",
 		"ModifyDate", "ModificationDate", "ModificationTime", "DateModified", "MediaModifyDate", "TrackModifyDate",
-	} {
-		value := strings.TrimSpace(metaString(metadata, key))
+	}
+	for groupedKey := range metadata {
+		key := groupedKey[strings.LastIndex(groupedKey, ":")+1:]
+		if !slices.Contains(keys, key) {
+			continue
+		}
+		value := strings.TrimSpace(metaString(metadata, groupedKey))
 		for _, layout := range []string{
 			"2006:01:02 15:04:05Z07:00", "2006:01:02 15:04:05-0700", "2006:01:02 15:04:05",
 			time.RFC3339Nano, "2006-01-02T15:04:05", "2006-01-02 15:04:05Z07:00", "2006-01-02 15:04:05",
@@ -195,6 +228,9 @@ func recordScreenshot(tx *sql.Tx, hash string, h UploadHints, fallbackTime strin
 	appID, captured := parseSteamScreenshot(h.Name)
 	if captured == "" {
 		captured = fallbackTime
+	}
+	if captured == "" {
+		captured = h.FileModifiedAt
 	}
 	gameID, source := h.GameID, "steam"
 	var kind string
@@ -401,6 +437,7 @@ func (l *Library) scopedGames(scope string) ([]Game, error) {
 			rows.Close()
 			return nil, err
 		}
+		g.Pinyin = pinyinOf(g.Name + " " + g.SteamAppID)
 		items = append(items, g)
 	}
 	err = rows.Err()

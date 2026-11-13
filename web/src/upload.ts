@@ -2,6 +2,7 @@ import { api, ApiError, base, Scope, UploadSession } from "./api";
 
 export type UploadItem = {
   id: string; file: File; name: string; scope: Scope; displayScope: Scope; tagIds: string[]; collectionIds: string[]; gameId: string; screenshot: boolean;
+  fileModifiedAt?: string;
   state: "waiting" | "paused" | "reading" | "uploading" | "verifying" | "done" | "duplicate" | "error";
   progress: number; hash?: string; expectedHash?: string; assetId?: string; existingHidden?: boolean; trashed?: boolean; error?: string;
 };
@@ -10,6 +11,7 @@ let state: State = { items: [], running: false, paused: false };
 const listeners = new Set<() => void>();
 const queueWaiters = new Set<() => void>();
 let active = false;
+let panelOpen = false;
 type Lane = { controller?: AbortController; worker?: Worker; itemId?: string; settled?: Promise<void> };
 const lanes = new Set<Lane>();
 const discarding = new Set<string>();
@@ -48,7 +50,14 @@ export function subscribe(listener: () => void) {
   listeners.add(listener);
   return () => { listeners.delete(listener); };
 }
-export function addFiles(files: File[], scope: Scope, tagIds: string[] = [], collectionIds: string[] = [], gameId = "", screenshot = false, expectedHash = "", displayScope: Scope = scope) {
+function fileTime(file: File) {
+  const date = new Date(file.lastModified);
+  if (!Number.isFinite(date.getTime()) || file.lastModified <= 0 || date.getFullYear() < 1 || date.getFullYear() > 9999) return undefined;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  // Capture the source device's wall clock before upload, not the NAS receipt time.
+  return `${String(date.getFullYear()).padStart(4, "0")}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+export function addFiles(files: File[], scope: Scope, tagIds: string[] = [], collectionIds: string[] = [], gameId = "", screenshot = false, expectedHash = "", displayScope: Scope = scope, useFileTime = true) {
   let skipped = 0;
   const keyFor = (file: File, scope: Scope, tagIds: string[], collectionIds: string[], gameId: string, screenshot: boolean, expectedHash = "", displayScope: Scope = scope) =>
     JSON.stringify([file.webkitRelativePath || file.name, file.size, file.lastModified, scope, displayScope, [...tagIds].sort(), [...collectionIds].sort(), gameId, screenshot, expectedHash]);
@@ -57,7 +66,7 @@ export function addFiles(files: File[], scope: Scope, tagIds: string[] = [], col
     if (!file.size || (!supported.test(file.name) && !/^(image|video)\//.test(file.type))) { skipped++; continue; }
     const key = keyFor(file, scope, tagIds, collectionIds, gameId, screenshot, expectedHash, displayScope);
     if (seen.has(key)) continue;
-    const item: UploadItem = { id: crypto.randomUUID(), file, name: file.webkitRelativePath || file.name, scope, displayScope, tagIds: [...tagIds], collectionIds: [...collectionIds], gameId, screenshot, expectedHash: expectedHash || undefined, state: state.paused ? "paused" : "waiting", progress: 0 };
+    const item: UploadItem = { id: crypto.randomUUID(), file, name: file.webkitRelativePath || file.name, scope, displayScope, tagIds: [...tagIds], collectionIds: [...collectionIds], gameId, screenshot, fileModifiedAt: useFileTime ? fileTime(file) : undefined, expectedHash: expectedHash || undefined, state: state.paused ? "paused" : "waiting", progress: 0 };
     queueOrder.set(item, ++sequence);
     state.items.push(item);
     seen.add(key);
@@ -126,6 +135,10 @@ export function finishDiscard(hash: string, removed: boolean) {
 export function clearFinished(scope?: Scope) {
   state.items = state.items.filter(item => scope && item.displayScope !== scope || !["done", "duplicate"].includes(item.state));
   emit();
+}
+export function setPanelOpen(open: boolean) {
+  panelOpen = open;
+  if (!open) clearFinished();
 }
 function hashFile(item: UploadItem, lane: Lane, signal: AbortSignal) {
   return new Promise<string>((resolve, reject) => {
@@ -234,11 +247,12 @@ function completed(item: UploadItem, session: UploadSession, duplicate: boolean)
   item.trashed = session.trashed;
   item.state = duplicate ? "duplicate" : "done";
   item.progress = 1;
+  if (!panelOpen) state.items = state.items.filter(candidate => candidate !== item);
   emit();
   libraryChanged();
 }
 async function upload(item: UploadItem, signal: AbortSignal) {
-  let session = await api<UploadSession>("uploads", { hash: item.hash, name: item.file.name, size: item.file.size, mime: item.file.type, scope: item.scope, tagIds: item.tagIds, collectionIds: item.collectionIds, gameId: item.gameId, screenshot: item.screenshot }, undefined, signal);
+  let session = await api<UploadSession>("uploads", { hash: item.hash, name: item.file.name, size: item.file.size, mime: item.file.type, scope: item.scope, tagIds: item.tagIds, collectionIds: item.collectionIds, gameId: item.gameId, screenshot: item.screenshot, fileModifiedAt: item.fileModifiedAt }, undefined, signal);
   signal.throwIfAborted();
   validate(session, item.file.size);
   item.assetId = session.assetId;

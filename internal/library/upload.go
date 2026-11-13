@@ -22,15 +22,16 @@ import (
 )
 
 type UploadHints struct {
-	Hash          string   `json:"hash"`
-	Name          string   `json:"name"`
-	Size          int64    `json:"size"`
-	MIME          string   `json:"mime"`
-	Scope         string   `json:"scope"`
-	TagIDs        []string `json:"tagIds,omitempty"`
-	CollectionIDs []string `json:"collectionIds,omitempty"`
-	GameID        string   `json:"gameId,omitempty"`
-	Screenshot    bool     `json:"screenshot,omitempty"`
+	Hash           string   `json:"hash"`
+	Name           string   `json:"name"`
+	Size           int64    `json:"size"`
+	MIME           string   `json:"mime"`
+	Scope          string   `json:"scope"`
+	TagIDs         []string `json:"tagIds,omitempty"`
+	CollectionIDs  []string `json:"collectionIds,omitempty"`
+	GameID         string   `json:"gameId,omitempty"`
+	Screenshot     bool     `json:"screenshot,omitempty"`
+	FileModifiedAt string   `json:"fileModifiedAt,omitempty"`
 }
 
 var allowedFormats = map[string]string{
@@ -39,6 +40,12 @@ var allowedFormats = map[string]string{
 }
 
 func (h *UploadHints) validate() error {
+	if h.FileModifiedAt != "" {
+		t, err := time.Parse("2006-01-02T15:04:05", h.FileModifiedAt)
+		if err != nil || t.Year() < 1 || t.Format("2006-01-02T15:04:05") != h.FileModifiedAt {
+			return fmt.Errorf("文件修改时间无效")
+		}
+	}
 	if h.GameID != "" && !validID.MatchString(h.GameID) {
 		return fmt.Errorf("游戏编号无效")
 	}
@@ -382,6 +389,9 @@ func (l *Library) prepareUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		if state == "complete" {
 			offset = 0
+		}
+		if old.FileModifiedAt != "" {
+			h.FileModifiedAt = old.FileModifiedAt
 		}
 		_, err = l.DB.Exec("UPDATE uploads SET hints=?,state='uploading',offset=? WHERE id=?", marshal(h), offset, h.Hash)
 	}
