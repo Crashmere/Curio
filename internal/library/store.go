@@ -72,43 +72,44 @@ type Container struct {
 }
 
 type Asset struct {
-	ID               string         `json:"id"`
-	Name             string         `json:"name"`
-	Title            string         `json:"title"`
-	Notes            string         `json:"notes"`
-	SourceURL        string         `json:"sourceUrl"`
-	Author           string         `json:"author"`
-	Kind             string         `json:"kind"`
-	Format           string         `json:"format"`
-	MIME             string         `json:"mime"`
-	Size             int64          `json:"size"`
-	Width            int            `json:"width"`
-	Height           int            `json:"height"`
-	Duration         float64        `json:"duration"`
-	HasAlpha         bool           `json:"hasAlpha"`
-	Hidden           bool           `json:"hidden"`
-	EffectiveHidden  bool           `json:"effectiveHidden"`
-	HiddenReasons    []HiddenReason `json:"hiddenReasons"`
-	Organized        bool           `json:"organized"`
-	Starred          bool           `json:"starred"`
-	TrashedAt        string         `json:"trashedAt"`
-	CreatedAt        string         `json:"createdAt"`
-	UpdatedAt        string         `json:"updatedAt"`
-	Status           string         `json:"status"`
-	Stage            string         `json:"stage"`
-	Error            string         `json:"error"`
-	Engine           string         `json:"engine"`
-	Progress         float64        `json:"progress"`
-	Tags             []Container    `json:"tags"`
-	Collections      []Container    `json:"collections"`
-	Screenshot       bool           `json:"screenshot"`
-	Game             *Game          `json:"game,omitempty"`
-	CapturedAt       string         `json:"capturedAt"`
-	ScreenshotSource string         `json:"screenshotSource,omitempty"`
-	ThumbnailURL     string         `json:"thumbnailUrl"`
-	PreviewURL       string         `json:"previewUrl"`
-	OriginalURL      string         `json:"originalUrl"`
-	DownloadURL      string         `json:"downloadUrl"`
+	ID               string          `json:"id"`
+	Name             string          `json:"name"`
+	Title            string          `json:"title"`
+	Notes            string          `json:"notes"`
+	SourceURL        string          `json:"sourceUrl"`
+	Author           string          `json:"author"`
+	Kind             string          `json:"kind"`
+	Format           string          `json:"format"`
+	MIME             string          `json:"mime"`
+	Size             int64           `json:"size"`
+	Width            int             `json:"width"`
+	Height           int             `json:"height"`
+	Duration         float64         `json:"duration"`
+	Cover            *CoverSelection `json:"cover,omitempty"`
+	HasAlpha         bool            `json:"hasAlpha"`
+	Hidden           bool            `json:"hidden"`
+	EffectiveHidden  bool            `json:"effectiveHidden"`
+	HiddenReasons    []HiddenReason  `json:"hiddenReasons"`
+	Organized        bool            `json:"organized"`
+	Starred          bool            `json:"starred"`
+	TrashedAt        string          `json:"trashedAt"`
+	CreatedAt        string          `json:"createdAt"`
+	UpdatedAt        string          `json:"updatedAt"`
+	Status           string          `json:"status"`
+	Stage            string          `json:"stage"`
+	Error            string          `json:"error"`
+	Engine           string          `json:"engine"`
+	Progress         float64         `json:"progress"`
+	Tags             []Container     `json:"tags"`
+	Collections      []Container     `json:"collections"`
+	Screenshot       bool            `json:"screenshot"`
+	Game             *Game           `json:"game,omitempty"`
+	CapturedAt       string          `json:"capturedAt"`
+	ScreenshotSource string          `json:"screenshotSource,omitempty"`
+	ThumbnailURL     string          `json:"thumbnailUrl"`
+	PreviewURL       string          `json:"previewUrl"`
+	OriginalURL      string          `json:"originalUrl"`
+	DownloadURL      string          `json:"downloadUrl"`
 	thumbnailExt     string
 	previewExt       string
 	purgePending     bool
@@ -157,6 +158,10 @@ CREATE TABLE IF NOT EXISTS screenshots (
 );
 CREATE INDEX IF NOT EXISTS screenshots_game_time ON screenshots(game_id,enabled,captured_at,asset_id);
 CREATE TABLE IF NOT EXISTS catalog_features (name TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS asset_covers (
+ asset_id TEXT PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
+ time REAL NOT NULL, revision TEXT NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL, format TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS asset_tags_tag ON asset_tags(tag_id,asset_id);
 CREATE INDEX IF NOT EXISTS asset_collections_collection ON asset_collections(collection_id,asset_id);
 CREATE INDEX IF NOT EXISTS assets_time ON assets(trashed_at,created_at DESC,id);
@@ -290,13 +295,17 @@ const screenshotSQL = `EXISTS(SELECT 1 FROM screenshots s WHERE s.asset_id=a.id 
 
 const organizedSQL = `(EXISTS(SELECT 1 FROM asset_tags j WHERE j.asset_id=a.id) OR EXISTS(SELECT 1 FROM asset_collections j WHERE j.asset_id=a.id) OR ` + screenshotSQL + `)`
 
-const assetColumns = `a.id,a.name,a.title,a.notes,a.source_url,a.author,a.kind,a.format,a.mime,a.size,a.width,a.height,a.duration,a.has_alpha,a.hidden,` + organizedSQL + `,a.starred,a.trashed_at,a.created_at,a.updated_at,a.status,a.stage,a.error,a.engine,a.progress,a.thumbnail_ext,a.preview_ext,a.purge_pending`
+const assetColumns = `a.id,a.name,a.title,a.notes,a.source_url,a.author,a.kind,a.format,a.mime,a.size,a.width,a.height,a.duration,a.has_alpha,a.hidden,` + organizedSQL + `,a.starred,a.trashed_at,a.created_at,a.updated_at,a.status,a.stage,a.error,a.engine,a.progress,a.thumbnail_ext,a.preview_ext,a.purge_pending,COALESCE((SELECT json_object('time',c.time,'revision',c.revision,'width',c.width,'height',c.height,'format',c.format) FROM asset_covers c WHERE c.asset_id=a.id),'null')`
 
 type scanner interface{ Scan(...any) error }
 
 func scanAsset(row scanner) (Asset, error) {
 	var a Asset
-	err := row.Scan(&a.ID, &a.Name, &a.Title, &a.Notes, &a.SourceURL, &a.Author, &a.Kind, &a.Format, &a.MIME, &a.Size, &a.Width, &a.Height, &a.Duration, &a.HasAlpha, &a.Hidden, &a.Organized, &a.Starred, &a.TrashedAt, &a.CreatedAt, &a.UpdatedAt, &a.Status, &a.Stage, &a.Error, &a.Engine, &a.Progress, &a.thumbnailExt, &a.previewExt, &a.purgePending)
+	var cover string
+	err := row.Scan(&a.ID, &a.Name, &a.Title, &a.Notes, &a.SourceURL, &a.Author, &a.Kind, &a.Format, &a.MIME, &a.Size, &a.Width, &a.Height, &a.Duration, &a.HasAlpha, &a.Hidden, &a.Organized, &a.Starred, &a.TrashedAt, &a.CreatedAt, &a.UpdatedAt, &a.Status, &a.Stage, &a.Error, &a.Engine, &a.Progress, &a.thumbnailExt, &a.previewExt, &a.purgePending, &cover)
+	if err == nil {
+		err = json.Unmarshal([]byte(cover), &a.Cover)
+	}
 	a.Tags = []Container{}
 	a.Collections = []Container{}
 	a.HiddenReasons = []HiddenReason{}
@@ -305,6 +314,9 @@ func scanAsset(row scanner) (Asset, error) {
 	}
 	if a.thumbnailExt != "" {
 		a.ThumbnailURL = "/curio/media/" + a.ID + "/thumbnail"
+	}
+	if a.Cover != nil {
+		a.ThumbnailURL = "/curio/media/" + a.ID + "/thumbnail?cover=" + a.Cover.Revision
 	}
 	if a.previewExt != "" {
 		a.PreviewURL = "/curio/media/" + a.ID + "/preview"

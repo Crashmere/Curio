@@ -13,8 +13,8 @@ import (
 	"time"
 )
 
-func (p *playbackCache) segment(ctx context.Context, l *Library, spec *playbackSpec, index int) (*playbackEntry, error) {
-	key := playbackSegmentKey(spec, index)
+func (p *playbackCache) segment(ctx context.Context, l *Library, spec *playbackSpec, index int, timeline playbackTimeline) (*playbackEntry, error) {
+	key := playbackSegmentKey(spec, index, timeline)
 	p.mu.Lock()
 	p.expireLocked(time.Now())
 	if entry := p.entries[key]; entry != nil {
@@ -30,7 +30,7 @@ func (p *playbackCache) segment(ctx context.Context, l *Library, spec *playbackS
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			case <-job.done:
-				return p.segment(ctx, l, spec, index)
+				return p.segment(ctx, l, spec, index, timeline)
 			}
 		}
 		job.waiters++
@@ -52,7 +52,7 @@ func (p *playbackCache) segment(ctx context.Context, l *Library, spec *playbackS
 			p.finishJob(jobCtx, key, job, nil, nil, jobCtx.Err())
 			return
 		}
-		data, engine, err := l.encodePlaybackSegment(jobCtx, p.scratch, spec, index)
+		data, engine, err := l.encodePlaybackSegment(jobCtx, p.scratch, spec, index, timeline)
 		<-p.slots
 		var entry *playbackEntry
 		if err == nil {
@@ -71,11 +71,11 @@ func (p *playbackCache) segment(ctx context.Context, l *Library, spec *playbackS
 	return job.entry, nil
 }
 
-func playbackSegmentKey(spec *playbackSpec, index int) string {
-	return fmt.Sprintf("segment:%s:%s:%d", spec.stamp, playbackRecipe, index)
+func playbackSegmentKey(spec *playbackSpec, index int, timeline playbackTimeline) string {
+	return fmt.Sprintf("segment:%s:%s:%s:%d", spec.stamp, playbackRecipe, timeline, index)
 }
 
-func (l *Library) encodePlaybackSegment(ctx context.Context, scratch string, spec *playbackSpec, index int) ([]byte, string, error) {
+func (l *Library) encodePlaybackSegment(ctx context.Context, scratch string, spec *playbackSpec, index int, timeline playbackTimeline) ([]byte, string, error) {
 	if spec.hasAlpha {
 		return nil, "", errPlaybackAlpha
 	}
@@ -88,8 +88,7 @@ func (l *Library) encodePlaybackSegment(ctx context.Context, scratch string, spe
 	}
 	defer os.RemoveAll(work)
 	output := filepath.Join(work, "segment.ts")
-	start := float64(index) * playbackSegmentSeconds
-	duration := min(playbackSegmentSeconds, spec.duration-start)
+	start, duration := timeline.segment(spec.duration, index)
 	if duration <= 0 {
 		return nil, "", errPlaybackTime
 	}
@@ -134,7 +133,7 @@ func (l *Library) encodePlaybackSegment(ctx context.Context, scratch string, spe
 			filters = append(filters, "scale="+scale, "format=yuv420p")
 		}
 		args = append(args, "-vf", strings.Join(filters, ","), "-fps_mode", "passthrough")
-		gop := max(1, min(600, int(math.Ceil(max(30, spec.frameRate)*playbackSegmentSeconds))))
+		gop := max(1, min(600, int(math.Ceil(max(30, spec.frameRate)*timeline.seconds()))))
 		if gpu {
 			args = append(args, "-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "22", "-b:v", "0", "-maxrate", "8M", "-bufsize", "8M", "-forced-idr", "1")
 		} else {

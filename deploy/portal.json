@@ -15,7 +15,7 @@
       "id": "data",
       "name": "业务数据",
       "path": "/opt/curio/data",
-      "purpose": "媒体目录、标签、收藏集及固定状态、可命名分组与关联，游戏 ID 与名称映射、截图时间和手动归类，标题、来源和备注，普通与隐藏展示标记，星标、回收站、持久上传、未完成分片丢弃、处理和永久删除意图；未整理按标签、收藏集和游戏归类自动判断。",
+      "purpose": "媒体目录、标签、收藏集及固定状态、可命名分组与关联，游戏 ID 与名称映射、截图时间和手动归类，视频封面选帧元数据，标题、来源和备注，普通与隐藏展示标记，星标、回收站、持久上传、未完成分片丢弃、处理和永久删除意图；未整理按标签、收藏集和游戏归类自动判断。",
       "kind": "data",
       "browse": true,
       "cleanup": false
@@ -33,7 +33,7 @@
       "id": "derived",
       "name": "预览缓存",
       "path": "/opt/curio/data/derived",
-      "purpose": "可再生静态缩略图、保留透明通道的图片预览和安全 SVG 栅格预览；视频优先播放原件，必要时在内存盘按需生成短片段，不保存整段 MP4。nas 手工全量备份收录已存派生文件。",
+      "purpose": "可再生静态缩略图、保留透明通道的图片预览和安全 SVG 栅格预览，以及独立视频封面和候选帧图集；视频优先播放原件，必要时在内存盘按需生成短片段，不保存整段 MP4。nas 手工全量备份收录已存派生文件。",
       "kind": "cache",
       "browse": false,
       "cleanup": false
@@ -106,6 +106,9 @@
     {"method": "POST", "path": "/api/assets/retry", "description": "重新排队所选媒体的派生处理，不修改原件"},
     {"method": "GET", "path": "/api/assets/{id}", "description": "当前范围的媒体详情、关联和隐藏来源"},
     {"method": "PATCH", "path": "/api/assets/{id}", "description": "修改单个媒体的标题、来源、备注、标记和分类关联"},
+    {"method": "PATCH", "path": "/api/assets/{id}/cover", "description": "按原始帧时间和当前版本保存视频封面，或还原默认封面；保留原件与分类"},
+    {"method": "GET", "path": "/api/assets/{id}/frame", "description": "读取精确原始视频帧预览；支持透明通道，按需提取"},
+    {"method": "GET", "path": "/api/assets/{id}/frames", "description": "读取候选帧时间轴及图集，复用有限派生缓存"},
     {"method": "GET", "path": "/api/assets/{id}/download", "description": "以原始文件名下载未经改写的原件"},
     {"method": "GET", "path": "/api/tags", "description": "当前范围的标签、数量和封面"},
     {"method": "POST", "path": "/api/tags", "description": "创建标签，默认采用当前模式的隐藏属性"},

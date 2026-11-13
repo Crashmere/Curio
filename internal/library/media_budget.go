@@ -2,6 +2,13 @@ package library
 
 import "context"
 
+type foregroundMediaKey struct{}
+
+func foregroundMedia(ctx context.Context) bool {
+	value, _ := ctx.Value(foregroundMediaKey{}).(bool)
+	return value
+}
+
 func acquireMediaSlot(ctx context.Context, slots chan struct{}) (func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -15,6 +22,9 @@ func acquireMediaSlot(ctx context.Context, slots chan struct{}) (func(), error) 
 }
 
 func (l *Library) acquireCPU(ctx context.Context) (func(), error) {
+	if foregroundMedia(ctx) {
+		return l.acquirePlaybackCPU(ctx)
+	}
 	background, err := acquireMediaSlot(ctx, l.backgroundCPU)
 	if err != nil {
 		return nil, err
@@ -32,6 +42,9 @@ func (l *Library) acquirePlaybackCPU(ctx context.Context) (func(), error) {
 }
 
 func (l *Library) acquireGPU(ctx context.Context) (func(), error) {
+	if foregroundMedia(ctx) {
+		return l.acquirePlaybackGPU(ctx)
+	}
 	background, err := acquireMediaSlot(ctx, l.backgroundGPU)
 	if err != nil {
 		return nil, err

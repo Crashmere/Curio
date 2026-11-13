@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	playbackSegmentSeconds = 4.0
+	playbackSegmentSeconds = 2.0
 	playbackCacheLimit     = int64(256 << 20)
 	playbackSegmentLimit   = int64(8 << 20)
 	playbackReservation    = 2 * playbackSegmentLimit
@@ -28,6 +28,7 @@ var errPlaybackTime = errors.New("请选择视频时长内的有效片段")
 
 type playbackEntry struct {
 	key, hash, etag, engine string
+	strip                   *coverStripRecord
 	data                    []byte
 	used                    time.Time
 	refs                    int
@@ -36,6 +37,8 @@ type playbackEntry struct {
 
 type playbackJob struct {
 	hash     string
+	frame    bool
+	strip    bool
 	cancel   context.CancelFunc
 	done     chan struct{}
 	waiters  int
@@ -52,18 +55,21 @@ type playbackSpecEntry struct {
 }
 
 type playbackCache struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	scratch  string
-	mu       sync.Mutex
-	entries  map[string]*playbackEntry
-	specs    map[string]playbackSpecEntry
-	jobs     map[string]*playbackJob
-	bytes    int64
-	reserved int64
-	closed   bool
-	slots    chan struct{}
-	running  sync.WaitGroup
+	ctx          context.Context
+	cancel       context.CancelFunc
+	scratch      string
+	mu           sync.Mutex
+	entries      map[string]*playbackEntry
+	specs        map[string]playbackSpecEntry
+	jobs         map[string]*playbackJob
+	bytes        int64
+	reserved     int64
+	closed       bool
+	slots        chan struct{}
+	stripSlots   chan struct{}
+	frameWaiters []*frameWaiter
+	frameActive  int
+	running      sync.WaitGroup
 }
 
 func (l *Library) StartPlayback(parent context.Context) error {
@@ -100,7 +106,7 @@ func (l *Library) StartPlayback(parent context.Context) error {
 		return err
 	}
 	ctx, cancel := context.WithCancel(parent)
-	p := &playbackCache{ctx: ctx, cancel: cancel, scratch: scratch, entries: map[string]*playbackEntry{}, specs: map[string]playbackSpecEntry{}, jobs: map[string]*playbackJob{}, slots: make(chan struct{}, 2)}
+	p := &playbackCache{ctx: ctx, cancel: cancel, scratch: scratch, entries: map[string]*playbackEntry{}, specs: map[string]playbackSpecEntry{}, jobs: map[string]*playbackJob{}, slots: make(chan struct{}, 2), stripSlots: make(chan struct{}, 1)}
 	l.runtimeCtx = ctx
 	l.playback = p
 	p.running.Add(1)
@@ -235,15 +241,24 @@ func (p *playbackCache) await(ctx context.Context, job *playbackJob) error {
 	return job.err
 }
 
-func (p *playbackCache) newJobLocked(key, hash string, reserve int64, deadline time.Duration) (context.Context, *playbackJob, error) {
+func (p *playbackCache) newJobLocked(key, hash string, reserve int64, deadline time.Duration, frameRequest ...bool) (context.Context, *playbackJob, error) {
 	if p.closed || p.ctx.Err() != nil {
 		return nil, nil, errPlaybackClosed
 	}
-	if len(p.jobs) >= 8 || !p.reserveLocked(reserve) {
+	frame := len(frameRequest) > 0 && frameRequest[0]
+	frames, ordinary := 0, 0
+	for _, job := range p.jobs {
+		if job.frame {
+			frames++
+		} else {
+			ordinary++
+		}
+	}
+	if frame && frames >= 32 || !frame && ordinary >= 8 || !p.reserveLocked(reserve) {
 		return nil, nil, errPlaybackBusy
 	}
 	ctx, cancel := context.WithTimeout(p.ctx, deadline)
-	job := &playbackJob{hash: hash, cancel: cancel, done: make(chan struct{}), waiters: 1, reserve: reserve}
+	job := &playbackJob{hash: hash, frame: frame, cancel: cancel, done: make(chan struct{}), waiters: 1, reserve: reserve}
 	p.jobs[key] = job
 	p.running.Add(1)
 	return ctx, job, nil

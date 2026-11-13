@@ -388,6 +388,9 @@ func (l *Library) process(ctx context.Context, a Asset) error {
 		}
 	}
 	_, err = l.DB.Exec("UPDATE assets SET width=?,height=?,duration=?,kind=?,mime=?,has_alpha=?,thumbnail_ext=?,preview_ext=?,status='ready',stage='ready',progress=100,error='',updated_at=? WHERE id=? AND purge_pending=0", a.Width, a.Height, a.Duration, a.Kind, a.MIME, a.HasAlpha, a.thumbnailExt, a.previewExt, now(), a.ID)
+	if err == nil && a.Kind == "video" {
+		l.warmCoverStrip(a.ID)
+	}
 	return err
 }
 

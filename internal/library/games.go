@@ -449,7 +449,7 @@ func (l *Library) scopedGames(scope string) ([]Game, error) {
 		var hash string
 		err = l.DB.QueryRow("SELECT a.id FROM screenshots s JOIN assets a ON a.id=s.asset_id WHERE s.game_id=? AND "+predicate+" AND a.thumbnail_ext!='' ORDER BY s.captured_at DESC,a.created_at DESC,a.id DESC LIMIT 1", items[i].ID).Scan(&hash)
 		if err == nil {
-			items[i].CoverURL = "/curio/media/" + hash + "/thumbnail"
+			items[i].CoverURL = l.coverThumbnailURL(hash)
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return nil, err
 		}

@@ -18,9 +18,45 @@ import (
 )
 
 type playbackSource struct {
-	URL    string `json:"url"`
-	Mime   string `json:"mime"`
-	Codecs string `json:"codecs,omitempty"`
+	URL    string         `json:"url"`
+	Mime   string         `json:"mime"`
+	Codecs string         `json:"codecs,omitempty"`
+	Audio  *playbackAudio `json:"audio,omitempty"`
+}
+
+type playbackAudio struct {
+	Start    float64 `json:"start"`
+	Duration float64 `json:"duration,omitempty"`
+}
+
+type playbackTimeline string
+
+const playbackShortSegments playbackTimeline = "s2"
+
+func requestPlaybackTimeline(r *http.Request) (playbackTimeline, error) {
+	values, ok := r.URL.Query()["timeline"]
+	if !ok {
+		return "", nil
+	}
+	if len(values) != 1 || values[0] != string(playbackShortSegments) {
+		return "", errPlaybackTime
+	}
+	return playbackShortSegments, nil
+}
+
+func (timeline playbackTimeline) seconds() float64 {
+	if timeline == playbackShortSegments {
+		return playbackSegmentSeconds
+	}
+	return 4
+}
+
+func (timeline playbackTimeline) segment(duration float64, index int) (start, length float64) {
+	if index < 0 {
+		return 0, 0
+	}
+	start = float64(index) * timeline.seconds()
+	return start, max(0, min(timeline.seconds(), duration-start))
 }
 
 type playbackDescriptor struct {
@@ -34,6 +70,7 @@ type playbackDescriptor struct {
 type playbackSpec struct {
 	hash, stamp, path          string
 	duration, start, frameRate float64
+	frameStart, timeBase       float64
 	width, height              int
 	nativeRotation             float64
 	hdr                        bool
@@ -43,6 +80,8 @@ type playbackSpec struct {
 	sourceCodecs               string
 	sourceMime                 string
 	hasAlpha                   bool
+	videoCodec                 string
+	sourceAudio                *playbackAudio
 }
 
 var errPlaybackDeleted = errors.New("视频已被永久删除")
@@ -137,7 +176,7 @@ func (l *Library) probePlayback(ctx context.Context, hash, stamp string) (*playb
 	}
 	defer release()
 	output := &boundedBuffer{maximum: 256 << 10}
-	err = commandOutput(ctx, "ffprobe", output, "-v", "error", "-protocol_whitelist", "file,pipe", "-show_entries", "format=format_name,duration,start_time:stream=codec_type,codec_name,codec_tag_string,profile,width,height,pix_fmt,duration,start_time,avg_frame_rate,color_transfer,color_primaries,color_space:stream_tags=alpha_mode:stream_side_data=rotation", "-of", "json", l.Object(hash))
+	err = commandOutput(ctx, "ffprobe", output, "-v", "error", "-protocol_whitelist", "file,pipe", "-show_entries", "format=format_name,duration,start_time:stream=codec_type,codec_name,codec_tag_string,profile,width,height,pix_fmt,duration,start_time,time_base,avg_frame_rate,color_transfer,color_primaries,color_space:stream_tags=alpha_mode:stream_side_data=rotation", "-of", "json", l.Object(hash))
 	if err != nil {
 		return nil, err
 	}
@@ -153,6 +192,7 @@ func (l *Library) probePlayback(ctx context.Context, hash, stamp string) (*playb
 			Duration  string            `json:"duration"`
 			Start     string            `json:"start_time"`
 			Rate      string            `json:"avg_frame_rate"`
+			TimeBase  string            `json:"time_base"`
 			Transfer  string            `json:"color_transfer"`
 			Primaries string            `json:"color_primaries"`
 			Space     string            `json:"color_space"`
@@ -171,6 +211,7 @@ func (l *Library) probePlayback(ctx context.Context, hash, stamp string) (*playb
 		return nil, err
 	}
 	spec := &playbackSpec{hash: hash, stamp: stamp, path: l.Object(hash)}
+	spec.frameStart, _ = strconv.ParseFloat(raw.Format.Start, 64)
 	video, audio, audioCompatible, audioAAC := false, false, true, false
 	videoCodec, audioCodec := "", ""
 	for _, stream := range raw.Streams {
@@ -179,12 +220,21 @@ func (l *Library) probePlayback(ctx context.Context, hash, stamp string) (*playb
 			// PCM16 QuickTime recordings can play without converting the video.
 			audio, audioCompatible = true, audioAAC || stream.Codec == "pcm_s16le"
 			audioCodec = stream.Codec
+			start, _ := strconv.ParseFloat(stream.Start, 64)
+			if math.IsNaN(start) || math.IsInf(start, 0) {
+				start = 0
+			}
+			spec.sourceAudio = &playbackAudio{Start: start, Duration: playbackNumber(stream.Duration)}
 		}
 		if stream.Type != "video" || video {
 			continue
 		}
 		video = true
 		videoCodec = stream.Codec
+		spec.videoCodec = stream.Codec
+		if n, d, ok := strings.Cut(stream.TimeBase, "/"); ok && playbackNumber(d) > 0 {
+			spec.timeBase = playbackNumber(n) / playbackNumber(d)
+		}
 		spec.hasAlpha = videoHasAlpha(stream.Pixels, stream.Tags["alpha_mode"])
 		spec.width, spec.height = stream.Width, stream.Height
 		spec.duration = playbackNumber(stream.Duration)
@@ -216,6 +266,9 @@ func (l *Library) probePlayback(ctx context.Context, hash, stamp string) (*playb
 	}
 	if spec.duration <= 0 {
 		spec.duration = playbackNumber(raw.Format.Duration)
+	}
+	if spec.sourceAudio != nil {
+		spec.sourceAudio.Start -= spec.start
 	}
 	if !video || spec.width <= 0 || spec.height <= 0 || spec.duration <= 0 || math.IsNaN(spec.start) || math.IsInf(spec.start, 0) {
 		return nil, errPlaybackTime
@@ -310,12 +363,12 @@ func (l *Library) playbackInfo(w http.ResponseWriter, r *http.Request) {
 		playbackFailure(w, err)
 		return
 	}
-	result := playbackDescriptor{Stream: playbackSource{URL: fmt.Sprintf("/curio/media/%s/stream/index.m3u8", spec.hash), Mime: "application/vnd.apple.mpegurl"}, Duration: spec.duration, FrameRate: spec.frameRate}
+	result := playbackDescriptor{Stream: playbackSource{URL: fmt.Sprintf("/curio/media/%s/stream/index.m3u8?timeline=s2", spec.hash), Mime: "application/vnd.apple.mpegurl"}, Duration: spec.duration, FrameRate: spec.frameRate}
 	if spec.hasAlpha {
 		result.FallbackError = errPlaybackAlpha.Error()
 	}
 	if spec.sourceCodecs != "" {
-		result.Source = &playbackSource{URL: "/curio/media/" + spec.hash + "/source", Mime: spec.sourceMime, Codecs: spec.sourceCodecs}
+		result.Source = &playbackSource{URL: "/curio/media/" + spec.hash + "/source", Mime: spec.sourceMime, Codecs: spec.sourceCodecs, Audio: spec.sourceAudio}
 	}
 	if err = l.playbackAllowed(spec.hash); err != nil {
 		playbackFailure(w, err)
@@ -327,6 +380,10 @@ func (l *Library) playbackInfo(w http.ResponseWriter, r *http.Request) {
 func (l *Library) streamPlaylist(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	_, spec, err := l.playbackRequest(r)
+	timeline, timelineErr := requestPlaybackTimeline(r)
+	if err == nil {
+		err = timelineErr
+	}
 	if err == nil && spec.hasAlpha {
 		err = errPlaybackAlpha
 	}
@@ -335,10 +392,17 @@ func (l *Library) streamPlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var playlist strings.Builder
-	playlist.WriteString("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-INDEPENDENT-SEGMENTS\n")
-	for index, count := 0, int(math.Ceil(spec.duration/playbackSegmentSeconds)); index < count; index++ {
-		duration := min(playbackSegmentSeconds, spec.duration-float64(index)*playbackSegmentSeconds)
-		fmt.Fprintf(&playlist, "#EXTINF:%.6f,\n%d.ts\n", duration, index)
+	fmt.Fprintf(&playlist, "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:%.0f\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-INDEPENDENT-SEGMENTS\n", timeline.seconds())
+	for index := 0; ; index++ {
+		_, duration := timeline.segment(spec.duration, index)
+		if duration <= 0 {
+			break
+		}
+		fmt.Fprintf(&playlist, "#EXTINF:%.6f,\n%d.ts", duration, index)
+		if timeline != "" {
+			fmt.Fprintf(&playlist, "?timeline=%s", timeline)
+		}
+		playlist.WriteByte('\n')
 	}
 	playlist.WriteString("#EXT-X-ENDLIST\n")
 	if err = l.playbackAllowed(spec.hash); err != nil {
@@ -353,12 +417,16 @@ func (l *Library) streamPlaylist(w http.ResponseWriter, r *http.Request) {
 func (l *Library) streamSegment(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	p, spec, err := l.playbackRequest(r)
+	timeline, timelineErr := requestPlaybackTimeline(r)
 	if err == nil && spec.hasAlpha {
 		err = errPlaybackAlpha
 	}
 	index, parseErr := strconv.Atoi(chi.URLParam(r, "segment"))
-	if err == nil && (parseErr != nil || index < 0 || float64(index)*playbackSegmentSeconds >= spec.duration) {
-		err = errPlaybackTime
+	if err == nil {
+		_, duration := timeline.segment(spec.duration, index)
+		if timelineErr != nil || parseErr != nil || duration <= 0 {
+			err = errPlaybackTime
+		}
 	}
 	if err != nil {
 		playbackFailure(w, err)
@@ -368,14 +436,14 @@ func (l *Library) streamSegment(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodHead {
 		p.mu.Lock()
 		p.expireLocked(time.Now())
-		entry = p.entries[playbackSegmentKey(spec, index)]
+		entry = p.entries[playbackSegmentKey(spec, index, timeline)]
 		if entry != nil {
 			entry.refs++
 			entry.used = time.Now()
 		}
 		p.mu.Unlock()
 	} else {
-		entry, err = p.segment(r.Context(), l, spec, index)
+		entry, err = p.segment(r.Context(), l, spec, index, timeline)
 	}
 	if err != nil {
 		playbackFailure(w, err)

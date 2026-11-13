@@ -274,7 +274,7 @@ func (l *Library) container(kind, entityID, scope string) (Container, error) {
 	var hash string
 	err = l.DB.QueryRow("SELECT a.id FROM "+table+" j JOIN assets a ON a.id=j.asset_id WHERE j."+column+"=? AND "+predicate+" AND a.thumbnail_ext!='' ORDER BY a.created_at DESC,a.id DESC LIMIT 1", entityID).Scan(&hash)
 	if err == nil {
-		c.CoverURL = "/curio/media/" + hash + "/thumbnail"
+		c.CoverURL = l.coverThumbnailURL(hash)
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return c, err
 	}

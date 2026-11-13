@@ -21,6 +21,8 @@ export type Asset = {
   width: number;
   height: number;
   duration: number;
+  frameRate?: number;
+  cover?: { time: number; revision: string; width: number; height: number };
   hasAlpha: boolean;
   hidden: boolean;
   effectiveHidden: boolean;
@@ -43,7 +45,7 @@ export type Asset = {
   error: string;
 };
 export type PlaybackDescriptor = {
-  source?: { url: string; mime: string; codecs?: string };
+  source?: { url: string; mime: string; codecs?: string; audio?: { start: number; duration?: number } };
   stream: { url: string; mime?: string };
   duration?: number;
   frameRate?: number;

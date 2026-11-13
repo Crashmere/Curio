@@ -92,6 +92,9 @@ func (l *Library) Handler(frontend fs.FS) http.Handler {
 	r.Post("/api/assets/retry", l.retryAssets)
 	r.Get("/api/assets/{id}", l.assetDetail)
 	r.Patch("/api/assets/{id}", l.updateAsset)
+	r.Patch("/api/assets/{id}/cover", l.saveCover)
+	r.Get("/api/assets/{id}/frame", l.frame)
+	r.Get("/api/assets/{id}/frames", l.frameStrip)
 	r.Get("/api/collections/{id}/groups", l.listGroups)
 	r.Post("/api/collections/{id}/groups", l.createGroup)
 	r.Patch("/api/collections/{id}/groups", l.updateGroup)
@@ -463,6 +466,35 @@ func (l *Library) media(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kind := chi.URLParam(r, "kind")
+	if (kind == "thumbnail" || kind == "cover") && a.Kind == "video" && a.Cover != nil {
+		if requested := r.URL.Query().Get("cover"); requested != "" && requested != a.Cover.Revision {
+			http.NotFound(w, r)
+			return
+		}
+		path := l.coverPath(hash, a.Cover, "thumbnail")
+		if kind == "cover" {
+			path = l.coverPath(hash, a.Cover, "preview")
+		}
+		if !readyDerivative(path) {
+			err = l.rebuildCover(r.Context(), hash, a.Cover.Revision)
+			if err != nil {
+				frameFailure(w, err)
+				return
+			}
+		}
+		if err = l.playbackAllowed(hash); err != nil {
+			frameFailure(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", mime.TypeByExtension("."+a.Cover.Format))
+		w.Header().Set("Cache-Control", "no-store")
+		http.ServeFile(w, r, path)
+		return
+	}
+	if kind == "thumbnail" && r.URL.Query().Get("cover") != "" {
+		http.NotFound(w, r)
+		return
+	}
 	if kind == "preview" && a.Kind == "video" {
 		w.Header().Set("Cache-Control", "no-store")
 		http.Redirect(w, r, "/curio/media/"+hash+"/stream/index.m3u8", http.StatusTemporaryRedirect)
@@ -533,7 +565,11 @@ func (l *Library) media(w http.ResponseWriter, r *http.Request) {
 	if contentType != "" {
 		w.Header().Set("Content-Type", contentType)
 	}
-	w.Header().Set("Cache-Control", "private,max-age=3600")
+	if kind == "thumbnail" && a.Kind == "video" {
+		w.Header().Set("Cache-Control", "no-store")
+	} else {
+		w.Header().Set("Cache-Control", "private,max-age=3600")
+	}
 	http.ServeContent(w, r, a.Name, stat.ModTime(), file)
 }
 
