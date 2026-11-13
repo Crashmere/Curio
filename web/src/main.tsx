@@ -531,7 +531,7 @@ function App() {
     lastSelected.current = -1;
     setExpandedGroups(previous => { const next = new Set(previous); if (next.has(group.id)) next.delete(group.id); else next.add(group.id); return next; });
   }
-  async function selectGroup(group: MediaGroup) {
+  function selectGroup(group: MediaGroup) {
     if (busy || loading || selectingAll) return;
     if (group.assetIds.length > 2000) { notify("每次最多选择 2000 项，请展开后选择部分素材"); return; }
     cancelSelectAll();
@@ -542,25 +542,8 @@ function App() {
       return;
     }
     if (new Set([...selected, ...group.assetIds]).size > 2000) { notify("每次最多选择 2000 项"); return; }
-    const controller = new AbortController();
-    selectionRequest.current = controller;
-    setSelectingAll(true);
-    const token = pageToken.current;
-    try {
-      const items: Asset[] = [];
-      let page: AssetPage;
-      let offset = 0;
-      do {
-        page = await api<AssetPage>(`${assetPath(offset, 240, false)}&group=${group.id}`, undefined, undefined, controller.signal);
-        if (controller.signal.aborted || token !== pageToken.current) return;
-        if (page.total > 2000) throw new Error("每次最多选择 2000 项，请展开后选择部分素材");
-        items.push(...page.items);
-        offset = page.nextOffset ?? 0;
-      } while (page.nextOffset != null);
-      setGroupPages(previous => ({ ...previous, [group.id]: { ...page, items } }));
-      setSelected(previous => new Set([...previous, ...items.map(asset => asset.id)]));
-    } catch (error) { if (!controller.signal.aborted) notify(error instanceof Error ? error.message : String(error)); }
-    finally { if (selectionRequest.current === controller) { selectionRequest.current = null; setSelectingAll(false); } }
+    // Matching group members are prepared before the collection is displayed.
+    setSelected(previous => new Set([...previous, ...group.assetIds]));
   }
   async function editGroup(group: MediaGroup | null, action: "create" | "add" | "remove" | "dissolve", name?: string, createIds?: string[]) {
     if (busy || loading || selectingAll) return;
