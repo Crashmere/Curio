@@ -88,7 +88,7 @@ func (l *Library) Worker(ctx context.Context) {
 			_ = os.RemoveAll(filepath.Join(l.Root, "work", name))
 		}
 	}
-	// Discover video support before background jobs can occupy the single GPU slot.
+	// Probe video support before admitting background GPU work.
 	l.nvidiaAvailable(ctx)
 	var workers sync.WaitGroup
 	for i := 0; i < l.Workers; i++ {
