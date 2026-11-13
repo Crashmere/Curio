@@ -23,7 +23,7 @@ export function VideoPlayer({ asset, compact, hidden, activity, toggleChrome, pr
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(asset.duration);
   const [scrub, setScrub] = useState<number | null>(null);
-  const [muted, setMuted] = useState(false);
+  const [muted, setMuted] = useState(true);
   const [rate, setRate] = useState(1);
   const [mode, setMode] = useState<"source" | "compatibility">("source");
   const [fullscreen, setFullscreen] = useState(false);
@@ -106,7 +106,7 @@ export function VideoPlayer({ asset, compact, hidden, activity, toggleChrome, pr
   const hideControls = playing && !waiting && !error && scrub === null && (fullscreen ? localControls.hidden : hidden);
   return <div ref={stage} className={`video-player ${hideControls ? "controls-hidden" : ""}`}>
     <video ref={videoRef} className="viewer-video" poster={asset.thumbnailUrl || undefined}
-      aria-label={asset.title || asset.name} controls={!compact || nativeFullscreen} playsInline preload={compact ? "none" : "metadata"}
+      aria-label={asset.title || asset.name} controls={!compact || nativeFullscreen} muted={muted} playsInline preload={compact ? "none" : "metadata"}
       {...(compact && !nativeFullscreen ? gestures : {})}
       onLoadedMetadata={event => { if (Number.isFinite(event.currentTarget.duration)) setDuration(event.currentTarget.duration); }}
       onTimeUpdate={event => setTime(event.currentTarget.currentTime)}
