@@ -2,6 +2,7 @@ package library
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -109,8 +110,10 @@ func (l *Library) Handler(frontend fs.FS) http.Handler {
 	r.Post("/api/uploads", l.prepareUpload)
 	r.Get("/api/uploads/{id}", l.uploadStatus)
 	r.Put("/api/uploads/{id}", l.uploadChunk)
+	r.Delete("/api/uploads/{id}", l.discardUpload)
 	r.Post("/api/uploads/{id}/complete", l.completeUpload)
 	r.Get("/api/download", l.downloadZip)
+	r.Post("/api/download", l.downloadZip)
 	r.Get("/media/{id}/stream/index.m3u8", l.streamPlaylist)
 	r.Head("/media/{id}/stream/index.m3u8", l.streamPlaylist)
 	r.Get("/media/{id}/stream/{segment}.ts", l.streamSegment)
@@ -146,6 +149,20 @@ func (l *Library) Handler(frontend fs.FS) http.Handler {
 		}
 		if strings.HasPrefix(name, "assets/") {
 			w.Header().Set("Cache-Control", "public,max-age=31536000,immutable")
+			if ext := filepath.Ext(name); ext == ".js" || ext == ".css" {
+				w.Header().Add("Vary", "Accept-Encoding")
+				if acceptsGzip(r.Header.Get("Accept-Encoding")) {
+					if compressed, err := fs.ReadFile(frontend, name+".gz"); err == nil {
+						w.Header().Set("Content-Encoding", "gzip")
+						w.Header().Set("Content-Type", mime.TypeByExtension(ext))
+						if r.Header.Get("Range") == "" {
+							w.Header().Set("Content-Length", strconv.Itoa(len(compressed)))
+						}
+						http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(compressed))
+						return
+					}
+				}
+			}
 		}
 		static.ServeHTTP(w, r)
 	})
@@ -164,6 +181,37 @@ func (l *Library) Handler(frontend fs.FS) http.Handler {
 		}
 		r.ServeHTTP(w, rq)
 	})
+}
+
+func acceptsGzip(header string) bool {
+	explicit, gzipQuality, wildcardQuality := false, 0.0, 0.0
+	for _, entry := range strings.Split(header, ",") {
+		parts := strings.Split(entry, ";")
+		coding := strings.ToLower(strings.TrimSpace(parts[0]))
+		quality := 1.0
+		for _, parameter := range parts[1:] {
+			key, value, found := strings.Cut(parameter, "=")
+			if found && strings.EqualFold(strings.TrimSpace(key), "q") {
+				parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+				if err != nil || parsed < 0 || parsed > 1 {
+					quality = 0
+				} else {
+					quality = parsed
+				}
+			}
+		}
+		switch coding {
+		case "gzip":
+			explicit = true
+			gzipQuality = max(gzipQuality, quality)
+		case "*":
+			wildcardQuality = max(wildcardQuality, quality)
+		}
+	}
+	if explicit {
+		return gzipQuality > 0
+	}
+	return wildcardQuality > 0
 }
 
 func (l *Library) info(w http.ResponseWriter, r *http.Request) {
@@ -519,6 +567,33 @@ func parseIDs(raw []string) error {
 
 func (l *Library) downloadZip(w http.ResponseWriter, r *http.Request) {
 	ids := strings.Split(r.URL.Query().Get("ids"), ",")
+	if r.Method == http.MethodPost {
+		contentType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil {
+			fail(w, http.StatusUnsupportedMediaType, "请选择 JSON 或表单格式提交下载请求")
+			return
+		}
+		switch contentType {
+		case "application/json":
+			var p struct {
+				IDs []string `json:"ids"`
+			}
+			if !decode(w, r, &p) {
+				return
+			}
+			ids = p.IDs
+		case "application/x-www-form-urlencoded":
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+			if err := r.ParseForm(); err != nil {
+				fail(w, http.StatusBadRequest, "下载表单格式不正确或超过大小限制")
+				return
+			}
+			ids = strings.Split(r.PostForm.Get("ids"), ",")
+		default:
+			fail(w, http.StatusUnsupportedMediaType, "请选择 JSON 或表单格式提交下载请求")
+			return
+		}
+	}
 	if err := parseIDs(ids); err != nil {
 		fail(w, 400, err)
 		return

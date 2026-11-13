@@ -98,7 +98,7 @@ func (l *Library) Worker(ctx context.Context) {
 			ticker := time.NewTicker(2 * time.Second)
 			defer ticker.Stop()
 			for ctx.Err() == nil {
-				if l.nextPurge(ctx) || l.nextJob(ctx) {
+				if l.nextUploadDiscard() || l.nextPurge(ctx) || l.nextJob(ctx) {
 					continue
 				}
 				select {
@@ -259,6 +259,7 @@ func metaNumber(data map[string]any, names ...string) float64 {
 }
 
 func (l *Library) process(ctx context.Context, a Asset) error {
+	originalKind := a.Kind
 	work, err := os.MkdirTemp(filepath.Join(l.Root, "work"), a.ID+"-")
 	if err != nil {
 		return err
@@ -334,7 +335,23 @@ func (l *Library) process(ctx context.Context, a Asset) error {
 		if a.Format == "webp" || a.Format == "png" || a.Format == "apng" {
 			a.HasAlpha = a.HasAlpha || encodedAlpha(input, a.Format)
 		}
-		_, _ = l.DB.Exec("UPDATE assets SET width=?,height=?,kind=?,mime=?,has_alpha=? WHERE id=? AND purge_pending=0", a.Width, a.Height, a.Kind, a.MIME, a.HasAlpha, a.ID)
+		tx, err := l.DB.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err = tx.Exec("UPDATE assets SET width=?,height=?,kind=?,mime=?,has_alpha=? WHERE id=? AND purge_pending=0", a.Width, a.Height, a.Kind, a.MIME, a.HasAlpha, a.ID); err != nil {
+			return err
+		}
+		if a.Kind == "animation" && originalKind != "animation" {
+			// Extension-based screenshot classification can precede animation detection.
+			if _, err = tx.Exec("UPDATE screenshots SET enabled=0,game_id=NULL,captured_at='',source='manual' WHERE asset_id=? AND enabled=1", a.ID); err != nil {
+				return err
+			}
+		}
+		if err = tx.Commit(); err != nil {
+			return err
+		}
 		if err = l.image(ctx, &a, metadata, input, work); err != nil {
 			return err
 		}

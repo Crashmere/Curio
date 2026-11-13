@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"os"
@@ -100,6 +101,139 @@ func (l *Library) uploadState(hash string) (UploadHints, string, int64, string, 
 	return h, state, offset, created, err
 }
 
+func uploadScopeSQL(scope string) string {
+	hidden := `(COALESCE(json_extract(hints,'$.scope'),'normal')='hidden' OR EXISTS(SELECT 1 FROM json_each(uploads.hints,'$.tagIds') j JOIN tags t ON t.id=j.value WHERE t.hidden=1) OR EXISTS(SELECT 1 FROM json_each(uploads.hints,'$.collectionIds') j JOIN collections c ON c.id=j.value WHERE c.hidden=1))`
+	if scope == "normal" {
+		return "NOT " + hidden
+	}
+	return hidden
+}
+
+func (l *Library) discardUpload(w http.ResponseWriter, r *http.Request) {
+	hash := chi.URLParam(r, "id")
+	if !validHash.MatchString(hash) {
+		fail(w, 404, "上传不存在")
+		return
+	}
+	var p struct {
+		Confirm bool `json:"confirm"`
+	}
+	if !decode(w, r, &p) {
+		return
+	}
+	if !p.Confirm {
+		fail(w, 400, "丢弃未完成上传需要明确确认")
+		return
+	}
+	unlock := l.lock(hash)
+	defer unlock()
+	_, state, _, _, err := l.uploadState(hash)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeJSON(w, 200, map[string]any{"ok": true, "id": hash})
+		return
+	}
+	if err != nil {
+		fail(w, 500, err)
+		return
+	}
+	var visible bool
+	if err = l.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM uploads WHERE id=? AND "+uploadScopeSQL(requestScope(r.URL.Query()))+")", hash).Scan(&visible); err != nil {
+		fail(w, 500, err)
+		return
+	}
+	if !visible {
+		fail(w, 404, "上传不存在于当前模式")
+		return
+	}
+	if state == "complete" {
+		fail(w, 409, "原件已保存，不能丢弃已完成的上传")
+		return
+	}
+	if a, assetErr := l.asset(hash); assetErr == nil {
+		present, err := l.originalPresent(a)
+		if err != nil {
+			fail(w, 409, err)
+			return
+		}
+		if present || a.purgePending {
+			fail(w, 409, "原件已入库或正在永久删除，不能作为未完成上传丢弃")
+			return
+		}
+	} else if !errors.Is(assetErr, sql.ErrNoRows) {
+		fail(w, 500, assetErr)
+		return
+	}
+	if _, err = l.DB.Exec("UPDATE uploads SET state='discarding' WHERE id=?", hash); err != nil {
+		fail(w, 500, err)
+		return
+	}
+	l.Notify()
+	if err = l.discardUploadLocked(hash); err != nil {
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "id": hash, "pending": true, "error": "丢弃请求已保存，后台将继续清理：" + err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "id": hash})
+}
+
+func (l *Library) discardUploadLocked(hash string) error {
+	h, state, _, _, err := l.uploadState(hash)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && state != "discarding") {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err = os.Remove(l.Incoming(hash)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err = syncDir(filepath.Join(l.Root, "incoming")); err != nil {
+		return err
+	}
+	var cataloged bool
+	if err = l.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM assets WHERE id=?)", hash).Scan(&cataloged); err != nil {
+		return err
+	}
+	if !cataloged {
+		// Publication can precede a failed catalog transaction. Never unlink a cataloged original.
+		path := l.Object(hash)
+		stat, err := os.Lstat(path)
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if err == nil {
+			if !stat.Mode().IsRegular() || stat.Size() != h.Size {
+				return fmt.Errorf("待清理原件状态异常，请检查数据后重试")
+			}
+			if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+		if _, err = os.Stat(filepath.Dir(path)); err == nil {
+			if err = syncDir(filepath.Dir(path)); err != nil {
+				return err
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+	}
+	_, err = l.DB.Exec("DELETE FROM uploads WHERE id=? AND state='discarding'", hash)
+	return err
+}
+
+func (l *Library) nextUploadDiscard() bool {
+	var hash string
+	if err := l.DB.QueryRow("SELECT id FROM uploads WHERE state='discarding' ORDER BY created_at LIMIT 1").Scan(&hash); err != nil {
+		return false
+	}
+	unlock := l.lock(hash)
+	defer unlock()
+	if err := l.discardUploadLocked(hash); err != nil {
+		slog.Error("incomplete upload cleanup", "upload", hash, "error", err)
+		return false
+	}
+	return true
+}
+
 // The database offset records only fsynced bytes. An interrupted request may
 // leave an unacknowledged tail, which is truncated before the next request.
 func (l *Library) reconcileOffset(hash string, offset int64) error {
@@ -140,6 +274,22 @@ func uploadResult(h UploadHints, offset int64, complete bool) map[string]any {
 		out["assetId"] = h.Hash
 	}
 	return out
+}
+
+func (l *Library) completedUploadResult(h UploadHints, duplicate bool) (map[string]any, error) {
+	var manualHidden, currentHidden, trashed bool
+	if err := l.DB.QueryRow("SELECT a.hidden,"+effectiveHidden+",a.trashed_at!='' FROM assets a WHERE a.id=?", h.Hash).Scan(&manualHidden, &currentHidden, &trashed); err != nil {
+		return nil, err
+	}
+	out := uploadResult(h, h.Size, true)
+	out["effectiveHidden"] = currentHidden
+	out["trashed"] = trashed
+	if duplicate {
+		out["duplicate"] = true
+		out["existingHidden"] = currentHidden
+		out["existingManualHidden"] = manualHidden
+	}
+	return out, nil
 }
 
 func (l *Library) rememberExisting(ctx context.Context, a Asset, h UploadHints) error {
@@ -205,10 +355,11 @@ func (l *Library) prepareUpload(w http.ResponseWriter, r *http.Request) {
 				fail(w, 400, err)
 				return
 			}
-			result := uploadResult(h, h.Size, true)
-			result["duplicate"] = true
-			result["trashed"] = a.TrashedAt != ""
-			result["existingHidden"] = a.Hidden
+			result, err := l.completedUploadResult(h, true)
+			if err != nil {
+				fail(w, 500, err)
+				return
+			}
 			writeJSON(w, 200, result)
 			return
 		}
@@ -216,16 +367,23 @@ func (l *Library) prepareUpload(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, assetErr)
 		return
 	}
-	old, _, offset, _, err := l.uploadState(h.Hash)
+	old, state, offset, _, err := l.uploadState(h.Hash)
 	if errors.Is(err, sql.ErrNoRows) {
 		_, err = l.DB.Exec("INSERT INTO uploads(id,hints,created_at) VALUES(?,?,?)", h.Hash, marshal(h), now())
 		offset = 0
 	} else if err == nil {
+		if state == "discarding" {
+			fail(w, 409, "该上传正在丢弃，请等待清理完成")
+			return
+		}
 		if old.Size != h.Size {
 			fail(w, 409, "上传长度冲突")
 			return
 		}
-		_, err = l.DB.Exec("UPDATE uploads SET hints=?,state='uploading' WHERE id=?", marshal(h), h.Hash)
+		if state == "complete" {
+			offset = 0
+		}
+		_, err = l.DB.Exec("UPDATE uploads SET hints=?,state='uploading',offset=? WHERE id=?", marshal(h), offset, h.Hash)
 	}
 	if err != nil {
 		fail(w, 500, err)
@@ -257,7 +415,12 @@ func (l *Library) uploadStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if present {
-			writeJSON(w, 200, uploadResult(UploadHints{Hash: hash, Size: a.Size}, a.Size, true))
+			out, err := l.completedUploadResult(UploadHints{Hash: hash, Size: a.Size}, true)
+			if err != nil {
+				fail(w, 500, err)
+				return
+			}
+			writeJSON(w, 200, out)
 			return
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
@@ -275,6 +438,10 @@ func (l *Library) uploadStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if state == "complete" {
 		fail(w, 409, "已提交原件缺失，请重新选择原文件进行修复")
+		return
+	}
+	if state == "discarding" {
+		fail(w, 409, "该上传正在丢弃，请等待清理完成")
 		return
 	}
 	if err = l.reconcileOffset(hash, offset); err != nil {
@@ -302,6 +469,10 @@ func (l *Library) uploadChunk(w http.ResponseWriter, r *http.Request) {
 	unlock := l.lock(hash)
 	defer unlock()
 	h, state, accepted, _, err := l.uploadState(hash)
+	if err == nil && state == "discarding" {
+		fail(w, 409, "该上传正在丢弃，请等待清理完成")
+		return
+	}
 	if err != nil || state != "uploading" {
 		fail(w, 409, "上传不存在或已完成")
 		return
@@ -421,8 +592,11 @@ func (l *Library) completeUpload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if present {
-			out := uploadResult(UploadHints{Hash: hash, Size: existing.Size}, existing.Size, true)
-			out["duplicate"] = true
+			out, err := l.completedUploadResult(UploadHints{Hash: hash, Size: existing.Size}, true)
+			if err != nil {
+				fail(w, 500, err)
+				return
+			}
 			writeJSON(w, 200, out)
 			return
 		}
@@ -433,6 +607,10 @@ func (l *Library) completeUpload(w http.ResponseWriter, r *http.Request) {
 	h, state, offset, _, err := l.uploadState(hash)
 	if err != nil {
 		fail(w, 404, "上传不存在")
+		return
+	}
+	if state == "discarding" {
+		fail(w, 409, "该上传正在丢弃，请等待清理完成")
 		return
 	}
 	if state != "uploading" || offset != h.Size {
@@ -523,16 +701,17 @@ func (l *Library) completeUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	l.Notify()
-	writeJSON(w, 200, uploadResult(h, h.Size, true))
+	out, err := l.completedUploadResult(h, false)
+	if err != nil {
+		fail(w, 500, err)
+		return
+	}
+	writeJSON(w, 200, out)
 }
 
 func (l *Library) listUploads(w http.ResponseWriter, r *http.Request) {
 	scope := requestScope(r.URL.Query())
-	hidden := `(json_extract(hints,'$.scope')='hidden' OR EXISTS(SELECT 1 FROM json_each(uploads.hints,'$.tagIds') j JOIN tags t ON t.id=j.value WHERE t.hidden=1) OR EXISTS(SELECT 1 FROM json_each(uploads.hints,'$.collectionIds') j JOIN collections c ON c.id=j.value WHERE c.hidden=1))`
-	if scope == "normal" {
-		hidden = "NOT " + hidden
-	}
-	rows, err := l.DB.Query("SELECT id,hints,offset,created_at FROM uploads WHERE state='uploading' AND " + hidden + " ORDER BY created_at DESC LIMIT 120")
+	rows, err := l.DB.Query("SELECT id,hints,state,offset,created_at FROM uploads WHERE state IN ('uploading','discarding') AND " + uploadScopeSQL(scope) + " ORDER BY created_at DESC LIMIT 120")
 	if err != nil {
 		fail(w, 500, err)
 		return
@@ -540,9 +719,9 @@ func (l *Library) listUploads(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	items := []map[string]any{}
 	for rows.Next() {
-		var hash, raw, created string
+		var hash, raw, state, created string
 		var offset int64
-		if err = rows.Scan(&hash, &raw, &offset, &created); err != nil {
+		if err = rows.Scan(&hash, &raw, &state, &offset, &created); err != nil {
 			fail(w, 500, err)
 			return
 		}
@@ -551,7 +730,7 @@ func (l *Library) listUploads(w http.ResponseWriter, r *http.Request) {
 			fail(w, 500, err)
 			return
 		}
-		items = append(items, map[string]any{"id": hash, "name": h.Name, "size": h.Size, "offset": offset, "scope": h.Scope, "createdAt": created, "state": "uploading"})
+		items = append(items, map[string]any{"id": hash, "name": h.Name, "size": h.Size, "offset": offset, "scope": h.Scope, "createdAt": created, "state": state, "tagIds": append([]string{}, h.TagIDs...), "collectionIds": append([]string{}, h.CollectionIDs...), "gameId": h.GameID, "screenshot": h.Screenshot})
 	}
 	if err = rows.Err(); err != nil {
 		fail(w, 500, err)

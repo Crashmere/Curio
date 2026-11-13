@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node ../scripts/compress-web.mjs",
     "dev": "vite --host 127.0.0.1"
   },
   "dependencies": {

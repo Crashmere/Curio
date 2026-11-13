@@ -504,7 +504,30 @@ func (l *Library) purgeAssets(w http.ResponseWriter, r *http.Request) {
 }
 
 func (l *Library) jobs(w http.ResponseWriter, r *http.Request) {
-	rows, err := l.DB.Query("SELECT "+assetColumns+" FROM assets a WHERE "+scopeSQL(requestScope(r.URL.Query()))+" AND (a.status!='ready' OR a.updated_at>?) ORDER BY a.purge_pending DESC,a.created_at DESC LIMIT 120", timeBeforeDay())
+	q := r.URL.Query()
+	where := " WHERE " + scopeSQL(requestScope(q)) + " AND (a.status!='ready' OR a.updated_at>?)"
+	switch q.Get("status") {
+	case "":
+	case "active":
+		where += " AND a.status IN ('queued','processing','deleting')"
+	case "error":
+		where += " AND (a.status='error' OR (a.purge_pending=1 AND a.error!=''))"
+	case "ready":
+		where += " AND a.status='ready'"
+	default:
+		fail(w, 400, "任务状态筛选无效")
+		return
+	}
+	cutoff := timeBeforeDay()
+	var total int64
+	if err := l.DB.QueryRow("SELECT count(*) FROM assets a"+where, cutoff).Scan(&total); err != nil {
+		fail(w, 500, err)
+		return
+	}
+	limit := pageNumber(q, "limit", 120, 1, 240)
+	offset := pageNumber(q, "offset", 0, 0, 100000000)
+	order := "CASE WHEN a.purge_pending=1 THEN 0 WHEN a.status='processing' THEN 1 WHEN a.status='queued' THEN 2 WHEN a.status='error' THEN 3 ELSE 4 END,a.created_at DESC,a.id DESC"
+	rows, err := l.DB.Query("SELECT "+assetColumns+" FROM assets a"+where+" ORDER BY "+order+" LIMIT ? OFFSET ?", cutoff, limit, offset)
 	if err != nil {
 		fail(w, 500, err)
 		return
@@ -523,7 +546,11 @@ func (l *Library) jobs(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"items": items})
+	var next any
+	if int64(offset+len(items)) < total {
+		next = offset + len(items)
+	}
+	writeJSON(w, 200, map[string]any{"items": items, "total": total, "nextOffset": next})
 }
 
 func timeBeforeDay() string { return time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339Nano) }

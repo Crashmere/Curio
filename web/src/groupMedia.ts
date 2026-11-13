@@ -14,13 +14,11 @@ async function bounded<T>(items: T[], concurrency: number, signal: AbortSignal, 
   signal.throwIfAborted();
 }
 
-export async function prepareGroupMedia(assets: Asset[], groups: MediaGroup[], path: string, signal: AbortSignal): Promise<Record<string, AssetPage>> {
-  const members = new Map(assets.map(asset => [asset.id, asset]));
-  const ids = [...new Set(groups.flatMap(group => group.assetIds))];
-  const missing = ids.filter(id => !members.has(id));
+export async function loadAssetIds(ids: string[], path: string, signal: AbortSignal): Promise<Asset[]> {
+  const items: Asset[] = [];
   const batches: string[][] = [];
   // Keep ID queries below the gateway's ordinary request-line limit.
-  for (let offset = 0; offset < missing.length; offset += 60) batches.push(missing.slice(offset, offset + 60));
+  for (let offset = 0; offset < ids.length; offset += 60) batches.push(ids.slice(offset, offset + 60));
   await bounded(batches, 2, signal, async batch => {
     const params = new URLSearchParams(path.split("?")[1]);
     params.delete("grouped");
@@ -28,8 +26,16 @@ export async function prepareGroupMedia(assets: Asset[], groups: MediaGroup[], p
     params.set("limit", String(batch.length));
     params.set("offset", "0");
     const page = await api<AssetPage>(`assets?${params}`, undefined, undefined, signal);
-    for (const asset of page.items) members.set(asset.id, asset);
+    items.push(...page.items);
   });
+  return items;
+}
+
+export async function prepareGroupMedia(assets: Asset[], groups: MediaGroup[], path: string, signal: AbortSignal): Promise<Record<string, AssetPage>> {
+  const members = new Map(assets.map(asset => [asset.id, asset]));
+  const ids = [...new Set(groups.flatMap(group => group.assetIds))];
+  const missing = ids.filter(id => !members.has(id));
+  for (const asset of await loadAssetIds(missing, path, signal)) members.set(asset.id, asset);
   const thumbnails = ids.map(id => members.get(id)?.thumbnailUrl).filter((url): url is string => !!url);
   await bounded(thumbnails, 8, signal, async url => {
     const image = new Image();

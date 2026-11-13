@@ -64,10 +64,14 @@ export type Patch = {
   addCollectionIds?: string[]; removeCollectionIds?: string[];
 };
 export type Job = { id: string; assetId: string; name: string; status: string; stage: string; error?: string; updatedAt?: string; createdAt?: string; engine?: string; progress: number; thumbnailUrl?: string };
+export type JobFilter = "all" | "active" | "error" | "ready";
+export type JobPage = { items: Job[]; total: number; nextOffset: number | null };
 export type UploadSession = {
   id: string; hash?: string; name?: string; size: number; offset: number;
   complete: boolean; duplicate?: boolean; assetId?: string; chunkSize: number;
-  scope?: Scope; hidden?: boolean; createdAt?: string;
+  scope?: Scope; hidden?: boolean; effectiveHidden?: boolean; existingHidden?: boolean; existingManualHidden?: boolean; trashed?: boolean; createdAt?: string;
+  tagIds?: string[]; collectionIds?: string[]; gameId?: string; screenshot?: boolean;
+  state?: "uploading" | "discarding";
 };
 
 export class ApiError extends Error {

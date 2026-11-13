@@ -104,7 +104,9 @@ export function VideoPlayer({ asset, compact, hidden, activity, toggleChrome, pr
     resumeScrub.current = false;
   }
   const hideControls = playing && !waiting && !error && scrub === null && (fullscreen ? localControls.hidden : hidden);
-  return <div ref={stage} className={`video-player ${hideControls ? "controls-hidden" : ""}`}>
+  return <div ref={stage} className={`video-player ${hideControls ? "controls-hidden" : ""}`}
+    onPointerMove={event => { if (event.pointerType !== "touch") reveal(); }}
+    onPointerDown={event => { if (event.pointerType !== "touch") reveal(); }}>
     <video ref={videoRef} className="viewer-video" poster={asset.thumbnailUrl || undefined}
       aria-label={asset.title || asset.name} controls={!compact || nativeFullscreen} muted={muted} playsInline preload={compact ? "none" : "metadata"}
       {...(compact && !nativeFullscreen ? gestures : {})}
@@ -141,6 +143,10 @@ export function VideoPlayer({ asset, compact, hidden, activity, toggleChrome, pr
         catch (error) { if (playbackRef.current === source && (error as Error).name !== "AbortError") { setError((error as Error).message); setWaiting(false); } }
         finally { if (playbackRef.current === source) setRetrying(false); }
       }}><RotateCw size={14} className={retrying ? "spin" : undefined} />重试</button>
+    </div>}
+    {!compact && !error && <div className="video-desktop-tools">
+      <span>{ready ? mode === "source" ? "原件播放" : "兼容播放" : "正在准备"}</span>
+      {mode === "source" && <button className="button" disabled={!ready} onClick={() => { if (playbackRef.current?.useCompatibility()) reveal(); }}>播放不流畅？切换兼容播放</button>}
     </div>}
     {compact && <div className="video-controls" onPointerDown={reveal} onPointerEnter={reveal}>
       <div className="video-seek"><span>{clock(scrub ?? time)}</span><input type="range" aria-label="播放进度" aria-valuetext={`${clock(scrub ?? time)} / ${clock(duration)}`} min="0" max={duration || 1} step="0.1" value={scrub ?? time} disabled={!ready || !duration}

@@ -290,6 +290,11 @@ func patchScreenshot(tx *sql.Tx, hash string, p assetPatch, captured string) err
 	if err := tx.QueryRow("SELECT a.kind,a.name,CASE WHEN "+effectiveHidden+" THEN 'hidden' ELSE 'normal' END FROM assets a WHERE a.id=?", hash).Scan(&kind, &name, &scope); err != nil {
 		return err
 	}
+	if p.Screenshot != nil && !*p.Screenshot {
+		_, err := tx.Exec(`INSERT INTO screenshots(asset_id,enabled,source) VALUES(?,0,'manual')
+ ON CONFLICT(asset_id) DO UPDATE SET enabled=0,game_id=NULL,captured_at='',source='manual'`, hash)
+		return err
+	}
 	if !supportsGameMedia(kind) {
 		return fmt.Errorf("游戏截图支持静态图片和视频")
 	}
@@ -348,26 +353,22 @@ func patchScreenshot(tx *sql.Tx, hash string, p assetPatch, captured string) err
 		return err
 	}
 	set, args := []string{"source='manual'"}, []any{}
-	if p.Screenshot != nil && !*p.Screenshot {
-		set = append(set, "enabled=0", "game_id=NULL", "captured_at=''")
-	} else {
-		if p.CapturedAt == nil {
-			set = append(set, "captured_at=CASE WHEN enabled=0 THEN ? ELSE captured_at END")
-			args = append(args, captured)
+	if p.CapturedAt == nil {
+		set = append(set, "captured_at=CASE WHEN enabled=0 THEN ? ELSE captured_at END")
+		args = append(args, captured)
+	}
+	set = append(set, "enabled=1")
+	if p.GameID != nil {
+		set = append(set, "game_id=?")
+		var game any
+		if *p.GameID != "" {
+			game = *p.GameID
 		}
-		set = append(set, "enabled=1")
-		if p.GameID != nil {
-			set = append(set, "game_id=?")
-			var game any
-			if *p.GameID != "" {
-				game = *p.GameID
-			}
-			args = append(args, game)
-		}
-		if p.CapturedAt != nil {
-			set = append(set, "captured_at=?")
-			args = append(args, *p.CapturedAt)
-		}
+		args = append(args, game)
+	}
+	if p.CapturedAt != nil {
+		set = append(set, "captured_at=?")
+		args = append(args, *p.CapturedAt)
 	}
 	args = append(args, hash)
 	_, err := tx.Exec("UPDATE screenshots SET "+strings.Join(set, ",")+" WHERE asset_id=?", args...)
