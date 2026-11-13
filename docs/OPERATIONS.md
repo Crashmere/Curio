@@ -94,9 +94,11 @@ bin/curio recalculate-screenshot-times --data /path/to/isolated-data
 bin/curio recalculate-screenshot-times --data /path/to/isolated-data --apply
 bin/curio recalculate-screenshot-times --data /path/to/isolated-data --assigned
 bin/curio recalculate-screenshot-times --data /path/to/isolated-data --assigned --apply
+bin/curio recalculate-screenshot-times --data /path/to/isolated-data --missing-only
+bin/curio recalculate-screenshot-times --data /path/to/isolated-data --assigned --missing-only --apply
 ```
 
-Without `--apply`, the command opens the existing catalog read-only and reports `selected`, `changed`, `known`, `unknown` and `applied` without exposing filenames or timestamps. `--apply` replaces selected times, including manually corrected or cleared values. Reads finish before the write transaction; an extraction error aborts the batch, and concurrent changes to a row's time, game assignment or eligibility roll back the entire transaction. No automatic restart or startup recalculation exists.
+Without `--apply`, the command opens the existing catalog read-only and reports `selected`, `changed`, `known`, `unknown` and `applied` without exposing filenames or timestamps. `--missing-only` selects only empty capture times and preserves every nonempty value, including manual corrections. Combine it with `--assigned` for game folders; without `--assigned` it fills only unassigned game media. Without `--missing-only`, `--apply` replaces selected times, including manually corrected or cleared values. Reads finish before the write transaction; an extraction error aborts the batch, and concurrent changes to a row's time, game assignment or eligibility roll back the entire transaction. No automatic restart or startup recalculation exists.
 
 On `nas`, obtain explicit recalculation authorization, preview the selection, and protect only `curio.sqlite` through the shared [temporary database protection](https://github.com/Crashmere/agent-config/blob/main/skills/server-operations/references/retention.md#temporary-upgrade-backups). Hold the shared maintenance and Curio deployment locks, stop only Curio for capture/apply/independent database comparison, then resume it and accept protection after affected-data and health checks pass. Verify exact changes to selected capture times and preservation of all other catalog rows and columns. Keep originals and non-database files in place; missing embedded/source-name timestamps remain unknown rather than adopting NAS upload dates.
 

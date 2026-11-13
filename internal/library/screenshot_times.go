@@ -16,7 +16,7 @@ type CaptureTimeRecalculation struct {
 	Applied  bool `json:"applied"`
 }
 
-func RecalculateScreenshotTimes(ctx context.Context, root string, apply, assigned bool) (CaptureTimeRecalculation, error) {
+func RecalculateScreenshotTimes(ctx context.Context, root string, apply, assigned, missingOnly bool) (CaptureTimeRecalculation, error) {
 	var result CaptureTimeRecalculation
 	path, err := filepath.Abs(filepath.Join(root, "curio.sqlite"))
 	if err != nil {
@@ -43,6 +43,9 @@ func RecalculateScreenshotTimes(ctx context.Context, root string, apply, assigne
 	assignment := "s.game_id IS NULL"
 	if assigned {
 		assignment = "s.game_id IS NOT NULL"
+	}
+	if missingOnly {
+		assignment += " AND s.captured_at=''"
 	}
 	rows, err := db.QueryContext(ctx, `SELECT a.id,a.name,s.captured_at,s.game_id FROM screenshots s JOIN assets a ON a.id=s.asset_id
  WHERE s.enabled=1 AND `+assignment+` AND `+live+` ORDER BY a.id`)
