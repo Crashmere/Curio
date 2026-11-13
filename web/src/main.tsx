@@ -90,6 +90,7 @@ function App() {
   const loadMoreTarget = useRef<HTMLDivElement>(null);
   const selectionBar = useRef<HTMLDivElement>(null);
   const polling = useRef(false);
+  const groupNameRevision = useRef(0);
   const uploadState = useSyncExternalStore(importer.subscribe, importer.snapshot);
   const uploads = uploadState.items.filter(item => item.displayScope === scope);
   const pendingUploads = uploads.filter(item => !["done", "duplicate"].includes(item.state)).length;
@@ -183,7 +184,7 @@ function App() {
   const switchScopeEvent = useEffectEvent(switchScope);
   const selectionKeyEvent = useEffectEvent((event: KeyboardEvent) => {
     if (event.repeat || event.altKey || modal || viewer) return;
-    if (event.key === "Escape" && document.querySelector(".tag-drag-ghost, .tag-action-menu, .group-action-menu")) return;
+    if (event.key === "Escape" && document.querySelector(".tag-drag-ghost, .tag-action-menu, .group-action-menu, .group-name-input")) return;
     if (event.ctrlKey || event.metaKey) {
       if (event.key.toLowerCase() === "a" && !event.shiftKey && assetView && !isTextInput(event.target)) {
         event.preventDefault();
@@ -435,6 +436,7 @@ function App() {
     if (polling.current || galleryRequest.current || (view === "jobs" && loadingMore)) return;
     polling.current = true;
     const token = pageToken.current;
+    const nameRevision = groupNameRevision.current;
     const polledIds = [...new Set([...assets, ...Object.values(groupPages).flatMap(page => page.items)].map(asset => asset.id))].slice(0, 2000);
     const signal = AbortSignal.timeout(15000);
     try {
@@ -449,7 +451,7 @@ function App() {
         api<{ items: Game[] }>(scoped("games", scope), undefined, undefined, signal)
       ]);
       const prepared = await prepareGroupMedia(assetContent || [...assets, ...Object.values(groupPages).flatMap(page => page.items)], groupList.items, assetPath(), signal);
-      if (token !== pageToken.current) return;
+      if (token !== pageToken.current || nameRevision !== groupNameRevision.current) return;
       setInfo(information); setTags(tagList.items || []); setCollections(collectionList.items || []);
       setGames(gameList.items);
       setGroups(groupList.items);
@@ -598,20 +600,23 @@ function App() {
       if (galleryRequest.current === controller) { galleryRequest.current = null; setBusy(false); }
     }
   }
-  async function renameGroup(group: MediaGroup, name: string) {
-    const controller = new AbortController();
-    galleryRequest.current = controller;
-    const token = ++pageToken.current;
-    setBusy(true);
+  async function saveGroupName(group: MediaGroup, name: string) {
+    const token = pageToken.current;
+    groupNameRevision.current++;
     try {
       await api(scoped(`collections/${collectionId}/groups/${group.id}`, scope), { name }, "PATCH");
-      if (controller.signal.aborted || token !== pageToken.current) return;
+      if (token !== pageToken.current) return false;
       setGroups(previous => previous.map(item => item.id === group.id ? { ...item, name } : item));
-      setModal(null);
-      notify(name ? "分组名称已保存" : "已清除分组名称");
+      return true;
     } finally {
-      if (galleryRequest.current === controller) { galleryRequest.current = null; setBusy(false); }
+      // In-flight polling must not restore a name captured before this save.
+      groupNameRevision.current++;
     }
+  }
+  async function renameGroup(group: MediaGroup, name: string) {
+    if (!await saveGroupName(group, name)) return;
+    setModal(null);
+    notify(name ? "分组名称已保存" : "已清除分组名称");
   }
   async function selectAll(toggle = true) {
     if (loading || loadingMore || selectingAll || busy || !total || error) return;
@@ -709,7 +714,7 @@ function App() {
     const index = galleryIndices.get(asset.id) ?? -1;
     return <MediaCard key={asset.id} asset={asset} retryKey={refresh} tagId={tagId} collectionId={collectionId} selected={selected.has(asset.id)} selecting={selecting || !!selected.size} active={groupOpen !== false} loading={groupOpen === undefined ? "lazy" : "eager"} open={event => { if (selecting || selected.size || event.ctrlKey || event.metaKey || event.shiftKey) select(asset, index, event.shiftKey); else openViewer(asset); }} select={range => select(asset, index, range)} tagDragKey={tagDragKey} tagBusy={tagBusy} changeTag={(id, tag, remove) => void changeTag(id, tag, remove)} />;
   }
-  const gallery = collectionId ? <CollectionGallery entries={entries} expanded={expandedGroups} formation={groupFormation} selected={selected} selecting={selecting || !!selected.size} busy={busy || loading || selectingAll} render={renderMedia} toggle={toggleGroup} selectGroup={selectGroup} add={group => void editGroup(group, "add")} rename={group => setModal({ type: "group", group })} dissolve={group => void editGroup(group, "dissolve")} /> : <div className={`gallery ${view === "screenshots" ? "screenshot-gallery" : ""} ${selecting ? "selecting" : ""}`}>{assets.map(asset => renderMedia(asset))}</div>;
+  const gallery = collectionId ? <CollectionGallery entries={entries} expanded={expandedGroups} formation={groupFormation} selected={selected} selecting={selecting || !!selected.size} busy={busy || loading || selectingAll} render={renderMedia} toggle={toggleGroup} selectGroup={selectGroup} add={group => void editGroup(group, "add")} rename={group => setModal({ type: "group", group })} saveName={saveGroupName} dissolve={group => void editGroup(group, "dissolve")} /> : <div className={`gallery ${view === "screenshots" ? "screenshot-gallery" : ""} ${selecting ? "selecting" : ""}`}>{assets.map(asset => renderMedia(asset))}</div>;
   const indexSearch = search.trim().toLocaleLowerCase();
   const indexEntities = (view === "collections" ? collections : tags).filter(entity => entity.name.toLocaleLowerCase().includes(indexSearch));
   return <div className={`app ${scope === "hidden" ? "hidden-mode" : ""} ${assetView && (selecting || selected.size) ? "has-selection" : ""}`}>

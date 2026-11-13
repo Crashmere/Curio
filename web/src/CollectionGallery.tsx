@@ -1,6 +1,6 @@
 import { CSSProperties, ReactNode, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, Image, Layers3, MoreHorizontal, Pencil, Plus, Ungroup } from "lucide-react";
+import { Check, ChevronDown, Image, Layers3, MoreHorizontal, Pencil, Plus, RotateCw, Ungroup } from "lucide-react";
 import { Asset, AssetPage, base, MediaGroup } from "./api";
 import { GroupFormation, MasonryGallery } from "./MasonryGallery";
 
@@ -23,11 +23,12 @@ export function collectionEntries(assets: Asset[], groups: MediaGroup[], pages: 
   return entries;
 }
 
-export function CollectionGallery({ entries, expanded, formation, selected, selecting, busy, render, toggle, selectGroup, add, rename, dissolve }: {
+export function CollectionGallery({ entries, expanded, formation, selected, selecting, busy, render, toggle, selectGroup, add, rename, saveName, dissolve }: {
   entries: GalleryEntry[]; expanded: Set<string>; formation?: GroupFormation;
   selected: Set<string>; selecting: boolean; busy: boolean; render: (asset: Asset, groupOpen?: boolean) => ReactNode;
   toggle: (group: MediaGroup) => void; selectGroup: (group: MediaGroup) => void;
   add: (group: MediaGroup) => void; rename: (group: MediaGroup) => void; dissolve: (group: MediaGroup) => void;
+  saveName: (group: MediaGroup, name: string) => Promise<boolean>;
 }) {
   const [menu, setMenu] = useState<{ id: string; left: number; top: number }>();
   const menuRoot = useRef<HTMLDivElement>(null);
@@ -62,7 +63,14 @@ export function CollectionGallery({ entries, expanded, formation, selected, sele
         <div className="group-stack" aria-hidden="true">{group.assetIds.slice(0, 3).reverse().map((id, index, ids) => <span className="group-sheet" key={id} style={{ "--sheet": ids.length - index - 1 } as CSSProperties}><Image size={24} strokeWidth={1.2} /><img src={`${base}media/${id}/thumbnail`} alt="" loading="eager" decoding="sync" onError={event => { event.currentTarget.style.opacity = "0"; }} /></span>)}</div>
       </button>
       <header className="group-heading">
-        <button className="group-toggle" onClick={() => toggle(group)} aria-label={`${open ? "收起" : "展开"}${label}`} aria-expanded={open} aria-controls={`group-content-${group.id}`}>
+        <div className="group-toggle" hidden={!open}>
+          <Layers3 size={16} /><div className="group-heading-copy group-heading-editable">
+            <GroupName group={group} busy={busy} save={saveName} />
+            <small>{count} 个素材{selectedCount > 0 && ` · 已选 ${selectedCount}`}</small>
+          </div>
+          <button className="icon-button group-fold-toggle" title="收起分组" aria-label={`收起${label}`} aria-expanded={true} aria-controls={`group-content-${group.id}`} onClick={() => toggle(group)}><ChevronDown size={14} className="group-chevron" /></button>
+        </div>
+        <button className="group-toggle" hidden={open} onClick={() => toggle(group)} aria-label={`展开${label}`} aria-expanded={false} aria-controls={`group-content-${group.id}`}>
           <Layers3 size={16} /><span className="group-heading-copy"><strong title={label}>{label}</strong><small>{count} 个素材{selectedCount > 0 && ` · 已选 ${selectedCount}`}</small></span><ChevronDown size={14} className="group-chevron" />
         </button>
         <div className="group-actions">
@@ -88,4 +96,35 @@ export function CollectionGallery({ entries, expanded, formation, selected, sele
       <button className="button subtle danger" role="menuitem" disabled={busy} onClick={() => { setMenu(undefined); dissolve(menuGroup); }}><Ungroup size={15} />解散分组，保留素材</button>
     </div>, document.body)}
   </>;
+}
+
+function GroupName({ group, busy, save }: { group: MediaGroup; busy: boolean; save: (group: MediaGroup, name: string) => Promise<boolean> }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(group.name);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const cancelled = useRef(false);
+  async function commit() {
+    setEditing(false);
+    if (cancelled.current || saving) return;
+    const name = draft.trim();
+    if (name === group.name) { setError(""); return; }
+    setSaving(true); setError("");
+    try { await save(group, name); }
+    catch (error) { setError(error instanceof Error ? error.message : String(error)); }
+    finally { setSaving(false); }
+  }
+  const label = (saving || error ? draft.trim() : group.name) || "未命名分组";
+  return <div className="group-name">
+    {editing ? <input className="group-name-input" aria-label="分组名称" value={draft} maxLength={80} placeholder="未命名分组" autoFocus onFocus={event => event.currentTarget.select()} onChange={event => setDraft(event.target.value)} onBlur={() => void commit()} onKeyDown={event => {
+      if (event.nativeEvent.isComposing || event.keyCode === 229 || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); }
+      else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelled.current = true; setError(""); setDraft(group.name); setEditing(false); }
+    }} /> : <button className="group-name-text" aria-label={`编辑分组名称：${label}`} title="点击编辑分组名称" disabled={busy || saving} onClick={() => {
+      cancelled.current = false;
+      if (!error) setDraft(group.name);
+      setEditing(true);
+    }}><strong>{label}</strong>{saving && <RotateCw size={12} className="spin" />}</button>}
+    {error && <span className="group-name-error" role="alert">保存失败：{error}，点击名称重试</span>}
+  </div>;
 }
