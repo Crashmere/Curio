@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, Folder, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Tag, Trash2 } from "lucide-react";
+import { Folder, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Tag, Trash2 } from "lucide-react";
 import { Entity } from "./api";
 import { Empty } from "./components";
 
@@ -13,6 +13,15 @@ export function EntityGrid({ items, kind, searching, busy, open, edit, rename, p
   const menuRoot = useRef<HTMLDivElement>(null);
   const menuSource = useRef<HTMLButtonElement | null>(null);
   const menuEntity = items.find(entity => entity.id === menu?.id);
+  useLayoutEffect(() => {
+    if (!menuRoot.current || !menuSource.current) return;
+    const source = menuSource.current.getBoundingClientRect();
+    const { width, height } = menuRoot.current.getBoundingClientRect();
+    const left = Math.max(12, Math.min(source.right - width, innerWidth - width - 12));
+    const below = source.bottom + 6;
+    const top = below + height <= innerHeight - 12 ? below : Math.max(12, source.top - height - 6);
+    setMenu(current => current && (current.left !== left || current.top !== top) ? { ...current, left, top } : current);
+  }, [menu?.id, menuEntity]);
   useEffect(() => {
     if (!menu) return;
     const close = () => setMenu(undefined);
@@ -47,17 +56,18 @@ export function EntityGrid({ items, kind, searching, busy, open, edit, rename, p
       if (menu?.id === entity.id) { setMenu(undefined); return; }
       menuSource.current = event.currentTarget;
       const rect = event.currentTarget.getBoundingClientRect();
-      setMenu({ id: entity.id, left: Math.max(12, Math.min(rect.right - 240, innerWidth - 252)), top: Math.max(12, Math.min(rect.bottom + 6, innerHeight - 216)) });
-    }}><ChevronDown size={17} /></button> : <>
+      setMenu({ id: entity.id, left: rect.right, top: rect.bottom + 6 });
+    }}><MoreHorizontal size={18} /></button> : <>
       <button className="icon-button" aria-label={`编辑 ${entity.name}`} title="编辑" onClick={() => edit(entity)}><MoreHorizontal size={17} /></button>
       <button className="icon-button" aria-label={`移除 ${entity.name}`} title="移除" onClick={() => remove(entity)}><Trash2 size={15} /></button>
     </>}</div>
   </article>)}</div>
     {menu && menuEntity && createPortal(<div ref={menuRoot} className="collection-action-menu" style={{ left: menu.left, top: menu.top }} role="menu" aria-label={`收藏集操作：${menuEntity.name}`}>
-      <strong>{menuEntity.name}</strong>
-      <button className="button subtle" role="menuitem" disabled={busy} onClick={() => { setMenu(undefined); rename(menuEntity); }}><Pencil size={15} />重命名</button>
-      <button className="button subtle" role="menuitem" disabled={busy} onClick={() => { setMenu(undefined); pin(menuEntity); }}>{menuEntity.pinned ? <PinOff size={15} /> : <Pin size={15} />}{menuEntity.pinned ? "取消固定" : "固定到侧栏"}</button>
-      <button className="button subtle danger collection-menu-delete" role="menuitem" disabled={busy} onClick={() => { setMenu(undefined); remove(menuEntity); }}><Trash2 size={15} />删除收藏集</button>
+      <div className="collection-menu-heading" title={menuEntity.name}>{menuEntity.name}</div>
+      <button className="collection-menu-item" role="menuitem" disabled={busy} onClick={() => { setMenu(undefined); rename(menuEntity); }}><Pencil size={15} />重命名</button>
+      <button className="collection-menu-item" role="menuitem" disabled={busy} onClick={() => { setMenu(undefined); pin(menuEntity); }}>{menuEntity.pinned ? <PinOff size={15} /> : <Pin size={15} />}{menuEntity.pinned ? "取消固定" : "固定到侧栏"}</button>
+      <div className="collection-menu-divider" role="separator" />
+      <button className="collection-menu-item collection-menu-delete" role="menuitem" disabled={busy} onClick={() => { setMenu(undefined); remove(menuEntity); }}><Trash2 size={15} />删除收藏集</button>
     </div>, document.body)}
   </>;
 }
