@@ -11,7 +11,7 @@ The runtime identity is `curio`; restricted local releases use `curio-deploy`. S
 | `/opt/curio/bin/curio` | Locally built Go program with embedded frontend and image worker |
 | `/opt/curio/bin/deploy-{ssh,release}.sh` | Root-maintained restricted publication entry points |
 | `/opt/curio/config/` | Curio systemd unit, Nginx location, Portal declaration and source receipt |
-| `/opt/curio/data/curio.sqlite` | Catalog, tags, collections, unnamed collection groups, games, screenshot metadata, memberships, source observations, upload hints, jobs and deletion intent |
+| `/opt/curio/data/curio.sqlite` | Catalog, tags, collections, optionally named collection groups, games, screenshot metadata, memberships, source observations, upload hints, jobs and deletion intent |
 | `/opt/curio/data/assets/` | Immutable SHA-256 originals until confirmed permanent deletion |
 | `/opt/curio/data/derived/` | Rebuildable still thumbnails, transparent image previews and safe SVG raster previews |
 | `/run/curio/playback/` | Bounded tmpfs scratch and CUDA kernel cache; no stored whole-video playback copies or recovery coverage |
@@ -49,6 +49,8 @@ The shared HTTPS servers on `nas`, `ali` and `vps` keep `http2_body_preread_size
 Only exact anonymous GET/HEAD requests for `favicon.svg` and `apple-touch-icon.png` bypass Portal authentication. The opaque 180-by-180 PNG is generated from the retained graphics source by `scripts/icons.sh`. Business JavaScript, pages, APIs and uploaded media remain authenticated; no application `add_header` overrides shared cookie renewal. The UI blocks ordinary Tab/Shift+Tab focus traversal, except for the user-requested toggle between new-game name and Steam ID fields. It suppresses focus-only decoration while preserving text input, composition and modifier shortcuts.
 
 Normal and hidden modes use the same data and recovery rules. New page loads default to normal; the current mode is not persisted. Hidden flags are catalog metadata, not a password or encryption boundary.
+
+Group naming adds `collection_groups.name TEXT NOT NULL DEFAULT ''` on first open of an older catalog. This additive migration requires authorization before its first release on `nas` and isolated validation of existing groups and memberships. It does not rewrite existing metadata or originals and needs no temporary deletion/overwrite backup selection. Older programs ignore the added column and can still create unnamed groups; program rollback preserves stored names but does not display them.
 
 Game screenshot activation adds catalog tables and performs one transactional filename-recognition pass over existing assets and source observations. It does not rewrite original files, existing asset rows or memberships. The `catalog_features` marker prevents repeated backfills; manual screenshot corrections survive restarts and duplicate imports. Rehearse this migration on isolated data and obtain migration authorization before its first production release on `nas`. No new runtime, data root or external game service is required.
 

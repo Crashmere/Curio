@@ -4,13 +4,28 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 )
 
 type mediaGroup struct {
 	ID       string   `json:"id"`
+	Name     string   `json:"name"`
 	AssetIDs []string `json:"assetIds"`
+}
+
+func ensureGroupNames(db *sql.DB) error {
+	var exists bool
+	if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM pragma_table_info('collection_groups') WHERE name='name')").Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	_, err := db.Exec("ALTER TABLE collection_groups ADD COLUMN name TEXT NOT NULL DEFAULT ''")
+	return err
 }
 
 func (l *Library) listGroups(w http.ResponseWriter, r *http.Request) {
@@ -32,7 +47,7 @@ func (l *Library) listGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	args = append([]any{collectionID}, args...)
-	rows, err := l.DB.Query("SELECT g.group_id,a.id FROM assets a JOIN collection_group_assets g ON g.asset_id=a.id AND g.collection_id=?"+where+" ORDER BY "+order, args...)
+	rows, err := l.DB.Query("SELECT g.group_id,cg.name,a.id FROM assets a JOIN collection_group_assets g ON g.asset_id=a.id AND g.collection_id=? JOIN collection_groups cg ON cg.id=g.group_id"+where+" ORDER BY "+order, args...)
 	if err != nil {
 		fail(w, 500, err)
 		return
@@ -41,8 +56,8 @@ func (l *Library) listGroups(w http.ResponseWriter, r *http.Request) {
 	items := []mediaGroup{}
 	indices := map[string]int{}
 	for rows.Next() {
-		var groupID, assetID string
-		if err = rows.Scan(&groupID, &assetID); err != nil {
+		var groupID, name, assetID string
+		if err = rows.Scan(&groupID, &name, &assetID); err != nil {
 			fail(w, 500, err)
 			return
 		}
@@ -50,7 +65,7 @@ func (l *Library) listGroups(w http.ResponseWriter, r *http.Request) {
 		if !exists {
 			index = len(items)
 			indices[groupID] = index
-			items = append(items, mediaGroup{ID: groupID, AssetIDs: []string{}})
+			items = append(items, mediaGroup{ID: groupID, Name: name, AssetIDs: []string{}})
 		}
 		items[index].AssetIDs = append(items[index].AssetIDs, assetID)
 	}
@@ -105,14 +120,15 @@ func moveGroupMembers(tx *sql.Tx, collectionID, groupID string, add, remove []st
 
 func (l *Library) createGroup(w http.ResponseWriter, r *http.Request) {
 	var p struct {
-		IDs []string `json:"ids"`
+		IDs  []string `json:"ids"`
+		Name string   `json:"name"`
 	}
 	if !decode(w, r, &p) {
 		return
 	}
 	collectionID := chi.URLParam(r, "id")
 	groupID := id()
-	err := l.editGroup(collectionID, groupID, requestScope(r.URL.Query()), p.IDs, nil, true)
+	err := l.editGroup(collectionID, groupID, requestScope(r.URL.Query()), p.IDs, nil, true, &p.Name)
 	if err != nil {
 		fail(w, 400, err)
 		return
@@ -120,12 +136,22 @@ func (l *Library) createGroup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, map[string]string{"id": groupID})
 }
 
-func (l *Library) editGroup(collectionID, groupID, scope string, add, remove []string, create bool) error {
+func (l *Library) editGroup(collectionID, groupID, scope string, add, remove []string, create bool, name *string) error {
 	if !validID.MatchString(collectionID) || (groupID != "" && !validID.MatchString(groupID)) || (groupID == "" && (create || len(add) > 0)) {
 		return fmt.Errorf("分组编号无效")
 	}
 	if len(add)+len(remove) > 2000 {
 		return fmt.Errorf("每次最多修改 2000 个素材")
+	}
+	if name != nil {
+		if groupID == "" {
+			return fmt.Errorf("请指定要命名的分组")
+		}
+		trimmed := strings.TrimSpace(*name)
+		if utf8.RuneCountInString(trimmed) > 80 {
+			return fmt.Errorf("分组名称最多 80 个字符")
+		}
+		name = &trimmed
 	}
 	tx, err := l.DB.Begin()
 	if err != nil {
@@ -166,8 +192,15 @@ func (l *Library) editGroup(collectionID, groupID, scope string, add, remove []s
 	if err != nil {
 		return err
 	}
-	if err = moveGroupMembers(tx, collectionID, groupID, add, remove); err != nil {
-		return err
+	if name != nil {
+		if _, err = tx.Exec("UPDATE collection_groups SET name=? WHERE id=? AND collection_id=?", *name, groupID, collectionID); err != nil {
+			return err
+		}
+	}
+	if len(add)+len(remove) > 0 {
+		if err = moveGroupMembers(tx, collectionID, groupID, add, remove); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -176,11 +209,12 @@ func (l *Library) updateGroup(w http.ResponseWriter, r *http.Request) {
 	var p struct {
 		AddIDs    []string `json:"addIds"`
 		RemoveIDs []string `json:"removeIds"`
+		Name      *string  `json:"name"`
 	}
 	if !decode(w, r, &p) {
 		return
 	}
-	if err := l.editGroup(chi.URLParam(r, "id"), chi.URLParam(r, "group"), requestScope(r.URL.Query()), p.AddIDs, p.RemoveIDs, false); err != nil {
+	if err := l.editGroup(chi.URLParam(r, "id"), chi.URLParam(r, "group"), requestScope(r.URL.Query()), p.AddIDs, p.RemoveIDs, false, p.Name); err != nil {
 		fail(w, 400, err)
 		return
 	}

@@ -9,6 +9,7 @@ import { MediaCard } from "./MediaCard";
 import { TagChip } from "./TagChip";
 import { CollectionGallery, collectionEntries } from "./CollectionGallery";
 import { GroupFormation } from "./MasonryGallery";
+import { GroupEditor } from "./GroupEditor";
 import { loadAssetIds, prepareGroupMedia } from "./groupMedia";
 import { EntityPicker } from "./EntityPicker";
 import { navigationPath, readNavigation } from "./navigation";
@@ -19,7 +20,7 @@ import "./style.css";
 
 type Filter = { kind: string; format: string; aspect: string; minWidth: string; minHeight: string; maxWidth: string; maxHeight: string; minDuration: string; maxDuration: string; minSize: string; maxSize: string };
 const emptyFilter: Filter = { kind: "", format: "", aspect: "", minWidth: "", minHeight: "", maxWidth: "", maxHeight: "", minDuration: "", maxDuration: "", minSize: "", maxSize: "" };
-type Modal = { type: "upload" } | { type: "game"; game?: Game } | { type: "remove-game"; game: Game } | { type: "screenshots"; ids: string[] } | { type: "entity"; kind: "tags" | "collections"; entity?: Entity } | { type: "organize"; ids: string[] } | { type: "purge"; ids: string[] } | { type: "remove-entity"; kind: "tags" | "collections"; entity: Entity };
+type Modal = { type: "upload" } | { type: "group"; group?: MediaGroup; ids?: string[] } | { type: "game"; game?: Game } | { type: "remove-game"; game: Game } | { type: "screenshots"; ids: string[] } | { type: "entity"; kind: "tags" | "collections"; entity?: Entity } | { type: "organize"; ids: string[] } | { type: "purge"; ids: string[] } | { type: "remove-entity"; kind: "tags" | "collections"; entity: Entity };
 const viewLabels: Record<View, string> = { all: "全部素材", inbox: "未整理", starred: "星标", collections: "收藏集", tags: "标签", trash: "回收站", jobs: "任务中心", games: "游戏截图", screenshots: "全部游戏截图" };
 type Toast = { message: string; undo?: () => Promise<void> };
 type UploadTarget = { scope: Scope; displayScope?: Scope; tagIds: string[]; collectionIds: string[]; gameId: string; screenshot: boolean; expectedHash?: string };
@@ -182,7 +183,7 @@ function App() {
   const switchScopeEvent = useEffectEvent(switchScope);
   const selectionKeyEvent = useEffectEvent((event: KeyboardEvent) => {
     if (event.repeat || event.altKey || modal || viewer) return;
-    if (event.key === "Escape" && document.querySelector(".tag-drag-ghost, .tag-action-menu")) return;
+    if (event.key === "Escape" && document.querySelector(".tag-drag-ghost, .tag-action-menu, .group-action-menu")) return;
     if (event.ctrlKey || event.metaKey) {
       if (event.key.toLowerCase() === "a" && !event.shiftKey && assetView && !isTextInput(event.target)) {
         event.preventDefault();
@@ -557,9 +558,9 @@ function App() {
     } catch (error) { if (!controller.signal.aborted) notify(error instanceof Error ? error.message : String(error)); }
     finally { if (selectionRequest.current === controller) { selectionRequest.current = null; setSelectingAll(false); } }
   }
-  async function editGroup(group: MediaGroup | null, action: "create" | "add" | "remove" | "dissolve") {
+  async function editGroup(group: MediaGroup | null, action: "create" | "add" | "remove" | "dissolve", name?: string, createIds?: string[]) {
     if (busy || loading || selectingAll) return;
-    const ids = action === "create" ? selectedUngroupedIds : [...selected];
+    const ids = action === "create" ? createIds ?? selectedUngroupedIds : [...selected];
     if (action !== "dissolve" && (!ids.length || ids.length > 2000)) return;
     if (action === "create" && ids.length < 2) return;
     const controller = new AbortController();
@@ -570,10 +571,11 @@ function App() {
     let saved = false;
     try {
       const path = `collections/${collectionId}/groups${group ? `/${group.id}` : ""}`;
-      const body = action === "create" ? { ids } : action === "add" ? { addIds: ids } : action === "remove" ? { removeIds: ids } : undefined;
+      const body = action === "create" ? { ids, name } : action === "add" ? { addIds: ids } : action === "remove" ? { removeIds: ids } : undefined;
       const result = await api<{ id?: string }>(scoped(path, scope), body, action === "create" ? "POST" : action === "dissolve" ? "DELETE" : "PATCH");
       saved = true;
       if (controller.signal.aborted || token !== pageToken.current) return;
+      if (action === "create") setModal(null);
       // Group edits change gallery placement, not memberships or library counters.
       await reloadGallery(controller.signal, token);
       if (controller.signal.aborted || token !== pageToken.current) return;
@@ -587,10 +589,26 @@ function App() {
       }
       notify(({ create: "已组成一组", add: "已加入这组", remove: "已移出分组，素材仍在收藏集中", dissolve: "分组已解散，全部素材已保留" })[action]);
     } catch (error) {
+      if (action === "create" && !saved) throw error;
       if (!controller.signal.aborted && token === pageToken.current) {
         if (saved) exitSelection();
         notify(saved ? "分组已保存，界面同步失败，请点击刷新" : error instanceof Error ? error.message : String(error));
       }
+    } finally {
+      if (galleryRequest.current === controller) { galleryRequest.current = null; setBusy(false); }
+    }
+  }
+  async function renameGroup(group: MediaGroup, name: string) {
+    const controller = new AbortController();
+    galleryRequest.current = controller;
+    const token = ++pageToken.current;
+    setBusy(true);
+    try {
+      await api(scoped(`collections/${collectionId}/groups/${group.id}`, scope), { name }, "PATCH");
+      if (controller.signal.aborted || token !== pageToken.current) return;
+      setGroups(previous => previous.map(item => item.id === group.id ? { ...item, name } : item));
+      setModal(null);
+      notify(name ? "分组名称已保存" : "已清除分组名称");
     } finally {
       if (galleryRequest.current === controller) { galleryRequest.current = null; setBusy(false); }
     }
@@ -691,7 +709,7 @@ function App() {
     const index = galleryIndices.get(asset.id) ?? -1;
     return <MediaCard key={asset.id} asset={asset} retryKey={refresh} tagId={tagId} collectionId={collectionId} selected={selected.has(asset.id)} selecting={selecting || !!selected.size} active={groupOpen !== false} loading={groupOpen === undefined ? "lazy" : "eager"} open={event => { if (selecting || selected.size || event.ctrlKey || event.metaKey || event.shiftKey) select(asset, index, event.shiftKey); else openViewer(asset); }} select={range => select(asset, index, range)} tagDragKey={tagDragKey} tagBusy={tagBusy} changeTag={(id, tag, remove) => void changeTag(id, tag, remove)} />;
   }
-  const gallery = collectionId ? <CollectionGallery entries={entries} expanded={expandedGroups} formation={groupFormation} selected={selected} selecting={selecting || !!selected.size} busy={busy || loading || selectingAll} render={renderMedia} toggle={toggleGroup} selectGroup={selectGroup} add={group => void editGroup(group, "add")} dissolve={group => void editGroup(group, "dissolve")} /> : <div className={`gallery ${view === "screenshots" ? "screenshot-gallery" : ""} ${selecting ? "selecting" : ""}`}>{assets.map(asset => renderMedia(asset))}</div>;
+  const gallery = collectionId ? <CollectionGallery entries={entries} expanded={expandedGroups} formation={groupFormation} selected={selected} selecting={selecting || !!selected.size} busy={busy || loading || selectingAll} render={renderMedia} toggle={toggleGroup} selectGroup={selectGroup} add={group => void editGroup(group, "add")} rename={group => setModal({ type: "group", group })} dissolve={group => void editGroup(group, "dissolve")} /> : <div className={`gallery ${view === "screenshots" ? "screenshot-gallery" : ""} ${selecting ? "selecting" : ""}`}>{assets.map(asset => renderMedia(asset))}</div>;
   const indexSearch = search.trim().toLocaleLowerCase();
   const indexEntities = (view === "collections" ? collections : tags).filter(entity => entity.name.toLocaleLowerCase().includes(indexSearch));
   return <div className={`app ${scope === "hidden" ? "hidden-mode" : ""} ${assetView && (selecting || selected.size) ? "has-selection" : ""}`}>
@@ -739,7 +757,7 @@ function App() {
         </>}
         {error && contentReady && <div className="inline-error" role="alert">更新失败，仍显示上次内容：{error} <button className="button" onClick={changed}>重试</button></div>}
         {error && !contentReady ? <Empty icon={<CircleAlert size={30} />} title="暂时无法读取素材库" description={error}><button className="button" onClick={changed}><RotateCw size={15} />重试</button></Empty> : !contentReady && assetView ? <div className="skeleton-gallery" style={{ "--tile-width": `${density}px` } as CSSProperties}>{Array.from({ length: 12 }, (_, index) => <div key={index} style={{ aspectRatio: [0.85, 1.25, 1, 0.68][index % 4] }} />)}</div> : assetView ? assets.length ? <>
-          {collectionId && !groups.length && <p className="group-help"><Layers3 size={13} />选中多个素材，即可组成一组，无需命名。</p>}
+          {collectionId && !groups.length && <p className="group-help"><Layers3 size={13} />选中多个素材，即可组成一组，也可以添加分组名称。</p>}
           <div className="gallery-results" aria-busy={loading} inert={loading || !!error} style={{ "--tile-width": `${density}px` } as CSSProperties}>{gallery}</div>
           {hasMore && <div className="load-more" ref={loadMoreTarget}><button className="button" onClick={() => void loadMore()} disabled={loading || !!error || loadingMore || selectingAll || busy}>{loadingMore && <RotateCw size={15} className="spin" />}{loadingMore ? "正在加载…" : loadMoreFailed ? "重试加载" : "加载更多"} {!collectionId && <span>{assets.length} / {total}</span>}</button></div>}
         </> : <Empty icon={view === "trash" ? <Trash2 size={30} /> : search || activeFilters.length ? <Search size={30} /> : view === "screenshots" ? <Gamepad2 size={32} /> : view === "inbox" ? <Inbox size={30} /> : view === "starred" ? <Star size={30} /> : <Image size={32} strokeWidth={1.3} />} title={search || activeFilters.length ? "没有找到匹配的素材" : view === "trash" ? "回收站是空的" : view === "screenshots" ? "这里还没有游戏截图" : view === "inbox" ? "没有待整理的素材" : view === "starred" ? "还没有星标素材" : scope === "hidden" ? "隐藏模式暂无素材" : activeEntity ? "这里还没有素材" : "开始你的视觉收藏"} description={search || activeFilters.length ? "试试其他关键词，或减少筛选条件。" : view === "screenshots" ? "在这里上传图片或录像；Steam 文件名自动分组，其他来源进入未指定游戏。" : view === "trash" ? "移除的素材会先保留在这里，可以随时恢复。" : view === "starred" ? "给常用或喜欢的素材添加星标，方便再次找到。" : view === "inbox" ? "没有标签、收藏集且未归入游戏截图的素材会显示在这里，可通过整理功能归类。" : "图标、头像、壁纸、梗图、截图和录像，都可以收集到这里。"}>{!["trash", "starred"].includes(view) && !search && !activeFilters.length && <button className="button primary" onClick={() => setModal({ type: "upload" })}><Plus size={17} />收集素材</button>}</Empty> : view === "games" ? <GamesGrid games={games} query={search} open={game => navigate("screenshots", "", "", "push", game.id)} edit={game => setModal({ type: "game", game })} remove={game => setModal({ type: "remove-game", game })} create={() => setModal({ type: "game" })} /> : view === "collections" || view === "tags" ? <EntityGrid items={indexEntities} searching={!!indexSearch} kind={view} open={entity => navigate("all", view === "tags" ? entity.id : "", view === "collections" ? entity.id : "")} edit={entity => setModal({ type: "entity", kind: view, entity })} remove={entity => setModal({ type: "remove-entity", kind: view, entity })} create={() => setModal({ type: "entity", kind: view })} /> : <Jobs items={contentReady ? jobs : []} filter={jobFilter} changeFilter={setJobFilter} total={jobTotal} nextOffset={jobNextOffset} loading={loading} loadingMore={loadingMore} loadMore={() => void loadMoreJobs()} retry={retry} open={async id => { try { openViewer(await api<Asset>(scoped(`assets/${id}`, scope))); } catch (error) { notify(error instanceof Error ? error.message : String(error)); } }} />}
@@ -751,11 +769,12 @@ function App() {
       <button className="button subtle" title="全选当前筛选结果，包含尚未加载的素材" disabled={loading || loadingMore || selectingAll || busy || !total || !!error} onClick={() => void selectAll()}>{selectingAll ? <><RotateCw size={14} className="spin" />正在全选</> : allSelected ? "取消全选" : "全选"}</button>
       {!!selected.size && !selectingAll && <><span className="selection-divider" />{view !== "trash" ? <>
         {selectedSupportGames && <button className="button" disabled={busy} onClick={() => setModal({ type: "screenshots", ids: [...selected] })}><Gamepad2 size={15} />指定游戏</button>}
-        {collectionId && <><button className="button group-create" title="将所选未分组素材组成一组，已分组素材会被忽略" disabled={busy || loading || selectedUngroupedIds.length < 2 || selected.size > 2000} onClick={() => void editGroup(null, "create")}><Group size={15} />组成一组</button>{selectedInGroups && <button className="button" disabled={busy || loading} onClick={() => void editGroup(null, "remove")}><Ungroup size={15} />移出分组</button>}</>}
+        {collectionId && <><button className="button group-create" title="将所选未分组素材组成一组，已分组素材会被忽略" disabled={busy || loading || selectedUngroupedIds.length < 2 || selected.size > 2000} onClick={() => setModal({ type: "group", ids: selectedUngroupedIds })}><Group size={15} />组成一组</button>{selectedInGroups && <button className="button" disabled={busy || loading} onClick={() => void editGroup(null, "remove")}><Ungroup size={15} />移出分组</button>}</>}
         <button className="button" disabled={busy} onClick={() => setModal({ type: "organize", ids: [...selected] })}><Tag size={15} /><span>整理</span></button>{(collectionId || tagId) && <button className="button" title="仅移除当前关联，保留素材与其他标签、收藏集" disabled={busy} onClick={() => void patch([...selected], collectionId ? { removeCollectionIds: [collectionId] } : { removeTagIds: [tagId] }, collectionId ? "已移出当前收藏集" : "已移出当前标签")}><Unlink size={15} />{collectionId ? "移出当前收藏集" : "移出当前标签"}</button>}<button className="icon-button" title={selectedAreStarred ? "取消星标" : "添加星标"} aria-label={selectedAreStarred ? "取消星标" : "添加星标"} disabled={busy} onClick={() => void patch([...selected], { starred: !selectedAreStarred }, "星标已更新")}><Star size={17} /></button><button className="icon-button" title="单独隐藏" aria-label="单独隐藏" disabled={busy} onClick={() => void patch([...selected], { hidden: true }, "已标记隐藏")}><EyeOff size={17} /></button><button className="icon-button" title="取消单独隐藏" aria-label="取消单独隐藏" disabled={busy} onClick={() => void patch([...selected], { hidden: false }, "已取消单独隐藏；标签或收藏集的隐藏仍会生效")}><Eye size={17} /></button><button className="icon-button" title="打包下载" aria-label="打包下载" disabled={busy} onClick={downloadSelected}><Download size={17} /></button><button className="icon-button danger" title="移入回收站" aria-label="移入回收站" disabled={busy} onClick={() => void patch([...selected], { trash: true }, "已移入回收站")}><Trash2 size={17} /></button></> : <><button className="button" disabled={busy} onClick={() => void patch([...selected], { trash: false }, "素材已恢复")}><RotateCw size={15} />恢复</button><button className="button danger" disabled={busy} onClick={() => setModal({ type: "purge", ids: [...selected] })}><Trash2 size={15} />永久删除</button></>}</>}
     </div>}
     {viewer && <Viewer asset={viewer} scope={scope} tags={tags} collections={collections} games={games} close={closeViewer} previous={viewerIndex > 0 ? () => setViewer(galleryAssets[viewerIndex - 1]) : undefined} next={viewerIndex >= 0 && viewerIndex < galleryAssets.length - 1 ? () => setViewer(galleryAssets[viewerIndex + 1]) : undefined} changed={changed} notify={notify} tagDragKey={tagDragKey} tagBusy={tagBusy} changeTag={(id, tag, remove) => void changeTag(id, tag, remove)} />}
     {modal?.type === "upload" && <UploadPanel scope={scope} targetLabel={uploadTargetLabel || activeEntity?.name} tags={tags} collections={collections} games={games} openAsset={(id, hidden, trashed) => void openImportedAsset(id, hidden, trashed)} close={() => setModal(null)} pick={pickUpload} folder={() => folderPicker.current?.click()} />}
+    {modal?.type === "group" && <GroupEditor group={modal.group} count={modal.ids?.length ?? modal.group?.assetIds.length ?? 0} close={() => setModal(null)} save={name => modal.group ? renameGroup(modal.group, name) : editGroup(null, "create", name, modal.ids)} />}
     {modal?.type === "game" && <GameEditor game={modal.game} scope={scope} close={() => setModal(null)} saved={() => { setModal(null); changed(); notify("游戏名称已保存"); }} />}
     {modal?.type === "remove-game" && <RemoveGame game={modal.game} close={() => setModal(null)} confirm={async () => { await api(scoped(`games/${modal.game.id}`, scope), { confirm: true }, "DELETE"); setGames(previous => previous.filter(game => game.id !== modal.game.id)); setModal(null); if (gameId === modal.game.id) navigate("games", "", "", "replace"); changed(); notify("游戏夹已删除，素材保留在未指定游戏中"); }} />}
     {modal?.type === "screenshots" && <ScreenshotEditor count={modal.ids.length} games={games} scope={scope} close={() => setModal(null)} save={async patch => { await api(scoped("assets", scope), { ids: modal.ids, ...patch }, "PATCH"); setModal(null); exitSelection(); changed(); notify("游戏截图归类已保存"); }} />}

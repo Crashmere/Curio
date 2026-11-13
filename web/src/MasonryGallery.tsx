@@ -10,7 +10,7 @@ function pageRect(element: HTMLElement): Rect {
 }
 function visible(rect: Rect) { return rect.top + rect.height > scrollY && rect.top < scrollY + innerHeight; }
 
-export function MasonryGallery({ children, formation }: { children: ReactNode; formation?: GroupFormation }) {
+export function MasonryGallery({ children, formation, className = "collection-gallery" }: { children: ReactNode; formation?: GroupFormation; className?: string }) {
   const container = useRef<HTMLDivElement>(null);
   const snapshots = useRef(new Map<HTMLElement, TileSnapshot>());
   const lastFormation = useRef<GroupFormation>(undefined);
@@ -40,40 +40,32 @@ export function MasonryGallery({ children, formation }: { children: ReactNode; f
       const columns = parseInt(style.getPropertyValue("--masonry-columns")) || Math.max(1, Math.floor((width + gap) / (minimum + gap)));
       const columnWidth = (width - gap * (columns - 1)) / columns;
       const tiles = Array.from(gallery.children).filter((element): element is HTMLElement => element instanceof HTMLElement && !element.hidden);
-      const widths = tiles.map(tile => columnWidth * (parseFloat(getComputedStyle(tile).getPropertyValue("--tile-scale")) || 1));
+      const widths = tiles.map(tile => tile.dataset.span === "full" ? width : columnWidth);
       tiles.forEach((tile, index) => { tile.style.width = `${widths[index]}px`; });
       // Reveal transforms must not change the dimensions used for packing.
       const heights = tiles.map(tile => tile.offsetHeight);
       const bottoms = Array<number>(columns).fill(0);
-      const nextColumn = (first = 0, span = columns) => {
-        const available = bottoms.slice(first, first + span);
-        const shortest = Math.min(...available);
+      const nextColumn = () => {
+        const shortest = Math.min(...bottoms);
         // Tiny aspect-ratio differences must not scatter a nearly level partial row.
-        return first + available.findIndex(bottom => bottom <= shortest + gap);
+        return bottoms.findIndex(bottom => bottom <= shortest + gap);
       };
       const place = (index: number, column: number) => {
         const tile = tiles[index];
-        tile.style.left = `${column * (columnWidth + gap) + (columnWidth - widths[index]) / 2}px`;
+        tile.style.left = `${column * (columnWidth + gap)}px`;
         tile.style.top = `${bottoms[column]}px`;
         bottoms[column] += heights[index] + gap;
       };
-      for (let index = 0; index < tiles.length;) {
+      for (let index = 0; index < tiles.length; index++) {
         const tile = tiles[index];
-        if (!tile.classList.contains("group-member")) {
-          place(index++, nextColumn());
+        if (tile.dataset.span !== "full") {
+          place(index, nextColumn());
           continue;
         }
-        let end = index + 1;
-        while (end < tiles.length && tiles[end].classList.contains("group-member") && tiles[end].dataset.group === tile.dataset.group) end++;
-        const span = Math.min(columns, end - index);
-        const starts = Array.from({ length: columns - span + 1 }, (_, first) => Math.max(...bottoms.slice(first, first + span)));
-        const lowest = Math.min(...starts);
-        const first = starts.findIndex(top => top <= lowest + gap);
-        // Pack each group from a shared edge in adjacent columns.
-        bottoms.fill(starts[first], first, first + span);
-        for (; index < end; index++) place(index, nextColumn(first, span));
-        // Reserve its whole footprint so unrelated cards cannot fill group gaps.
-        bottoms.fill(Math.max(...bottoms.slice(first, first + span)), first, first + span);
+        // An expanded group owns a full row; its inner gallery packs the members.
+        bottoms.fill(Math.max(...bottoms));
+        place(index, 0);
+        bottoms.fill(bottoms[0]);
       }
       gallery.style.height = `${Math.max(0, ...bottoms) - (tiles.length ? gap : 0)}px`;
       const previous = snapshots.current;
@@ -122,5 +114,5 @@ export function MasonryGallery({ children, formation }: { children: ReactNode; f
     layout();
     return () => observer.disconnect();
   }, [children, formation]);
-  return <div className="gallery collection-gallery" ref={container}>{children}</div>;
+  return <div className={`gallery masonry-gallery ${className}`} ref={container}>{children}</div>;
 }
