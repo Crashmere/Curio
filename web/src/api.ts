@@ -1,7 +1,7 @@
 export const base = import.meta.env.BASE_URL;
 export type Scope = "normal" | "hidden";
 export type View = "all" | "inbox" | "starred" | "collections" | "tags" | "trash" | "jobs" | "games" | "screenshots";
-export type Entity = { id: string; name: string; hidden: boolean; count: number; coverUrl?: string };
+export type Entity = { id: string; name: string; hidden: boolean; pinned: boolean; count: number; coverUrl?: string };
 export type Game = { id: string; name: string; steamAppId: string; count: number; coverUrl?: string; lastCapturedAt?: string; pinyin?: string };
 export const gameLabel = (game: Game) => game.name || `Steam ${game.steamAppId}`;
 export const captureLabel = (time: string) => time ? time.replace("T", " ") : "截图时间未知";

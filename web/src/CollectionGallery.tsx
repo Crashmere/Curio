@@ -33,6 +33,7 @@ export function CollectionGallery({ entries, expanded, formation, selected, sele
   const [menu, setMenu] = useState<{ id: string; left: number; top: number }>();
   const menuRoot = useRef<HTMLDivElement>(null);
   const menuSource = useRef<HTMLButtonElement | null>(null);
+  const editingHeadingPress = useRef(new Set<string>());
   const menuGroup = entries.find(entry => entry.group?.id === menu?.id)?.group;
   useEffect(() => {
     if (!menu) return;
@@ -63,7 +64,12 @@ export function CollectionGallery({ entries, expanded, formation, selected, sele
         <div className="group-stack" aria-hidden="true">{group.assetIds.slice(0, 3).reverse().map((id, index, ids) => <span className="group-sheet" key={id} style={{ "--sheet": ids.length - index - 1 } as CSSProperties}><Image size={24} strokeWidth={1.2} /><img src={`${base}media/${id}/thumbnail`} alt="" loading="eager" decoding="sync" onError={event => { event.currentTarget.style.opacity = "0"; }} /></span>)}</div>
       </button>
       <header className="group-heading">
-        <div className="group-toggle group-heading-expanded" hidden={!open} onClick={event => {
+        <div className="group-toggle group-heading-expanded" hidden={!open} onPointerDownCapture={event => {
+          // Blur removes the input before click, so retain the state at pointer-down.
+          if (event.currentTarget.querySelector(".group-name-input")) editingHeadingPress.current.add(group.id);
+          else editingHeadingPress.current.delete(group.id);
+        }} onClick={event => {
+          if (editingHeadingPress.current.delete(group.id)) return;
           if (event.target instanceof Element && !event.target.closest("button, input, small, .group-name-editor, .group-name-error")) toggle(group);
         }}>
           <Layers3 size={16} /><div className="group-heading-copy group-heading-editable">

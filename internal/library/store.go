@@ -64,6 +64,7 @@ type Container struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Hidden    bool   `json:"hidden"`
+	Pinned    bool   `json:"pinned"`
 	Count     int64  `json:"count"`
 	CoverURL  string `json:"coverUrl,omitempty"`
 	CreatedAt string `json:"createdAt,omitempty"`
@@ -131,7 +132,7 @@ CREATE TABLE IF NOT EXISTS assets (
  thumbnail_ext TEXT NOT NULL DEFAULT '', preview_ext TEXT NOT NULL DEFAULT '', purge_pending INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS tags (id TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE, hidden INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS collections (id TEXT PRIMARY KEY, name TEXT NOT NULL, hidden INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS collections (id TEXT PRIMARY KEY, name TEXT NOT NULL, hidden INTEGER NOT NULL DEFAULT 0, pinned INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS asset_tags (asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE, tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE, PRIMARY KEY(asset_id,tag_id));
 CREATE TABLE IF NOT EXISTS asset_collections (asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE, collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE, PRIMARY KEY(asset_id,collection_id));
 CREATE TABLE IF NOT EXISTS collection_groups (id TEXT PRIMARY KEY, collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE, name TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, UNIQUE(id,collection_id));
@@ -202,6 +203,10 @@ func open(root string) (*Library, error) {
 		return nil, err
 	}
 	if err = ensureGroupNames(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err = ensureCollectionPins(db); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -333,14 +338,18 @@ func (l *Library) hydrate(items []Asset) error {
 		placeholders += "?"
 	}
 	for _, rel := range []struct{ table, join, col, kind string }{{"tags", "asset_tags", "tag_id", "tag"}, {"collections", "asset_collections", "collection_id", "collection"}} {
-		rows, err := l.DB.Query("SELECT j.asset_id,c.id,c.name,c.hidden FROM "+rel.join+" j JOIN "+rel.table+" c ON c.id=j."+rel.col+" WHERE j.asset_id IN ("+placeholders+") ORDER BY c.name COLLATE NOCASE", args...)
+		pinned := "0"
+		if rel.kind == "collection" {
+			pinned = "c.pinned"
+		}
+		rows, err := l.DB.Query("SELECT j.asset_id,c.id,c.name,c.hidden,"+pinned+" FROM "+rel.join+" j JOIN "+rel.table+" c ON c.id=j."+rel.col+" WHERE j.asset_id IN ("+placeholders+") ORDER BY c.name COLLATE NOCASE", args...)
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
 			var assetID string
 			var c Container
-			if err = rows.Scan(&assetID, &c.ID, &c.Name, &c.Hidden); err != nil {
+			if err = rows.Scan(&assetID, &c.ID, &c.Name, &c.Hidden, &c.Pinned); err != nil {
 				rows.Close()
 				return err
 			}

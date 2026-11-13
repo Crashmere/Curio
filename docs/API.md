@@ -21,7 +21,7 @@ The same endpoints serve both scopes. Counts, search, tags, collection covers, i
 | `GET /api/assets` | `items`, filtered `total` and nullable `nextOffset` |
 | `GET /api/assets/{id}` | Scoped asset details, memberships and hidden reasons |
 | `GET /api/tags` | Scoped tag `items`, counts and covers |
-| `GET /api/collections` | Scoped collection `items`, counts and covers |
+| `GET /api/collections` | Scoped collection `items`, counts, covers and `pinned` flags |
 | `GET /api/games` | Scoped game `items`, screenshot counts, latest capture time and covers |
 | `GET /api/jobs` | Scoped processing/deletion tasks as `items`, `total` and nullable `nextOffset`, with stage, engine, progress and error |
 | `GET /api/uploads` | Up to 120 incomplete uploads, filtered by upload scope and associated hidden tags/collections, including cleanup state and retained destinations |
@@ -82,6 +82,8 @@ Both container types use the same contract:
 | `DELETE /api/tags/{id}` or `/api/collections/{id}` | Delete only the container and membership links, preserving assets and originals |
 
 Tag names are globally case-insensitive unique. Creating an existing same-visibility tag can reuse its ID; visibility is not changed by that reuse. Collection names do not identify physical storage or duplicate originals.
+
+Collections additionally accept optional boolean `pinned` in POST and PATCH and return it in container responses and asset memberships. POST defaults to false; omitting it from PATCH preserves the existing value. `PATCH /api/collections/{id}` with `{"pinned":true}` pins the sidebar shortcut, and false removes that shortcut without deleting the collection. Pinning is shared across devices and scopes and does not change names, hidden flags, counts, media or memberships. Collection lists include both pinned and unpinned items; the browser filters only individual sidebar shortcuts. Tags return `pinned:false` and reject pin input.
 
 `POST /api/assets/retry` takes `{"ids":["<asset-sha256>"]}` and requeues derived processing without changing originals. `POST /api/assets/purge` takes the same selection plus `confirm:true`, accepts only trash assets and returns HTTP 202 after persisting the selected cleanup intent. Cleanup resumes after interruption; it does not affect unrelated originals or existing backups.
 

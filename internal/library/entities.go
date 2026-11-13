@@ -244,9 +244,25 @@ func (l *Library) updateAsset(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, items[0])
 }
 
+func ensureCollectionPins(db *sql.DB) error {
+	var exists bool
+	if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM pragma_table_info('collections') WHERE name='pinned')").Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	_, err := db.Exec("ALTER TABLE collections ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+	return err
+}
+
 func (l *Library) container(kind, entityID, scope string) (Container, error) {
 	var c Container
-	err := l.DB.QueryRow("SELECT id,name,hidden,created_at FROM "+kind+" WHERE id=?", entityID).Scan(&c.ID, &c.Name, &c.Hidden, &c.CreatedAt)
+	pinned := "0"
+	if kind == "collections" {
+		pinned = "pinned"
+	}
+	err := l.DB.QueryRow("SELECT id,name,hidden,"+pinned+",created_at FROM "+kind+" WHERE id=?", entityID).Scan(&c.ID, &c.Name, &c.Hidden, &c.Pinned, &c.CreatedAt)
 	if err != nil {
 		return c, err
 	}
@@ -308,6 +324,7 @@ func (l *Library) listContainers(w http.ResponseWriter, r *http.Request, kind st
 type containerPatch struct {
 	Name   *string `json:"name"`
 	Hidden *bool   `json:"hidden"`
+	Pinned *bool   `json:"pinned"`
 }
 
 func (p containerPatch) validate() error {
@@ -330,6 +347,10 @@ func (l *Library) createContainer(w http.ResponseWriter, r *http.Request, kind s
 		fail(w, 400, err)
 		return
 	}
+	if p.Pinned != nil && kind != "collections" {
+		fail(w, 400, "只有收藏集支持固定")
+		return
+	}
 	name := strings.TrimSpace(*p.Name)
 	hidden := requestScope(r.URL.Query()) == "hidden"
 	if p.Hidden != nil {
@@ -337,7 +358,16 @@ func (l *Library) createContainer(w http.ResponseWriter, r *http.Request, kind s
 	}
 	entityID := id()
 	created := now()
-	_, err := l.DB.Exec("INSERT INTO "+kind+"(id,name,hidden,created_at) VALUES(?,?,?,?)", entityID, name, hidden, created)
+	columns := "id,name,hidden,created_at"
+	values := "?,?,?,?"
+	args := []any{entityID, name, hidden, created}
+	pinned := p.Pinned != nil && *p.Pinned
+	if kind == "collections" {
+		columns += ",pinned"
+		values += ",?"
+		args = append(args, pinned)
+	}
+	_, err := l.DB.Exec("INSERT INTO "+kind+"("+columns+") VALUES("+values+")", args...)
 	if err != nil {
 		if kind == "tags" {
 			var existingID string
@@ -356,7 +386,7 @@ func (l *Library) createContainer(w http.ResponseWriter, r *http.Request, kind s
 		fail(w, 400, "名称已存在或无法创建")
 		return
 	}
-	writeJSON(w, 201, Container{ID: entityID, Name: name, Hidden: hidden, CreatedAt: created})
+	writeJSON(w, 201, Container{ID: entityID, Name: name, Hidden: hidden, Pinned: pinned, CreatedAt: created})
 }
 
 func (l *Library) updateContainer(w http.ResponseWriter, r *http.Request, kind string) {
@@ -366,6 +396,10 @@ func (l *Library) updateContainer(w http.ResponseWriter, r *http.Request, kind s
 	}
 	if err := p.validate(); err != nil {
 		fail(w, 400, err)
+		return
+	}
+	if p.Pinned != nil && kind != "collections" {
+		fail(w, 400, "只有收藏集支持固定")
 		return
 	}
 	entityID := chi.URLParam(r, "id")
@@ -382,6 +416,10 @@ func (l *Library) updateContainer(w http.ResponseWriter, r *http.Request, kind s
 	if p.Hidden != nil {
 		set = append(set, "hidden=?")
 		args = append(args, *p.Hidden)
+	}
+	if p.Pinned != nil {
+		set = append(set, "pinned=?")
+		args = append(args, *p.Pinned)
 	}
 	if len(set) > 0 {
 		args = append(args, entityID)
