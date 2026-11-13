@@ -116,11 +116,11 @@ function GroupName({ group, busy, save }: { group: MediaGroup; busy: boolean; sa
   }
   const label = (saving || error ? draft.trim() : group.name) || "未命名分组";
   return <div className="group-name">
-    {editing ? <input className="group-name-input" aria-label="分组名称" value={draft} maxLength={80} placeholder="未命名分组" autoFocus onFocus={event => event.currentTarget.select()} onChange={event => setDraft(event.target.value)} onBlur={() => void commit()} onKeyDown={event => {
+    {editing ? <span className="group-name-editor"><span className="group-name-width" aria-hidden="true">{draft || "未命名分组"}</span><input className="group-name-input" aria-label="分组名称" value={draft} maxLength={80} placeholder="未命名分组" autoFocus onFocus={event => event.currentTarget.select()} onChange={event => setDraft(event.target.value)} onBlur={() => void commit()} onKeyDown={event => {
       if (event.nativeEvent.isComposing || event.keyCode === 229 || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
       if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); }
       else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelled.current = true; setError(""); setDraft(group.name); setEditing(false); }
-    }} /> : <button className="group-name-text" aria-label={`编辑分组名称：${label}`} title="点击编辑分组名称" disabled={busy || saving} onClick={() => {
+    }} /></span> : <button className="group-name-text" aria-label={`编辑分组名称：${label}`} title="点击编辑分组名称" disabled={busy || saving} onClick={() => {
       cancelled.current = false;
       if (!error) setDraft(group.name);
       setEditing(true);
