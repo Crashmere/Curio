@@ -1,4 +1,4 @@
-import { CSSProperties, ReactNode, useEffect, useRef, useState } from "react";
+import { CSSProperties, ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, Image, Layers3, MoreHorizontal, Pencil, Plus, RotateCw, Ungroup } from "lucide-react";
 import { Asset, AssetPage, base, MediaGroup } from "./api";
@@ -35,6 +35,15 @@ export function CollectionGallery({ entries, expanded, formation, selected, sele
   const menuSource = useRef<HTMLButtonElement | null>(null);
   const editingHeadingPress = useRef(new Set<string>());
   const menuGroup = entries.find(entry => entry.group?.id === menu?.id)?.group;
+  useLayoutEffect(() => {
+    if (!menuRoot.current || !menuSource.current) return;
+    const source = menuSource.current.getBoundingClientRect();
+    const { width, height } = menuRoot.current.getBoundingClientRect();
+    const left = Math.max(12, Math.min(source.right - width, innerWidth - width - 12));
+    const below = source.bottom + 6;
+    const top = below + height <= innerHeight - 12 ? below : Math.max(12, source.top - height - 6);
+    setMenu(current => current && (current.left !== left || current.top !== top) ? { ...current, left, top } : current);
+  }, [menu?.id, menuGroup, selected.size]);
   useEffect(() => {
     if (!menu) return;
     const close = () => setMenu(undefined);
@@ -83,11 +92,11 @@ export function CollectionGallery({ entries, expanded, formation, selected, sele
         </button>
         <div className="group-actions">
           {selecting && <button className={`icon-button group-select ${selectedCount === count ? "is-active" : ""}`} title={selectedCount === count ? "取消选择这组" : "选择这组"} aria-label={selectedCount === count ? "取消选择这组" : "选择这组"} aria-pressed={selectedCount === count} disabled={busy} onClick={() => selectGroup(group)}><Check size={16} /></button>}
-          <button className="icon-button" title="分组设置" aria-label={`分组设置：${label}`} aria-haspopup="menu" aria-expanded={menu?.id === group.id} disabled={busy} onClick={event => {
+          <button className="icon-button group-menu-toggle" title="分组设置" aria-label={`分组设置：${label}`} aria-haspopup="menu" aria-expanded={menu?.id === group.id} disabled={busy} onClick={event => {
             if (menu?.id === group.id) { setMenu(undefined); return; }
             menuSource.current = event.currentTarget;
             const rect = event.currentTarget.getBoundingClientRect();
-            setMenu({ id: group.id, left: Math.max(12, Math.min(rect.right - 240, innerWidth - 252)), top: Math.max(12, Math.min(rect.bottom + 6, innerHeight - 240)) });
+            setMenu({ id: group.id, left: rect.right, top: rect.bottom + 6 });
           }}><MoreHorizontal size={18} /></button>
         </div>
       </header>
@@ -97,11 +106,12 @@ export function CollectionGallery({ entries, expanded, formation, selected, sele
       </div>
     </article>;
   })}</MasonryGallery>
-    {menu && menuGroup && createPortal(<div ref={menuRoot} className="group-action-menu" style={{ left: menu.left, top: menu.top }} role="menu" aria-label="分组设置">
-      <strong>{menuGroup.name || "未命名分组"}</strong>
-      <button className="button subtle" role="menuitem" disabled={busy} onClick={() => { setMenu(undefined); rename(menuGroup); }}><Pencil size={15} />{menuGroup.name ? "修改分组名称" : "添加分组名称"}</button>
-      {!!selected.size && <button className="button subtle" role="menuitem" disabled={busy || [...selected].every(id => menuGroup.assetIds.includes(id))} onClick={() => { setMenu(undefined); add(menuGroup); }}><Plus size={15} />将所选素材加入这组</button>}
-      <button className="button subtle danger" role="menuitem" disabled={busy} onClick={() => { setMenu(undefined); dissolve(menuGroup); }}><Ungroup size={15} />解散分组，保留素材</button>
+    {menu && menuGroup && createPortal(<div ref={menuRoot} className="compact-action-menu group-action-menu" style={{ left: menu.left, top: menu.top }} role="menu" aria-label="分组设置">
+      <div className="action-menu-heading" title={menuGroup.name || "未命名分组"}>{menuGroup.name || "未命名分组"}</div>
+      <button className="action-menu-item" role="menuitem" disabled={busy} onClick={() => { setMenu(undefined); rename(menuGroup); }}><Pencil size={15} />{menuGroup.name ? "修改分组名称" : "添加分组名称"}</button>
+      {!!selected.size && <button className="action-menu-item" role="menuitem" disabled={busy || [...selected].every(id => menuGroup.assetIds.includes(id))} onClick={() => { setMenu(undefined); add(menuGroup); }}><Plus size={15} />将所选素材加入这组</button>}
+      <div className="action-menu-divider" role="separator" />
+      <button className="action-menu-item action-menu-danger" role="menuitem" disabled={busy} onClick={() => { setMenu(undefined); dissolve(menuGroup); }}><Ungroup size={15} />解散分组，保留素材</button>
     </div>, document.body)}
   </>;
 }

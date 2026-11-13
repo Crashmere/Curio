@@ -62,12 +62,12 @@ export function EntityGrid({ items, kind, searching, busy, open, edit, rename, p
       <button className="icon-button" aria-label={`移除 ${entity.name}`} title="移除" onClick={() => remove(entity)}><Trash2 size={15} /></button>
     </>}</div>
   </article>)}</div>
-    {menu && menuEntity && createPortal(<div ref={menuRoot} className="collection-action-menu" style={{ left: menu.left, top: menu.top }} role="menu" aria-label={`收藏集操作：${menuEntity.name}`}>
-      <div className="collection-menu-heading" title={menuEntity.name}>{menuEntity.name}</div>
-      <button className="collection-menu-item" role="menuitem" disabled={busy} onClick={() => { setMenu(undefined); rename(menuEntity); }}><Pencil size={15} />重命名</button>
-      <button className="collection-menu-item" role="menuitem" disabled={busy} onClick={() => { setMenu(undefined); pin(menuEntity); }}>{menuEntity.pinned ? <PinOff size={15} /> : <Pin size={15} />}{menuEntity.pinned ? "取消固定" : "固定到侧栏"}</button>
-      <div className="collection-menu-divider" role="separator" />
-      <button className="collection-menu-item collection-menu-delete" role="menuitem" disabled={busy} onClick={() => { setMenu(undefined); remove(menuEntity); }}><Trash2 size={15} />删除收藏集</button>
+    {menu && menuEntity && createPortal(<div ref={menuRoot} className="compact-action-menu collection-action-menu" style={{ left: menu.left, top: menu.top }} role="menu" aria-label={`收藏集操作：${menuEntity.name}`}>
+      <div className="action-menu-heading" title={menuEntity.name}>{menuEntity.name}</div>
+      <button className="action-menu-item" role="menuitem" disabled={busy} onClick={() => { setMenu(undefined); rename(menuEntity); }}><Pencil size={15} />重命名</button>
+      <button className="action-menu-item" role="menuitem" disabled={busy} onClick={() => { setMenu(undefined); pin(menuEntity); }}>{menuEntity.pinned ? <PinOff size={15} /> : <Pin size={15} />}{menuEntity.pinned ? "取消固定" : "固定到侧栏"}</button>
+      <div className="action-menu-divider" role="separator" />
+      <button className="action-menu-item action-menu-danger collection-menu-delete" role="menuitem" disabled={busy} onClick={() => { setMenu(undefined); remove(menuEntity); }}><Trash2 size={15} />删除收藏集</button>
     </div>, document.body)}
   </>;
 }
