@@ -31,6 +31,19 @@ func (l *Library) acquirePlaybackCPU(ctx context.Context) (func(), error) {
 	return acquireMediaSlot(ctx, l.CPU)
 }
 
+func (l *Library) acquireGPU(ctx context.Context) (func(), error) {
+	background, err := acquireMediaSlot(ctx, l.backgroundGPU)
+	if err != nil {
+		return nil, err
+	}
+	release, err := l.acquirePlaybackGPU(ctx)
+	if err != nil {
+		background()
+		return nil, err
+	}
+	return func() { release(); background() }, nil
+}
+
 func (l *Library) acquirePlaybackGPU(ctx context.Context) (func(), error) {
 	return acquireMediaSlot(ctx, l.GPU)
 }

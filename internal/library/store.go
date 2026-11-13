@@ -32,6 +32,7 @@ type Library struct {
 	GPU           chan struct{}
 	CPU           chan struct{}
 	backgroundCPU chan struct{}
+	backgroundGPU chan struct{}
 	playbackMu    sync.Mutex
 	playback      *playbackCache
 	runtimeCtx    context.Context
@@ -214,7 +215,7 @@ func open(root string) (*Library, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Library{DB: db, Root: root, Wake: make(chan struct{}, 1), Workers: 2, GPU: make(chan struct{}, 1), CPU: make(chan struct{}, 2), backgroundCPU: make(chan struct{}, 1), locks: map[string]*objectLock{}, active: map[string]*activeJob{}}, nil
+	return &Library{DB: db, Root: root, Wake: make(chan struct{}, 1), Workers: 2, GPU: make(chan struct{}, 1), CPU: make(chan struct{}, 2), backgroundCPU: make(chan struct{}, 1), backgroundGPU: make(chan struct{}, 1), locks: map[string]*objectLock{}, active: map[string]*activeJob{}}, nil
 }
 
 func (l *Library) Configure(workers, gpuSlots int) error {
@@ -224,6 +225,7 @@ func (l *Library) Configure(workers, gpuSlots int) error {
 	l.Workers, l.GPU = workers, make(chan struct{}, gpuSlots)
 	l.CPU = make(chan struct{}, min(4, workers))
 	l.backgroundCPU = make(chan struct{}, max(1, cap(l.CPU)-1))
+	l.backgroundGPU = make(chan struct{}, max(1, gpuSlots-1))
 	return nil
 }
 

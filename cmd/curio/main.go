@@ -103,7 +103,7 @@ func run() error {
 		_ = server.Close()
 		close(shutdownDone)
 	}()
-	slog.Info("Curio listening", "address", *listen, "workers", *workers, "gpuSlots", *gpu)
+	slog.Info("Curio listening", "address", *listen, "workers", l.Workers, "gpuSlots", cap(l.GPU), "cpuOperations", cap(l.CPU))
 	err = server.ListenAndServe()
 	stop()
 	<-shutdownDone

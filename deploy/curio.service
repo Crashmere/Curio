@@ -7,7 +7,7 @@ Type=simple
 User=curio
 Group=curio
 WorkingDirectory=/opt/curio
-ExecStart=/opt/curio/bin/curio serve --data /opt/curio/data --listen 127.0.0.1:18088 --workers 2 --gpu-slots 1
+ExecStart=/opt/curio/bin/curio serve --data /opt/curio/data --listen 127.0.0.1:18088 --workers 8 --gpu-slots 4
 Environment=TZ=Asia/Shanghai
 Environment=VIPS_CONCURRENCY=2
 Environment=MALLOC_ARENA_MAX=2

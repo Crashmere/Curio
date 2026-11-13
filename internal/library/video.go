@@ -28,10 +28,6 @@ type videoProbe struct {
 	} `json:"format"`
 }
 
-func (l *Library) acquireGPU(ctx context.Context) (func(), error) {
-	return l.acquirePlaybackGPU(ctx)
-}
-
 func (l *Library) nvidiaAvailable(_ context.Context) bool {
 	l.gpuOnce.Do(func() {
 		if os.Getenv("CURIO_GPU") == "cpu" {

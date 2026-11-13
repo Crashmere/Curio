@@ -17,7 +17,7 @@ The same endpoints serve both scopes. Counts, search, tags, collection covers, i
 | Method and path | Result |
 | --- | --- |
 | `GET /healthz` | Database connection health, with `status: "ok"` and service name |
-| `GET /api/info` | Name, version, chunk maximum, workers/GPU slots and scoped `total`, `starred`, `unorganized`, `trash`, `queued`, `errors` and `bytes` |
+| `GET /api/info` | Name, version, chunk maximum, effective `workers`, `gpuSlots`, `cpuOperations` and scoped `total`, `starred`, `unorganized`, `trash`, `queued`, `errors` and `bytes` |
 | `GET /api/assets` | `items`, filtered `total` and nullable `nextOffset` |
 | `GET /api/assets/{id}` | Scoped asset details, memberships and hidden reasons |
 | `GET /api/tags` | Scoped tag `items`, counts and covers |
