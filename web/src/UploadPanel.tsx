@@ -3,6 +3,7 @@ import { Check, CheckCheck, CircleAlert, FileImage, FolderOpen, Pause, Play, Rot
 import { api, bytes, Entity, Game, gameLabel, Scope, scoped, UploadSession } from "./api";
 import { Dialog } from "./components";
 import * as importer from "./upload";
+import { formatUploadRate } from "./upload-rate";
 
 type Destination = { tagIds?: string[]; collectionIds?: string[]; gameId?: string; screenshot?: boolean };
 type DiscardTarget = { hash: string; name: string; size: number; offset?: number };
@@ -25,6 +26,7 @@ export function UploadPanel({ scope, targetLabel, tags = [], collections = [], g
   const completed = items.filter(item => item.state === "done" || item.state === "duplicate").length;
   const active = transfer.items.some(item => ["waiting", "reading", "uploading", "verifying"].includes(item.state));
   const resumable = transfer.items.some(item => ["paused", "error"].includes(item.state));
+  const totalRate = transfer.items.reduce((sum, item) => sum + item.bytesPerSecond, 0);
   const [sessions, setSessions] = useState<UploadSession[]>([]);
   const [loadError, setLoadError] = useState("");
   const [error, setError] = useState("");
@@ -97,6 +99,7 @@ export function UploadPanel({ scope, targetLabel, tags = [], collections = [], g
     {targetLabel && <p className="form-help">新增文件：{targetLabel}</p>}
     <div className="upload-drop-zone" onClick={() => { if (!discardBusy) pick(); }}><Upload size={32} strokeWidth={1.5} /><strong>拖入图片、动图或视频</strong><span>也可以点击选择文件，或粘贴图片</span><div className="upload-choices"><button className="button primary" disabled={discardBusy} onClick={event => { event.stopPropagation(); pick(); }}><FileImage size={16} />选择文件</button><button className="button" disabled={discardBusy} onClick={event => { event.stopPropagation(); folder(); }}><FolderOpen size={16} />选择文件夹</button></div></div>
     <div className="transfer-info"><span>原件完整保留 · 分段上传</span><span>关闭时清除已完成记录，未完成上传继续保留</span></div>
+    {!!transfer.items.length && <p className="form-help upload-rate" title="普通模式和隐藏模式的浏览器当前发送总速率，不含服务器落盘和校验时间">总上传速率 {formatUploadRate(totalRate)}</p>}
     {loadError && <div className="inline-error">{loadError}<button className="button subtle" onClick={reload}>重新加载</button></div>}
     {notice && <p className="form-help upload-notice" role="status">{notice}</p>}
     {!!items.length && <><div className="section-toolbar"><span>本次收集 <strong>{completed}</strong> / {items.length}</span><div>{active && <button className="button subtle" disabled={discardBusy} title="暂停两种模式的全部上传" onClick={importer.pause}><Pause size={15} />暂停全部</button>}{(resumable || transfer.paused) && <button className="button subtle" disabled={discardBusy} title="继续两种模式的已暂停上传，并重试全部失败项" onClick={importer.resume}><Play size={15} />继续 / 重试全部</button>}<button className="button subtle" disabled={discardBusy || !completed} onClick={() => importer.clearFinished(scope)}>清除已完成</button></div></div>
@@ -106,7 +109,7 @@ export function UploadPanel({ scope, targetLabel, tags = [], collections = [], g
         const cleaning = session?.state === "discarding";
         return <div className={`upload-row ${item.state}`} key={item.id}>
           <div className="upload-state-icon">{item.state === "done" ? <Check size={18} /> : item.state === "duplicate" ? <CheckCheck size={18} /> : item.state === "error" ? <CircleAlert size={18} /> : ["waiting", "paused"].includes(item.state) ? <Pause size={17} /> : <RotateCw size={17} className="spin" />}</div>
-          <div className="upload-description"><strong title={item.name}>{item.name}</strong><div className="upload-meta"><span>{bytes(item.file.size)}</span><span>{cleaning ? "分片清理中" : labels[item.state]}</span><span>{Math.round(item.progress * 100)}%</span></div><p className="upload-target-label">收集目标：{destination(item)}</p>{!finished && item.state !== "error" && <div className="progress-track"><span style={{ width: `${Math.round(item.progress * 100)}%` }} /></div>}{item.error && <p className="upload-error">{item.error}</p>}{item.state === "duplicate" && <p className="upload-target-label">保留已有素材的信息{item.existingHidden !== undefined ? ` · ${item.existingHidden ? "位于隐藏模式" : "位于普通模式"}` : ""}{item.trashed ? " · 已在回收站，不会自动恢复" : ""}</p>}</div>
+          <div className="upload-description"><strong title={item.name}>{item.name}</strong><div className="upload-meta"><span>{bytes(item.file.size)}</span><span>{cleaning ? "分片清理中" : labels[item.state]}</span><span>{Math.round(item.progress * 100)}%</span>{item.state === "uploading" && <span className="upload-rate">{formatUploadRate(item.bytesPerSecond)}</span>}</div><p className="upload-target-label">收集目标：{destination(item)}</p>{!finished && item.state !== "error" && <div className="progress-track"><span style={{ width: `${Math.round(item.progress * 100)}%` }} /></div>}{item.error && <p className="upload-error">{item.error}</p>}{item.state === "duplicate" && <p className="upload-target-label">保留已有素材的信息{item.existingHidden !== undefined ? ` · ${item.existingHidden ? "位于隐藏模式" : "位于普通模式"}` : ""}{item.trashed ? " · 已在回收站，不会自动恢复" : ""}</p>}</div>
           <div className="upload-row-actions">
             {finished && item.assetId && openAsset && <button className="button subtle" disabled={discardBusy} onClick={() => openAsset(item.assetId!, item.existingHidden ?? item.displayScope === "hidden", item.trashed)}>{item.trashed ? "查看回收站素材" : item.state === "duplicate" ? "查看已有素材" : "查看素材"}</button>}
             {!finished && !cleaning && (["paused", "error"].includes(item.state) ? <button className="icon-button" aria-label={`${item.state === "error" ? "重试" : "继续"} ${item.name}`} title={item.state === "error" ? "仅重试此文件" : "仅继续此文件"} disabled={discardBusy} onClick={() => importer.resumeItem(item.id)}>{item.state === "error" ? <RotateCw size={16} /> : <Play size={16} />}</button> : <button className="icon-button" aria-label={`暂停 ${item.name}`} title="仅暂停此文件" disabled={discardBusy} onClick={() => importer.pauseItem(item.id)}><Pause size={16} /></button>)}

@@ -326,6 +326,7 @@ input[type="search"]::-webkit-search-cancel-button { display: none; }
 .upload-error { font-size: 10px; color: #b6a078; margin-top: 7px; line-height: 1.7; }
 .upload-target-label { margin-top: 6px; font-size: 10px; line-height: 1.8; color: #6d7b59; overflow-wrap: anywhere; }
 .upload-meta { flex-wrap: wrap; }
+.upload-rate { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .upload-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 3px; flex-shrink: 0; }
 .upload-row-actions .button { white-space: normal; max-width: 140px; text-align: left; }
 .upload-discard { margin-top: 20px; padding: 14px; border: 1px solid #e5d7bb; border-radius: 9px; background: #fff9ed; }

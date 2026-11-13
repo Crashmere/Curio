@@ -1,10 +1,11 @@
 import { api, ApiError, base, Scope, UploadSession } from "./api";
+import { UploadRateMeter } from "./upload-rate";
 
 export type UploadItem = {
   id: string; file: File; name: string; scope: Scope; displayScope: Scope; tagIds: string[]; collectionIds: string[]; gameId: string; screenshot: boolean;
   fileModifiedAt?: string;
   state: "waiting" | "paused" | "reading" | "uploading" | "verifying" | "done" | "duplicate" | "error";
-  progress: number; hash?: string; expectedHash?: string; assetId?: string; existingHidden?: boolean; trashed?: boolean; error?: string;
+  progress: number; bytesPerSecond: number; hash?: string; expectedHash?: string; assetId?: string; existingHidden?: boolean; trashed?: boolean; error?: string;
 };
 type State = { items: UploadItem[]; running: boolean; paused: boolean };
 let state: State = { items: [], running: false, paused: false };
@@ -66,7 +67,7 @@ export function addFiles(files: File[], scope: Scope, tagIds: string[] = [], col
     if (!file.size || (!supported.test(file.name) && !/^(image|video)\//.test(file.type))) { skipped++; continue; }
     const key = keyFor(file, scope, tagIds, collectionIds, gameId, screenshot, expectedHash, displayScope);
     if (seen.has(key)) continue;
-    const item: UploadItem = { id: crypto.randomUUID(), file, name: file.webkitRelativePath || file.name, scope, displayScope, tagIds: [...tagIds], collectionIds: [...collectionIds], gameId, screenshot, fileModifiedAt: useFileTime ? fileTime(file) : undefined, expectedHash: expectedHash || undefined, state: state.paused ? "paused" : "waiting", progress: 0 };
+    const item: UploadItem = { id: crypto.randomUUID(), file, name: file.webkitRelativePath || file.name, scope, displayScope, tagIds: [...tagIds], collectionIds: [...collectionIds], gameId, screenshot, fileModifiedAt: useFileTime ? fileTime(file) : undefined, expectedHash: expectedHash || undefined, state: state.paused ? "paused" : "waiting", progress: 0, bytesPerSecond: 0 };
     queueOrder.set(item, ++sequence);
     state.items.push(item);
     seen.add(key);
@@ -191,19 +192,24 @@ function sendChunk(item: UploadItem, offset: number, chunkSize: number, signal: 
     xhr.timeout = 660000;
     xhr.setRequestHeader("Content-Type", "application/octet-stream");
     xhr.setRequestHeader("Upload-Offset", String(offset));
+    const meter = new UploadRateMeter(rate => { item.bytesPerSecond = rate; progress(); });
     const abort = () => xhr.abort();
     const finish = (settle: () => void) => {
+      meter.stop();
       signal.removeEventListener("abort", abort);
       xhr.onload = xhr.onerror = xhr.ontimeout = xhr.onabort = null;
-      xhr.upload.onprogress = null;
+      xhr.upload.onprogress = xhr.upload.onload = null;
       settle();
     };
     xhr.upload.onprogress = event => {
       if (signal.aborted) return;
+      meter.update(Math.min(chunk.size, event.loaded));
       // Sent bytes animate the UI; only the response can advance the durable offset.
       item.progress = uploadProgress(offset + Math.min(chunk.size, event.loaded), item.file.size);
       progress();
     };
+    // Sending has ended; waiting for durable acknowledgment is not upload throughput.
+    xhr.upload.onload = () => meter.stop();
     xhr.onload = () => {
       const data = xhr.response || {};
       finish(() => xhr.status >= 200 && xhr.status < 300 ? resolve(data) : reject(new ApiError(xhr.status === 401 ? "请返回门户重新登录" : data.error || `上传失败 (${xhr.status})`, xhr.status, data)));
@@ -212,7 +218,8 @@ function sendChunk(item: UploadItem, offset: number, chunkSize: number, signal: 
     xhr.ontimeout = () => finish(() => reject(new Error("分片上传超时，请重试")));
     xhr.onabort = () => finish(() => reject(signal.reason));
     signal.addEventListener("abort", abort, { once: true });
-    xhr.send(chunk);
+    try { xhr.send(chunk); }
+    catch (error) { finish(() => reject(error)); }
   });
 }
 function validate(session: UploadSession, size: number) {
