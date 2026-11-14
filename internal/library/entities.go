@@ -206,6 +206,9 @@ func changeMemberships(tx *sql.Tx, hash, kind string, replace *[]string, add, re
 			return err
 		}
 	}
+	if kind == "collections" && (replace != nil || len(remove) > 0) {
+		return pruneContainerCovers(tx)
+	}
 	return nil
 }
 
@@ -272,7 +275,11 @@ func (l *Library) container(kind, entityID, scope string) (Container, error) {
 		return c, err
 	}
 	var hash string
-	err = l.DB.QueryRow("SELECT a.id FROM "+table+" j JOIN assets a ON a.id=j.asset_id WHERE j."+column+"=? AND "+predicate+" AND a.thumbnail_ext!='' ORDER BY a.created_at DESC,a.id DESC LIMIT 1", entityID).Scan(&hash)
+	preferred := "''"
+	if kind == "collections" {
+		preferred = "COALESCE((SELECT value FROM catalog_settings WHERE key='collection_cover:'||j.collection_id),'')"
+	}
+	err = l.DB.QueryRow("SELECT a.id FROM "+table+" j JOIN assets a ON a.id=j.asset_id WHERE j."+column+"=? AND "+predicate+" AND (a.thumbnail_ext!='' OR EXISTS(SELECT 1 FROM asset_covers v WHERE v.asset_id=a.id)) ORDER BY (a.id="+preferred+") DESC,a.created_at DESC,a.id DESC LIMIT 1", entityID).Scan(&hash)
 	if err == nil {
 		c.CoverURL = l.coverThumbnailURL(hash)
 	} else if !errors.Is(err, sql.ErrNoRows) {

@@ -11,9 +11,11 @@ import (
 )
 
 type mediaGroup struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	AssetIDs []string `json:"assetIds"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	AssetIDs     []string `json:"assetIds"`
+	CoverAssetID string   `json:"coverAssetId"`
+	CoverURL     string   `json:"coverUrl"`
 }
 
 func ensureGroupNames(db *sql.DB) error {
@@ -47,7 +49,7 @@ func (l *Library) listGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	args = append([]any{collectionID}, args...)
-	rows, err := l.DB.Query("SELECT g.group_id,cg.name,a.id FROM assets a JOIN collection_group_assets g ON g.asset_id=a.id AND g.collection_id=? JOIN collection_groups cg ON cg.id=g.group_id"+where+" ORDER BY "+order, args...)
+	rows, err := l.DB.Query("SELECT g.group_id,cg.name,a.id,COALESCE(s.value,'') FROM assets a JOIN collection_group_assets g ON g.asset_id=a.id AND g.collection_id=? JOIN collection_groups cg ON cg.id=g.group_id LEFT JOIN catalog_settings s ON s.key='group_cover:'||cg.id"+where+" ORDER BY "+order, args...)
 	if err != nil {
 		fail(w, 500, err)
 		return
@@ -56,8 +58,8 @@ func (l *Library) listGroups(w http.ResponseWriter, r *http.Request) {
 	items := []mediaGroup{}
 	indices := map[string]int{}
 	for rows.Next() {
-		var groupID, name, assetID string
-		if err = rows.Scan(&groupID, &name, &assetID); err != nil {
+		var groupID, name, assetID, coverID string
+		if err = rows.Scan(&groupID, &name, &assetID, &coverID); err != nil {
 			fail(w, 500, err)
 			return
 		}
@@ -65,13 +67,28 @@ func (l *Library) listGroups(w http.ResponseWriter, r *http.Request) {
 		if !exists {
 			index = len(items)
 			indices[groupID] = index
-			items = append(items, mediaGroup{ID: groupID, Name: name, AssetIDs: []string{}})
+			items = append(items, mediaGroup{ID: groupID, Name: name, AssetIDs: []string{}, CoverAssetID: coverID})
 		}
 		items[index].AssetIDs = append(items[index].AssetIDs, assetID)
 	}
 	if err = rows.Err(); err != nil {
 		fail(w, 500, err)
 		return
+	}
+	rows.Close()
+	for i := range items {
+		group := &items[i]
+		matched := false
+		for _, hash := range group.AssetIDs {
+			if hash == group.CoverAssetID {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			group.CoverAssetID = group.AssetIDs[0]
+		}
+		group.CoverURL = l.coverThumbnailURL(group.CoverAssetID)
 	}
 	writeJSON(w, 200, map[string]any{"items": items})
 }
@@ -115,7 +132,10 @@ func moveGroupMembers(tx *sql.Tx, collectionID, groupID string, add, remove []st
 		}
 	}
 	_, err := tx.Exec("DELETE FROM collection_groups WHERE collection_id=? AND NOT EXISTS(SELECT 1 FROM collection_group_assets g WHERE g.group_id=collection_groups.id)", collectionID)
-	return err
+	if err != nil {
+		return err
+	}
+	return pruneContainerCovers(tx)
 }
 
 func (l *Library) createGroup(w http.ResponseWriter, r *http.Request) {
@@ -227,7 +247,13 @@ func (l *Library) deleteGroup(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "分组编号无效")
 		return
 	}
-	result, err := l.DB.Exec("DELETE FROM collection_groups WHERE id=? AND collection_id=?", groupID, collectionID)
+	tx, err := l.DB.Begin()
+	if err != nil {
+		fail(w, 500, err)
+		return
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec("DELETE FROM collection_groups WHERE id=? AND collection_id=?", groupID, collectionID)
 	if err != nil {
 		fail(w, 500, err)
 		return
@@ -235,6 +261,13 @@ func (l *Library) deleteGroup(w http.ResponseWriter, r *http.Request) {
 	n, _ := result.RowsAffected()
 	if n == 0 {
 		fail(w, 404, "分组已不存在")
+		return
+	}
+	if err = pruneContainerCovers(tx); err == nil {
+		err = tx.Commit()
+	}
+	if err != nil {
+		fail(w, 500, err)
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})

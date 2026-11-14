@@ -125,6 +125,16 @@ Names are trimmed and limited to 80 Unicode characters. An omitted creation name
 
 Fetch a group's media through `GET /api/assets?collection=<id>&group=<group-id>` with the same scope and filters. Group membership survives trash and restore, but removing a collection membership removes its group link. Replacing `collectionIds` retains group links for collections that remain present.
 
+### Selected Container Covers
+
+The media viewer's `设为封面` menu offers `分组封面` and `收藏集封面`. A category is disabled when the live media has no corresponding membership. One target saves immediately; multiple targets open a compact target list. Groups are the media groups within collections, and their choices include the owning collection name.
+
+`GET /api/assets/{id}/cover-targets?scope=normal|hidden` returns `groups` and `collections` arrays for one live media in the requested scope. Each target includes `id`, `name` and `selected`, indicating whether this media is its saved cover. Group targets also include `collectionId` and `collectionName`. Trash and unavailable media return HTTP 404.
+
+`PATCH /api/assets/{id}/container-cover?scope=normal|hidden` accepts `{"kind":"group|collection","targetId":"<target-id>"}`. It validates live scoped media and membership and saves the reference atomically; an invalid or removed target returns HTTP 400. Images, animations and videos use the same contract. A video reference resolves to its current selected frame, or its default thumbnail when no frame is selected, with the current cover revision in the URL.
+
+Collection responses prefer the saved member when it has a thumbnail and is live in the requested scope, otherwise retain the newest available thumbnail. Media group responses add `coverAssetId` and `coverUrl`, selecting the saved member when it matches the current scope and filters, otherwise the first matching member in the requested sort order. This does not reorder `assetIds` or alter gallery anchors. Moving a selected member to trash or another scope temporarily uses the fallback; restoring it makes its selection eligible again. Removing its membership, moving it to another group, dissolving its group or deleting its container clears that reference. Other memberships, media and originals are preserved.
+
 ### Game Screenshots
 
 Assets additionally expose `screenshot`, `capturedAt`, optional `screenshotSource` (`steam` or `manual`) and optional `game` with `id`, `name` and `steamAppId`. `capturedAt` is either empty or a timezone-free `YYYY-MM-DDTHH:mm:ss` local time; it is not a UTC instant. `GET /api/info` adds the scoped live `screenshots` count. Keyword searches also match associated game names and Steam App IDs.

@@ -95,6 +95,8 @@ func (l *Library) Handler(frontend fs.FS) http.Handler {
 	r.Get("/api/assets/{id}", l.assetDetail)
 	r.Patch("/api/assets/{id}", l.updateAsset)
 	r.Patch("/api/assets/{id}/cover", l.saveCover)
+	r.Get("/api/assets/{id}/cover-targets", l.coverTargets)
+	r.Patch("/api/assets/{id}/container-cover", l.setContainerCover)
 	r.Get("/api/assets/{id}/frame", l.frame)
 	r.Get("/api/assets/{id}/frames", l.frameStrip)
 	r.Get("/api/collections/{id}/groups", l.listGroups)

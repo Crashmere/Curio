@@ -364,6 +364,23 @@ input[type="search"]::-webkit-search-cancel-button { display: none; }
 .viewer-name strong { display: block; font-size: 12px; font-weight: 500; color: #7e9965; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .viewer-name > span { display: flex; align-items: center; gap: 4px; font-size: 9px; color: #a8bb94; margin-top: 6px; }
 .viewer-actions { display: flex; align-items: center; gap: 5px; }
+.container-cover-control { position: relative; flex-shrink: 0; margin-left: 5px; }
+.container-cover-toggle { display: flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 10px; border: 1px solid #dce3ce; border-radius: 8px; background: #f3f5e9; color: #61774d; font-size: 11px; white-space: nowrap; }
+.container-cover-toggle:hover:not(:disabled), .container-cover-toggle.is-active { background: #e8eedb; border-color: #c4d0b3; }
+.container-cover-menu { position: absolute; top: calc(100% + 9px); right: 0; z-index: 9; width: 218px; max-height: min(320px, calc(100dvh - 100px)); animation: viewer-in 120ms; }
+.container-cover-menu .action-menu-item { min-height: 36px; }
+.cover-menu-trailing { margin-left: auto; }
+.cover-menu-back { display: flex; align-items: center; gap: 5px; width: 100%; padding: 5px 7px; color: var(--muted); font-size: 11px; text-align: left; }
+.cover-target-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; }
+.cover-target-copy > span, .cover-target-copy > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cover-target-copy > small { color: var(--muted); font-size: 10px; line-height: 15px; }
+.cover-menu-loading { display: flex; align-items: center; gap: 5px; padding: 5px 9px; color: var(--muted); font-size: 10px; }
+.compact-viewer .container-cover-toggle { min-height: 38px; padding: 0 8px; gap: 4px; }
+@media (max-width: 380px) {
+  .compact-viewer .container-cover-control { margin-left: 1px; }
+  .compact-viewer .container-cover-toggle { padding: 0 6px; }
+  .compact-viewer .container-cover-toggle > svg:first-child { display: none; }
+}
 .viewer-body { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(0, 1fr); }
 .viewer-body.with-details { grid-template-columns: minmax(0, 1fr) 310px; }
 .viewer-canvas { min-width: 0; position: relative; overflow: hidden; }

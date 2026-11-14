@@ -283,5 +283,8 @@ func (l *Library) deleteCollectionWithLayout(ctx context.Context, entityID strin
 	if err = syncCollectionLayout(ctx, tx); err != nil {
 		return 0, err
 	}
+	if err = pruneContainerCovers(tx); err != nil {
+		return 0, err
+	}
 	return n, tx.Commit()
 }

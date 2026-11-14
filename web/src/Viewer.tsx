@@ -11,6 +11,7 @@ import { ImageViewer } from "./ImageViewer";
 import { TagChip } from "./TagChip";
 import { canDecodeTank, TankDecoder } from "./TankDecoder";
 import { useCompactViewer, useViewerControls } from "./viewer-interactions";
+import { ContainerCoverMenu } from "./ContainerCoverMenu";
 
 type Props = { asset: Asset; scope: Scope; tags: Entity[]; collections: Entity[]; games: Game[]; close: () => void; previous?: () => void; next?: () => void; changed: () => void; notify: (text: string) => void; tagDragKey: string; tagBusy: boolean; changeTag: (assetId: string, tag: Entity, remove: boolean) => void };
 const originalCopyBytes = 32 * 1024 * 1024;
@@ -61,6 +62,7 @@ export function Viewer({ asset, scope, tags, collections, games, close, previous
   const [screenshotEdit, setScreenshotEdit] = useState(false);
   const [copying, setCopying] = useState(false);
   const [coverPicker, setCoverPicker] = useState(false);
+  const [containerCoverMenu, setContainerCoverMenu] = useState(false);
   const [savingCover, setSavingCover] = useState(false);
   const [more, setMore] = useState(false);
   const [diagnostics, setDiagnostics] = useState(false);
@@ -96,13 +98,13 @@ export function Viewer({ asset, scope, tags, collections, games, close, previous
     };
   }, [stripResource]);
   const copyController = useRef<AbortController | null>(null);
-  const controls = useViewerControls(playing, details || waiting || edit || tank || screenshotEdit || coverPicker || more || diagnostics || hovered);
+  const controls = useViewerControls(playing, details || waiting || edit || tank || screenshotEdit || coverPicker || containerCoverMenu || more || diagnostics || hovered);
   const format = (asset.format || asset.name.split(".").pop() || "").toLowerCase();
   const gameMedia = supportsGameMedia(asset);
   const canCopyOriginal = asset.kind === "image" && /^(jpe?g|png|webp|avif|gif|bmp|ico|apng)$/.test(format) && asset.mime !== "image/svg+xml" && !!asset.originalUrl
     && asset.size <= originalCopyBytes && asset.width > 0 && asset.height > 0 && asset.width * asset.height <= originalCopyPixels;
   useEffect(() => { setCopying(false); return () => { copyController.current?.abort(); copyController.current = null; }; }, [asset.id]);
-  useEffect(() => { setEdit(false); setTank(false); setScreenshotEdit(false); setCoverPicker(false); setMore(false); setDiagnostics(false); setPlaying(false); setWaiting(false); controls.reveal(); }, [asset.id]);
+  useEffect(() => { setEdit(false); setTank(false); setScreenshotEdit(false); setCoverPicker(false); setContainerCoverMenu(false); setMore(false); setDiagnostics(false); setPlaying(false); setWaiting(false); controls.reveal(); }, [asset.id]);
   useEffect(() => { if (!gameMedia) setScreenshotEdit(false); }, [gameMedia]);
   useEffect(() => { if (compact) setDetails(false); }, [compact]);
   const keyboard = useEffectEvent((event: KeyboardEvent) => {
@@ -158,7 +160,7 @@ export function Viewer({ asset, scope, tags, collections, games, close, previous
     finally { if (copyController.current === controller) { copyController.current = null; setCopying(false); } }
   }
   function openCoverPicker() {
-    setMore(false); setDetails(false); setDiagnostics(false);
+    setMore(false); setContainerCoverMenu(false); setDetails(false); setDiagnostics(false);
     setFrame({ time: asset.cover?.time || 0, duration: asset.duration, ready: false });
     setCoverPicker(true); controls.reveal();
   }
@@ -174,7 +176,7 @@ export function Viewer({ asset, scope, tags, collections, games, close, previous
   const image = asset.kind !== "video";
   return <div className={`viewer ${compact ? "compact-viewer" : ""} ${coverPicker ? "with-cover-picker" : ""} ${controls.hidden ? "is-immersive" : ""}`} role="dialog" aria-modal="true" aria-label={asset.title || asset.name}
     onPointerMove={event => { if (!compact && asset.kind === "video" && event.pointerType !== "touch") controls.reveal(); }}>
-    <header className="viewer-heading"><button className="icon-button" aria-label="关闭预览" disabled={savingCover} onClick={close}><X size={21} /></button><div className="viewer-name"><strong>{asset.title || asset.name}</strong><span>{kindNames[asset.kind]}{asset.effectiveHidden && <> · <EyeOff size={11} /> 隐藏</>}</span></div><div className="viewer-actions">{canDecodeTank(asset) && <button className="icon-button" title="坦克显形" aria-label="坦克显形" onClick={() => setTank(true)}><ScanEye size={18} /></button>}<button className={`icon-button ${asset.starred ? "is-active" : ""}`} title={asset.starred ? "取消星标" : "添加星标"} aria-label={asset.starred ? "取消星标" : "添加星标"} disabled={busy} onClick={() => void update({ starred: !asset.starred })}><Star size={18} fill={asset.starred ? "currentColor" : "none"} /></button><a className="icon-button" title="下载原件" aria-label="下载原件" href={asset.downloadUrl} download><Download size={18} /></a><button className={`icon-button ${details ? "is-active" : ""}`} title="素材信息" aria-label="素材信息" disabled={coverPicker} onClick={() => setDetails(!details)}><Info size={18} /></button>{!image && <button className={`icon-button ${more ? "is-active" : ""}`} title="视频选项" aria-label="视频选项" aria-haspopup="menu" aria-expanded={more} disabled={savingCover} onClick={() => setMore(!more)}><Ellipsis size={20} /></button>}</div></header>
+    <header className="viewer-heading"><button className="icon-button" aria-label="关闭预览" disabled={savingCover} onClick={close}><X size={21} /></button><div className="viewer-name"><strong>{asset.title || asset.name}</strong><span>{kindNames[asset.kind]}{asset.effectiveHidden && <> · <EyeOff size={11} /> 隐藏</>}</span></div><div className="viewer-actions">{canDecodeTank(asset) && <button className="icon-button" title="坦克显形" aria-label="坦克显形" onClick={() => setTank(true)}><ScanEye size={18} /></button>}<button className={`icon-button ${asset.starred ? "is-active" : ""}`} title={asset.starred ? "取消星标" : "添加星标"} aria-label={asset.starred ? "取消星标" : "添加星标"} disabled={busy} onClick={() => void update({ starred: !asset.starred })}><Star size={18} fill={asset.starred ? "currentColor" : "none"} /></button><a className="icon-button" title="下载原件" aria-label="下载原件" href={asset.downloadUrl} download><Download size={18} /></a><button className={`icon-button ${details ? "is-active" : ""}`} title="素材信息" aria-label="素材信息" disabled={coverPicker} onClick={() => setDetails(!details)}><Info size={18} /></button>{!image && <button className={`icon-button ${more ? "is-active" : ""}`} title="视频选项" aria-label="视频选项" aria-haspopup="menu" aria-expanded={more} disabled={savingCover} onClick={() => { setContainerCoverMenu(false); setMore(!more); }}><Ellipsis size={20} /></button>}<ContainerCoverMenu asset={asset} scope={scope} open={containerCoverMenu} setOpen={open => { setContainerCoverMenu(open); if (open) setMore(false); }} disabled={savingCover || coverPicker || busy} changed={changed} notify={notify} /></div></header>
     {more && <>
       <button className="viewer-menu-dismiss" aria-label="关闭视频选项" onClick={() => setMore(false)} />
       <div className="viewer-video-menu compact-action-menu" role="menu">

@@ -68,9 +68,11 @@ export function CollectionGallery({ entries, expanded, formation, selected, sele
     const count = group.assetIds.length;
     const selectedCount = group.assetIds.filter(id => selected.has(id)).length;
     const label = group.name || "未命名分组";
+    const coverID = group.coverAssetId || group.assetIds[0];
+    const sheets = [coverID, ...group.assetIds.filter(id => id !== coverID)].slice(0, 3);
     return <article key={group.id} className={`media-group ${open ? "expanded" : "collapsed"} ${selectedCount ? "has-selected" : ""}`} data-group={group.id} data-span={open ? "full" : undefined} aria-label={`${label}，${count} 个素材`}>
       <button className="group-preview" hidden={open} onClick={() => toggle(group)} aria-label={`展开${label}，${count} 个素材`} aria-expanded={open} aria-controls={`group-content-${group.id}`}>
-        <div className="group-stack" aria-hidden="true">{group.assetIds.slice(0, 3).reverse().map((id, index, ids) => <span className="group-sheet" key={id} style={{ "--sheet": ids.length - index - 1 } as CSSProperties}><Image size={24} strokeWidth={1.2} /><img src={`${base}media/${id}/thumbnail`} alt="" loading="eager" decoding="sync" onError={event => { event.currentTarget.style.opacity = "0"; }} /></span>)}</div>
+        <div className="group-stack" aria-hidden="true">{sheets.reverse().map((id, index, ids) => <span className="group-sheet" key={id} style={{ "--sheet": ids.length - index - 1 } as CSSProperties}><Image size={24} strokeWidth={1.2} /><img src={(id === coverID && group.coverUrl) || items.find(asset => asset.id === id)?.thumbnailUrl || `${base}media/${id}/thumbnail`} alt="" loading="eager" decoding="sync" onLoad={event => { event.currentTarget.style.opacity = "1"; }} onError={event => { event.currentTarget.style.opacity = "0"; }} /></span>)}</div>
       </button>
       <header className="group-heading">
         <div className="group-toggle group-heading-expanded" hidden={!open} onPointerDownCapture={event => {

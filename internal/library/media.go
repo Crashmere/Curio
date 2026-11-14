@@ -238,6 +238,9 @@ func (l *Library) finishPurge(ctx context.Context, hash string) error {
 	if _, err = tx.Exec("DELETE FROM assets WHERE id=? AND purge_pending=1", hash); err != nil {
 		return err
 	}
+	if err = pruneContainerCovers(tx); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
