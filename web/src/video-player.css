@@ -17,18 +17,29 @@
 .player-waiting, .player-error { position: absolute; display: flex; align-items: center; gap: 12px; max-width: calc(100% - 28px); padding: 12px 16px; border: 1px solid #ffffff20; border-radius: 10px; background: var(--player-surface); color: var(--player-ink); z-index: 3; }
 .player-error { flex-wrap: wrap; justify-content: center; font-size: 12px; }
 .player-error button { min-height: 36px; padding: 7px 12px; border: 1px solid #ffffff30; border-radius: 6px; background: #ffffff0d; white-space: nowrap; }
-.player-controls { position: absolute; left: 18px; right: 18px; bottom: 18px; max-width: 780px; margin: 0 auto; padding: 8px 12px; border: 1px solid #ffffff20; border-radius: 12px; background: var(--player-surface); color: var(--player-ink); backdrop-filter: blur(16px); display: flex; flex-direction: column; gap: 3px; z-index: 4; transition: opacity 180ms var(--ease), transform 180ms var(--ease); }
+.player-controls { position: absolute; left: 18px; right: 18px; bottom: 18px; max-width: 780px; margin: 0 auto; padding: 8px 12px; border: 1px solid #ffffff20; border-radius: 12px; background: var(--player-surface); color: var(--player-ink); backdrop-filter: blur(16px); display: flex; flex-direction: column; gap: 10px; z-index: 4; transition: opacity 180ms var(--ease), transform 180ms var(--ease); }
 .curio-player.controls-hidden .player-controls { opacity: 0; pointer-events: none; transform: translateY(6px); }
 .player-seek-row { display: flex; align-items: center; gap: 10px; }
 .player-time { font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; color: #e8e6dc; min-width: 35px; }
 .player-time:last-child { text-align: right; }
-.player-seek { flex: 1; position: relative; display: flex; align-items: center; min-width: 0; }
+.player-time-control { position: relative; flex-shrink: 0; min-width: 42px; max-width: 12ch; font-size: 11px; font-variant-numeric: tabular-nums; line-height: 18px; }
+.player-time-width { display: block; min-height: 24px; padding: 2px 4px; border: 1px solid transparent; white-space: pre; visibility: hidden; overflow: hidden; }
+.player-time-button, .player-time-input { position: absolute; inset: 0; width: 100%; height: 24px; padding: 2px 4px; border: 1px solid transparent; border-radius: 4px; font: inherit; text-align: left; }
+.player-time-button { background: transparent; transition: background 120ms; }
+.player-time-button:hover:not(:disabled) { background: #ffffff12; }
+.player-time-input { border-color: #ffffff28; background: #ffffff0d; color: var(--player-ink); caret-color: var(--player-ink); }
+.player-time-control .player-time { text-align: left; }
+.player-time-error { position: absolute; top: calc(100% + 4px); left: 0; width: max-content; max-width: min(220px, calc(100vw - 80px)); padding: 4px 7px; border: 1px solid #e3bda433; border-radius: 5px; background: #2a201ff5; color: #edc4b5; font-size: 10px; line-height: 1.4; pointer-events: none; z-index: 4; }
+.player-seek { --player-seek-thumb-size: 11px; flex: 1; position: relative; display: flex; align-items: center; min-width: 0; }
 .player-seek input[type="range"] { position: relative; width: 100%; height: 28px; margin: 0; padding: 0; background: transparent; border: 0; appearance: none; cursor: pointer; touch-action: none; z-index: 1; }
 .player-seek input::-webkit-slider-runnable-track { height: 3px; border-radius: 3px; background: linear-gradient(to right, var(--player-accent) var(--played), #ffffff28 var(--played)); }
 .player-seek input::-moz-range-track { height: 3px; border-radius: 3px; background: #ffffff28; }
 .player-seek input::-moz-range-progress { background: var(--player-accent); height: 3px; }
-.player-seek input::-webkit-slider-thumb { appearance: none; width: 11px; height: 11px; margin-top: -4px; border: 0; border-radius: 50%; background: #f9f3e5; }
-.player-seek input::-moz-range-thumb { width: 11px; height: 11px; border: 0; border-radius: 50%; background: #f9f3e5; }
+.player-seek input::-webkit-slider-thumb { appearance: none; width: var(--player-seek-thumb-size); height: var(--player-seek-thumb-size); margin-top: calc((3px - var(--player-seek-thumb-size)) / 2); border: 0; border-radius: 50%; background: #f9f3e5; }
+.player-seek input::-moz-range-thumb { width: var(--player-seek-thumb-size); height: var(--player-seek-thumb-size); border: 0; border-radius: 50%; background: #f9f3e5; }
+.player-seek-preview { position: absolute; top: calc(50% + 7px); left: 0; display: block; width: max-content; max-width: 100%; height: 22px; padding: 3px 7px; border: 1px solid #ffffff26; border-radius: 5px; background: #182018f7; color: #f3efe4; box-shadow: 0 3px 10px #0004; font-size: 10px; line-height: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; opacity: 0; visibility: hidden; z-index: 3; transition: opacity 100ms; }
+.player-seek-preview::before { content: ""; position: absolute; bottom: 100%; left: var(--preview-anchor, 50%); width: 1px; height: 7px; background: #e8e6dc65; }
+.player-seek-preview[data-visible="true"] { opacity: 1; visibility: visible; }
 .player-buffered { position: absolute; inset: 0; display: flex; align-items: center; pointer-events: none; }
 .player-buffered i { position: absolute; height: 3px; background: #ffffff30; border-radius: 3px; }
 .player-buttons { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -70,6 +81,11 @@
 @media (max-width: 900px), (pointer: coarse) {
   .curio-player { touch-action: none; overscroll-behavior: contain; }
   .player-controls { left: max(8px, env(safe-area-inset-left)); right: max(8px, env(safe-area-inset-right)); bottom: calc(12px + env(safe-area-inset-bottom)); padding: 5px 8px; gap: 0; }
+  .player-time-control { min-height: 44px; }
+  .player-time-button { height: 44px; }
+  .player-time-control.is-editing { font-size: 16px; }
+  .player-time-control.is-editing .player-time-width { min-height: 44px; line-height: 38px; }
+  .player-time-control.is-editing .player-time-input { top: 6px; bottom: auto; height: 32px; }
   .player-seek input[type="range"] { height: 44px; }
   .player-buttons { gap: 0; }
   .player-buttons button { min-width: 44px; height: 44px; }

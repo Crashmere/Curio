@@ -6,15 +6,9 @@ import { CoverFrameRequests, type CoverStrip, type CoverStripFrame, type CoverSt
 import { VideoPlayback, type PlaybackRepresentation } from "./video-playback";
 import { useCompactViewer } from "./viewer-interactions";
 import { CompatibilityPlaybackGlyph, SkipSecondsGlyph } from "./player-icons";
+import { formatDurationClock, PlayerSeekPreview, PlayerTimeEditor } from "./PlayerTimeline";
 import { useIsPresent } from "./motion";
 import "./video-player.css";
-
-function formatDurationClock(seconds: number) {
-  const total = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
-  const minutes = Math.floor(total / 60) % 60;
-  const hours = Math.floor(total / 3600);
-  return `${hours ? hours + ":" + String(minutes).padStart(2, "0") : minutes}:${String(total % 60).padStart(2, "0")}`;
-}
 
 export function buildFramePreviewUrl(id: string, time: number, size = "preview") {
   return `${base}api/assets/${id}/frame?${new URLSearchParams({ time: String(time), size })}`;
@@ -244,6 +238,7 @@ export function VideoPlayer({
   const [fullscreen, setFullscreen] = useState(false);
   const [controlsHidden, setControlsHidden] = useState(false);
   const [controlsHovered, setControlsHovered] = useState(false);
+  const [timeEditing, setTimeEditing] = useState(false);
   const controlTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const [started, setStarted] = useState(!!framePicker);
@@ -286,16 +281,17 @@ export function VideoPlayer({
   }, []);
   useEffect(() => {
     clearTimeout(controlTimer.current);
-    if (!playing || buffering || errorMsg || framePicker || controlsHovered) setControlsHidden(false);
+    if (!playing || buffering || errorMsg || framePicker || controlsHovered || timeEditing) setControlsHidden(false);
     else controlTimer.current = setTimeout(() => setControlsHidden(true), 2600);
     return () => clearTimeout(controlTimer.current);
-  }, [playing, buffering, errorMsg, fullscreen, !!framePicker, controlsHovered]);
+  }, [playing, buffering, errorMsg, fullscreen, !!framePicker, controlsHovered, timeEditing]);
+  useEffect(() => { onControlsHoverChange(controlsHovered || timeEditing); }, [controlsHovered, timeEditing, onControlsHoverChange]);
   useEffect(() => () => onControlsHoverChange(false), [onControlsHoverChange]);
 
   function controlActivity() {
     setControlsHidden(false);
     clearTimeout(controlTimer.current);
-    if (playing && !buffering && !errorMsg && !framePicker && !controlsHovered) controlTimer.current = setTimeout(() => setControlsHidden(true), 2600);
+    if (playing && !buffering && !errorMsg && !framePicker && !controlsHovered && !timeEditing) controlTimer.current = setTimeout(() => setControlsHidden(true), 2600);
     onActivity();
   }
   useEffect(() => { onWaiting(buffering || !!errorMsg); }, [buffering, errorMsg, onWaiting]);
@@ -565,6 +561,24 @@ export function VideoPlayer({
     });
   }
 
+  function seekToTime(target: number) {
+    const el = videoRef.current;
+    const source = playbackRef.current;
+    if (!el || !source || !sourceReady || locked || !isPresent) return;
+    const resume = !el.paused;
+    resumeOnRelease.current = false;
+    activeScrubValue.current = null;
+    pendingPreviewTime.current = null;
+    cancelAnimationFrame(seekRafId.current);
+    seekRafId.current = 0;
+    setScrubTime(null);
+    el.pause();
+    source.loadFrame(target);
+    setCurrentTime(target);
+    if (resume) void startPlayback();
+    controlActivity();
+  }
+
   function stepSingleFrame(dir: -1 | 1) {
     const el = videoRef.current;
     if (!el || locked || !duration) return;
@@ -630,11 +644,15 @@ export function VideoPlayer({
   const playedRatio = effectiveDuration
     ? Math.min(100, (effectiveTime / effectiveDuration) * 100)
     : 0;
+  const maxSeekTime = framePicker && effectiveDuration
+    ? Math.max(0, effectiveDuration - 0.5 / nominalFps)
+    : effectiveDuration;
+  const seekDisabled = locked || !isPresent || !sourceReady || !effectiveDuration;
 
   return (
     <div
       ref={stageBoxRef}
-      className={`curio-player ${playing ? "is-playing" : ""} ${started ? "is-started" : ""} ${framePicker ? "is-frame-picker" : ""} ${playing && !buffering && !errorMsg && !framePicker && (fullscreen ? controlsHidden : chromeHidden) ? "controls-hidden" : ""}`}
+      className={`curio-player ${playing ? "is-playing" : ""} ${started ? "is-started" : ""} ${framePicker ? "is-frame-picker" : ""} ${playing && !buffering && !errorMsg && !framePicker && !timeEditing && (fullscreen ? controlsHidden : chromeHidden) ? "controls-hidden" : ""}`}
     >
       <video
         ref={videoRef}
@@ -891,21 +909,27 @@ export function VideoPlayer({
         onPointerEnter={(e) => {
           if (e.pointerType === "mouse") {
             setControlsHovered(true);
-            onControlsHoverChange(true);
           }
           controlActivity();
         }}
         onPointerLeave={(e) => {
           if (e.pointerType !== "mouse") return;
           setControlsHovered(false);
-          onControlsHoverChange(false);
           controlActivity();
         }}
       >
         <div className="player-seek-row">
-          <span className="player-time">{formatDurationClock(effectiveTime)}</span>
-          <div
-            className="player-seek"
+          <PlayerTimeEditor
+            key={sourceHash}
+            time={effectiveTime}
+            maxTime={maxSeekTime}
+            disabled={seekDisabled}
+            onCommit={seekToTime}
+            onEditingChange={setTimeEditing}
+          />
+          <PlayerSeekPreview
+            maxTime={maxSeekTime}
+            disabled={seekDisabled}
             style={{ "--played": `${playedRatio}%` } as CSSProperties}
           >
             <div className="player-buffered" aria-hidden="true">
@@ -925,15 +949,13 @@ export function VideoPlayer({
               aria-label={framePicker ? "选帧进度" : "播放进度"}
               aria-valuetext={`${formatDurationClock(effectiveTime)} / ${formatDurationClock(effectiveDuration)}`}
               min="0"
-              max={
-                framePicker && effectiveDuration
-                  ? Math.max(0, effectiveDuration - 0.5 / nominalFps)
-                  : effectiveDuration || 1
-              }
+              max={effectiveDuration ? maxSeekTime : 1}
               step={framePicker ? ".001" : ".1"}
               value={effectiveTime}
-              disabled={locked || !sourceReady || !effectiveDuration}
+              disabled={seekDisabled}
               onPointerDown={() => {
+                // Apply an inline edit before the drag captures playback intent.
+                stageBoxRef.current?.querySelector<HTMLInputElement>(".player-time-input")?.blur();
                 resumeOnRelease.current =
                   !!videoRef.current && !videoRef.current.paused;
                 activeScrubValue.current = videoRef.current?.currentTime || currentTime;
@@ -954,7 +976,7 @@ export function VideoPlayer({
               onKeyUp={finishScrub}
               onBlur={finishScrub}
             />
-          </div>
+          </PlayerSeekPreview>
           <span
             className="player-time"
             title={started ? "剩余时长" : "视频时长"}

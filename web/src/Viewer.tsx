@@ -64,6 +64,7 @@ export function Viewer({ asset, scope, tags, collections, games, close, previous
   const [screenshotEdit, setScreenshotEdit] = useState(false);
   const [copying, setCopying] = useState(false);
   const [coverPicker, setCoverPicker] = useState(false);
+  const [coverInitialTime, setCoverInitialTime] = useState(0);
   const [containerCoverMenu, setContainerCoverMenu] = useState(false);
   const [savingCover, setSavingCover] = useState(false);
   const [more, setMore] = useState(false);
@@ -106,7 +107,7 @@ export function Viewer({ asset, scope, tags, collections, games, close, previous
   const canCopyOriginal = asset.kind === "image" && /^(jpe?g|png|webp|avif|gif|bmp|ico|apng)$/.test(format) && asset.mime !== "image/svg+xml" && !!asset.originalUrl
     && asset.size <= originalCopyBytes && asset.width > 0 && asset.height > 0 && asset.width * asset.height <= originalCopyPixels;
   useEffect(() => { setCopying(false); return () => { copyController.current?.abort(); copyController.current = null; }; }, [asset.id, isPresent]);
-  useEffect(() => { setEdit(false); setTank(false); setScreenshotEdit(false); setCoverPicker(false); setContainerCoverMenu(false); setMore(false); setDiagnostics(false); setPlaying(false); setWaiting(false); controls.reveal(); }, [asset.id]);
+  useEffect(() => { setEdit(false); setTank(false); setScreenshotEdit(false); setCoverPicker(false); setCoverInitialTime(0); setContainerCoverMenu(false); setMore(false); setDiagnostics(false); setPlaying(false); setWaiting(false); controls.reveal(); }, [asset.id]);
   useEffect(() => { if (!gameMedia) setScreenshotEdit(false); }, [gameMedia]);
   useEffect(() => { if (compact) setDetails(false); }, [compact]);
   const keyboard = useEffectEvent((event: KeyboardEvent) => {
@@ -173,8 +174,18 @@ export function Viewer({ asset, scope, tags, collections, games, close, previous
   }
   function openCoverPicker() {
     if (!isPresent) return;
+    const video = stage.current?.querySelector<HTMLVideoElement>(".player-video");
+    const timeline = stage.current?.querySelector<HTMLInputElement>(".player-seek input[type=range]");
+    const total = video && Number.isFinite(video.duration) && video.duration > 0 ? video.duration : asset.duration;
+    const current = video
+      ? video.readyState >= 1 && Number.isFinite(video.currentTime) ? video.currentTime : Number(timeline?.value || video.currentTime) || 0
+      : asset.cover?.time || 0;
+    const end = Math.max(0, total - 0.5 / (asset.frameRate || 30));
+    const initialTime = Math.max(0, total > 0 ? Math.min(end, current) : current);
+    video?.pause();
     setMore(false); setContainerCoverMenu(false); setDetails(false); setDiagnostics(false);
-    setFrame({ time: asset.cover?.time || 0, duration: asset.duration, ready: false });
+    setCoverInitialTime(initialTime);
+    setFrame({ time: initialTime, duration: total, ready: false });
     setCoverPicker(true); controls.reveal();
   }
   async function saveCover(time: number | null) {
@@ -213,7 +224,7 @@ export function Viewer({ asset, scope, tags, collections, games, close, previous
     </section>}
     <div className={`viewer-body ${details ? "with-details" : ""}`}>
       <div className="viewer-canvas" ref={stage} data-direction={direction < 0 ? "previous" : direction > 0 ? "next" : undefined}>
-        {image ? <ImageViewer key={asset.id} asset={asset} previous={previous} next={next} close={close} toggleChrome={controls.toggle} /> : <div className="media-stage dark" key={asset.id}><VideoPlayer key={asset.id} asset={asset} locked={savingCover || edit || screenshotEdit} chromeHidden={controls.hidden} onActivity={controls.reveal} onToggleChrome={controls.toggle} onPrevious={() => previous?.()} onNext={() => next?.()} onClose={close} onPlaybackChange={setPlaying} onWaiting={setWaiting} onControlsHoverChange={setHovered} diagnosticsOpen={diagnostics} onCloseDiagnostics={() => setDiagnostics(false)} framePicker={coverPicker ? { initialTime: asset.cover?.time || 0, onChange: setFrame } : undefined} />{coverPicker && frame.ready && frame.duration > 0 && <ExactCoverPreview asset={asset} time={frame.time} strip={stripState.strip} />}</div>}
+        {image ? <ImageViewer key={asset.id} asset={asset} previous={previous} next={next} close={close} toggleChrome={controls.toggle} /> : <div className="media-stage dark" key={asset.id}><VideoPlayer key={asset.id} asset={asset} locked={savingCover || edit || screenshotEdit} chromeHidden={controls.hidden} onActivity={controls.reveal} onToggleChrome={controls.toggle} onPrevious={() => previous?.()} onNext={() => next?.()} onClose={close} onPlaybackChange={setPlaying} onWaiting={setWaiting} onControlsHoverChange={setHovered} diagnosticsOpen={diagnostics} onCloseDiagnostics={() => setDiagnostics(false)} framePicker={coverPicker ? { initialTime: coverInitialTime, onChange: setFrame } : undefined} />{coverPicker && frame.ready && frame.duration > 0 && <ExactCoverPreview asset={asset} time={frame.time} strip={stripState.strip} />}</div>}
         {!coverPicker && previous && <button className="viewer-step previous" aria-label="上一项" onClick={previous}><ChevronLeft size={23} /></button>}{!coverPicker && next && <button className="viewer-step next" aria-label="下一项" onClick={next}><ChevronRight size={23} /></button>}
       </div>
       <MotionPresence key={`${asset.id}:details-backdrop`} present={details && compact && isPresent} variant="shade">{details && compact && <button className="viewer-details-backdrop" aria-label="收起素材信息" onClick={() => setDetails(false)} />}</MotionPresence>
