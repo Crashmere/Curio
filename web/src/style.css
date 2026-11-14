@@ -276,6 +276,7 @@ input[type="search"]::-webkit-search-cancel-button { display: none; }
 .dialog-backdrop { position: fixed; inset: 0; padding: 24px; background: #24301e66; backdrop-filter: blur(5px); display: flex; justify-content: center; align-items: center; z-index: 60; }
 .dialog { background: var(--surface); border: 1px solid #e6e9dc; border-radius: 16px; padding: 23px; width: 470px; max-width: 100%; max-height: calc(100dvh - 48px); overflow-y: auto; scrollbar-width: thin; box-shadow: 0 24px 80px #1c291a2b; animation: surface-in 220ms var(--ease); }
 .dialog.wide { width: 670px; }
+.dialog.wide:has(> .collection-membership-form) { width: 960px; }
 .dialog-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 23px; }
 .dialog-heading h2 { font-size: 17px; font-weight: 500; color: #647851; }
 .dialog-heading .icon-button { width: 29px; height: 29px; }
@@ -311,6 +312,8 @@ input[type="search"]::-webkit-search-cancel-button { display: none; }
 .entity-picker-sections .choice-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 140px), 1fr)); max-height: none; overflow: visible; padding: 0; }
 .entity-picker-sections .choice-chips > button { min-width: 0; }
 .entity-picker-sections .choice-chips > button > svg { flex-shrink: 0; }
+.collection-membership-form .entity-picker-sections { max-height: min(520px, 50dvh); }
+.collection-membership-form .entity-picker-sections .choice-chips { grid-template-columns: repeat(auto-fill, min(100%, 128px)); }
 .form-switches { display: flex; align-items: center; gap: 23px; flex-wrap: wrap; margin-top: 22px; }
 .form-switches label, .confirm-check { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #7b9364; }
 .form-help { color: #a4b294; font-size: 10px; line-height: 1.9; margin-top: 15px; }

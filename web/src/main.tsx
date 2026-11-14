@@ -978,7 +978,7 @@ function MembershipEditor({ kind, count, assets, scope, items, collectionLayout,
     try { await save(value); } catch (error) { setError(error instanceof Error ? error.message : String(error)); } finally { setBusy(false); }
   }
   return <Dialog title={`管理${label} · ${count} 个素材`} close={close} wide dirty={dirty} busy={working}>
-    <div className="metadata-form">
+    <div className={`metadata-form ${kind === "collections" ? "collection-membership-form" : ""}`}>
       <p className="form-help">已勾选所有所选素材共同所在的{label}。取消勾选即移除，新增勾选即添加，点击应用后保存；未改动的关联保持原样。</p>
       {preserveCollectionGroups && <p className="form-help">已完整选中 {preserveCollectionGroups.groupIds.length} 个分组，新增收藏集时将保留分组及名称。</p>}
       <EntityPicker kind={kind} scope={scope} items={items} selected={selectedIds} change={setSelectedIds} disabled={busy} onBusyChange={setCreating} onCreated={created} collectionLayout={collectionLayout} />
