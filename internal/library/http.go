@@ -125,6 +125,8 @@ func (l *Library) Handler(frontend fs.FS) http.Handler {
 	r.Head("/media/{id}/stream/index.m3u8", l.streamPlaylist)
 	r.Get("/media/{id}/stream/{segment}.ts", l.streamSegment)
 	r.Head("/media/{id}/stream/{segment}.ts", l.streamSegment)
+	r.Get("/media/{id}/native", l.nativePlaybackMedia)
+	r.Head("/media/{id}/native", l.nativePlaybackMedia)
 	r.Get("/media/{id}/{kind}", l.media)
 	static := http.FileServer(http.FS(frontend))
 	r.Get("/*", func(w http.ResponseWriter, r *http.Request) {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"os"
@@ -82,6 +83,13 @@ type playbackSpec struct {
 	hasAlpha                   bool
 	videoCodec                 string
 	sourceAudio                *playbackAudio
+	originalSize               int64
+	originalModified           int64
+	nativeRemux                bool
+	nativeMDATs                int
+	nativeMovieTimescale       uint32
+	nativeVideoTimescale       uint32
+	nativeVideoTag             string
 }
 
 var errPlaybackDeleted = errors.New("视频已被永久删除")
@@ -125,7 +133,7 @@ func (l *Library) playbackOriginal(hash string) (Asset, os.FileInfo, error) {
 }
 
 func (p *playbackCache) specification(ctx context.Context, l *Library, f Asset, stat os.FileInfo) (*playbackSpec, error) {
-	key := fmt.Sprintf("probe:%s:%d:%d", f.ID, stat.Size(), stat.ModTime().UnixNano())
+	key := playbackStamp(f.ID, stat)
 	p.mu.Lock()
 	if cached, ok := p.specs[key]; ok {
 		cached.used = time.Now()
@@ -166,7 +174,7 @@ func (p *playbackCache) specification(ctx context.Context, l *Library, f Asset, 
 }
 
 func (l *Library) probePlayback(ctx context.Context, hash, stamp string) (*playbackSpec, error) {
-	original, _, err := l.playbackOriginal(hash)
+	original, originalStat, err := l.playbackOriginal(hash)
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +218,7 @@ func (l *Library) probePlayback(ctx context.Context, hash, stamp string) (*playb
 	if err = json.Unmarshal(output.Bytes(), &raw); err != nil {
 		return nil, err
 	}
-	spec := &playbackSpec{hash: hash, stamp: stamp, path: l.Object(hash)}
+	spec := &playbackSpec{hash: hash, stamp: stamp, path: l.Object(hash), originalSize: originalStat.Size(), originalModified: originalStat.ModTime().UnixNano()}
 	spec.frameStart, _ = strconv.ParseFloat(raw.Format.Start, 64)
 	video, audio, audioCompatible, audioAAC := false, false, true, false
 	videoCodec, audioCodec := "", ""
@@ -310,6 +318,7 @@ func (l *Library) probePlayback(ctx context.Context, hash, stamp string) (*playb
 	if math.Abs(spec.frameStart) > 0.001 || videoLead < -0.001 || videoLead > 0.25 {
 		spec.sourceCodecs = ""
 	}
+	spec.admitNativeRemux(original, originalStat, audio, audioAAC)
 	if spec.hdr {
 		spec.hdrPeak = l.probePlaybackHDRPeak(ctx, spec.path, spec.transfer)
 	}
@@ -372,7 +381,15 @@ func (l *Library) playbackInfo(w http.ResponseWriter, r *http.Request) {
 	if spec.hasAlpha {
 		result.FallbackError = errPlaybackAlpha.Error()
 	}
-	if spec.sourceCodecs != "" {
+	if spec.nativeRemux {
+		record, nativeErr := l.enqueueNativeRemux(spec)
+		if nativeErr != nil && l.playbackAllowed(spec.hash) == nil {
+			slog.Warn("prepare native MP4 playback", "asset", spec.hash, "error", nativeErr)
+		}
+		if record != nil {
+			result.Source = &playbackSource{URL: "/curio/media/" + spec.hash + "/native?revision=" + record.Digest, Mime: spec.sourceMime, Codecs: spec.sourceCodecs, Audio: spec.sourceAudio}
+		}
+	} else if spec.sourceCodecs != "" {
 		result.Source = &playbackSource{URL: "/curio/media/" + spec.hash + "/source", Mime: spec.sourceMime, Codecs: spec.sourceCodecs, Audio: spec.sourceAudio}
 	}
 	if err = l.playbackAllowed(spec.hash); err != nil {

@@ -4,7 +4,10 @@ import { api as requestJson, type PlaybackDescriptor } from "./api";
 type PlaybackMode = "source" | "native-hls" | "mse-hls" | "switching";
 export type PlaybackRepresentation = "source" | "compatibility" | null;
 
-const stalledOriginals = new Set<string>();
+const failedNativeSources = new Set<string>();
+const NATIVE_STARTUP_TIMEOUT = 5000;
+
+type StartupProbe = { intent: "play" | "frame"; elapsed: number; at?: number };
 
 type NativeMediaDiagnostics = HTMLVideoElement & {
   webkitAudioDecodedByteCount?: number;
@@ -28,7 +31,7 @@ export class VideoPlayback {
   private mode?: PlaybackMode;
   private ready = false;
   private disposed = false;
-  private sourceFailed = false;
+  private failedSourceUrl?: string;
   private switching = false;
   private suspended = false;
   private wantsPlayback = false;
@@ -40,6 +43,9 @@ export class VideoPlayback {
   private progressTimer?: ReturnType<typeof setInterval>;
   private progressProbe?: { time: number; at: number };
   private progressPlaybackStarted = false;
+  private nativeFrameReady = false;
+  private startupProbe?: StartupProbe;
+  private resumeFrameStartup = false;
   private diagnosticEvents: { event: string; at: number; time: number; paused: boolean; ready: number }[] = [];
   private readonly diagnosticStart = performance.now();
   private readonly observedEvents = ["play", "playing", "pause", "waiting", "stalled", "seeking", "seeked", "loadedmetadata", "loadeddata", "emptied", "error"];
@@ -56,19 +62,57 @@ export class VideoPlayback {
     video.addEventListener("timeupdate", this.checkSourceAudio);
     video.addEventListener("seeking", this.resetAudioCheck);
     for (const event of this.observedEvents) video.addEventListener(event, this.observeMedia);
+    document.addEventListener("visibilitychange", this.observeVisibility);
   }
 
   private observeMedia = (event: Event): void => {
     this.recordEvent(event.type);
     if (event.type === "play") this.startProgressCheck();
     else if (event.type === "playing") {
+      this.finishStartupCheck();
       this.progressPlaybackStarted = true;
       this.progressProbe = undefined;
       this.startProgressCheck();
     }
-    else if (event.type === "pause" && this.video.paused) this.stopProgressCheck();
+    else if (event.type === "pause" && this.video.paused) this.paused();
+    else if (event.type === "loadeddata" || event.type === "seeked") this.finishStartupCheck();
+    else if (event.type === "error") this.stopProgressCheck();
     else if (["seeking", "waiting", "emptied"].includes(event.type)) this.progressProbe = undefined;
   };
+
+  private foregroundAvailable(): boolean {
+    return !document.hidden || document.pictureInPictureElement === this.video;
+  }
+
+  private observeVisibility = (): void => {
+    this.progressProbe = undefined;
+    const probe = this.startupProbe;
+    if (!probe) return;
+    const available = this.foregroundAvailable();
+    probe.at = available ? performance.now() : undefined;
+    if (available && this.resumeFrameStartup) {
+      this.suspended = false;
+      this.resumeFrameStartup = false;
+      this.startProgressCheck();
+    }
+  };
+
+  private startStartupCheck(intent: StartupProbe["intent"]): void {
+    if (this.disposed || this.mode !== "source" || this.nativeFrameReady || this.descriptor?.fallbackError) return;
+    if (this.startupProbe?.intent !== intent) {
+      this.startupProbe = { intent, elapsed: 0, at: this.foregroundAvailable() ? performance.now() : undefined };
+    }
+    this.startProgressCheck();
+  }
+
+  private finishStartupCheck(): boolean {
+    if (this.mode !== "source" || this.video.seeking || this.video.readyState < 2 || this.video.videoWidth <= 0) return false;
+    this.nativeFrameReady = true;
+    this.startupProbe = undefined;
+    this.resumeFrameStartup = false;
+    if (!this.wantsPlayback) this.stopProgressCheck();
+    return true;
+  }
 
   private startProgressCheck(): void {
     if (this.disposed || this.mode !== "source" || this.progressTimer) return;
@@ -80,14 +124,31 @@ export class VideoPlayback {
     this.progressTimer = undefined;
     this.progressProbe = undefined;
     this.progressPlaybackStarted = false;
+    this.startupProbe = undefined;
+    this.resumeFrameStartup = false;
   }
 
   private checkSourceProgress = (): void => {
-    if (this.disposed || this.mode !== "source" || !this.wantsPlayback || this.suspended) {
+    if (this.disposed || this.mode !== "source" || (!this.wantsPlayback && !this.startupProbe) || this.suspended) {
       this.stopProgressCheck();
       return;
     }
     const video = this.video;
+    const now = performance.now();
+    if (this.startupProbe && !this.finishStartupCheck()) {
+      const probe = this.startupProbe;
+      if (!this.foregroundAvailable() || (probe.intent === "play" && (video.paused || video.playbackRate <= 0))) {
+        probe.at = undefined;
+      } else {
+        if (probe.at !== undefined) probe.elapsed += now - probe.at;
+        probe.at = now;
+        if (probe.elapsed >= NATIVE_STARTUP_TIMEOUT) {
+          this.fallbackSource("source-startup-stalled");
+          return;
+        }
+      }
+    }
+    if (!this.wantsPlayback) return;
     const time = video.currentTime;
     const buffered = video.buffered;
     let bufferedAhead = false;
@@ -101,18 +162,23 @@ export class VideoPlayback {
       this.progressProbe = undefined;
       return;
     }
-    const now = performance.now();
     if (!this.progressProbe || Math.abs(time - this.progressProbe.time) > 0.02) {
       this.progressProbe = { time, at: now };
       return;
     }
     if (now - this.progressProbe.at < 3000) return;
-    this.recordEvent("source-clock-stalled");
-    this.stopProgressCheck();
-    stalledOriginals.add(this.hash);
-    if (stalledOriginals.size > 32) stalledOriginals.delete(stalledOriginals.values().next().value!);
-    this.useCompatibility();
+    this.fallbackSource("source-clock-stalled");
   };
+
+  private fallbackSource(event: "source-startup-stalled" | "source-clock-stalled"): void {
+    this.recordEvent(event);
+    const source = this.descriptor?.source?.url;
+    if (source) {
+      failedNativeSources.add(source);
+      if (failedNativeSources.size > 32) failedNativeSources.delete(failedNativeSources.values().next().value!);
+    }
+    this.useCompatibility();
+  }
 
   private recordEvent(event: string): void {
     this.diagnosticEvents.push({
@@ -132,6 +198,8 @@ export class VideoPlayback {
       ready: this.ready,
       wantsPlayback: this.wantsPlayback,
       suspended: this.suspended,
+      nativeSource: this.descriptor?.source?.url,
+      startup: this.startupProbe ? { intent: this.startupProbe.intent, elapsedMs: Math.round(this.startupProbe.elapsed) } : null,
       changingSource: this.changingSource,
       time: video.currentTime,
       targetTime: this.targetTime,
@@ -177,13 +245,13 @@ export class VideoPlayback {
     if (this.disposed) return;
     this.descriptor = descriptor;
     this.callbacks.onDescriptor(descriptor);
-    if (stalledOriginals.has(this.hash)) {
-      this.sourceFailed = true;
-      this.recordEvent("reuse-source-clock-fallback");
-    }
     const source = descriptor.source;
+    if (source && failedNativeSources.has(source.url)) {
+      this.failedSourceUrl = source.url;
+      this.recordEvent("reuse-source-fallback");
+    }
     // Container/codec hints cannot prove that the native decoder will accept the tracks.
-    if (!this.sourceFailed && source) {
+    if (source && this.failedSourceUrl !== source.url) {
       this.mode = "source";
       this.video.src = source.url;
       this.callbacks.onModeChange("source");
@@ -252,6 +320,7 @@ export class VideoPlayback {
     this.targetTime = this.video.ended ? 0 : this.video.currentTime || this.targetTime;
     this.rate = this.video.playbackRate;
     this.recordEvent("request-play");
+    this.startStartupCheck("play");
     this.startLoading();
     this.startProgressCheck();
     return this.playMedia();
@@ -259,6 +328,7 @@ export class VideoPlayback {
 
   private playMedia(): Promise<void> {
     const generation = this.sourceGeneration;
+    const startup = this.startupProbe;
     return this.video.play().then(() => {
       if (!this.disposed && generation === this.sourceGeneration) {
         this.progressPlaybackStarted = true;
@@ -268,7 +338,12 @@ export class VideoPlayback {
     }).catch((error: DOMException) => {
       // A replaced source can reject its pending play after the new source has started.
       if (this.disposed || generation !== this.sourceGeneration) return;
+      if (this.startupProbe && startup && this.startupProbe !== startup) return;
       this.recordEvent(`play-rejected:${error.name}`);
+      if (this.startupProbe?.intent !== "frame") {
+        this.wantsPlayback = false;
+        this.stopProgressCheck();
+      }
       throw error;
     });
   }
@@ -281,6 +356,7 @@ export class VideoPlayback {
     this.suspended = false;
     if (this.video.readyState >= 1) this.targetTime = this.video.currentTime;
     this.rate = this.video.playbackRate;
+    this.startStartupCheck("play");
     this.startLoading();
     return true;
   }
@@ -299,6 +375,7 @@ export class VideoPlayback {
     this.suspended = false;
     this.targetTime = Math.max(0, time);
     this.recordEvent("request-frame");
+    this.startStartupCheck("frame");
     this.startLoading();
     if (this.video.readyState >= 1) this.restorePosition();
   }
@@ -317,13 +394,23 @@ export class VideoPlayback {
 
   paused(): void {
     if (this.changingSource || this.video.error) return;
-    this.stopProgressCheck();
+    // The pause queued before loadFrame must not cancel its first-frame request.
+    if (this.startupProbe?.intent !== "frame") this.stopProgressCheck();
+    else {
+      this.progressProbe = undefined;
+      this.progressPlaybackStarted = false;
+    }
     this.wantsPlayback = false;
     if (!this.video.seeking) this.hls?.stopLoad();
   }
 
-  suspend(): void {
+  suspend(forBackground = false): void {
+    const frameStartup = forBackground && this.startupProbe?.intent === "frame" ? this.startupProbe : undefined;
     this.stopProgressCheck();
+    if (frameStartup) {
+      this.startupProbe = { intent: "frame", elapsed: 0 };
+      this.resumeFrameStartup = true;
+    }
     this.suspended = true;
     this.wantsPlayback = false;
     this.recordEvent("request-suspend");
@@ -346,6 +433,7 @@ export class VideoPlayback {
 
   settled(): void {
     this.switching = false;
+    this.finishStartupCheck();
     if (this.video.paused && !this.video.seeking) this.hls?.stopLoad();
   }
 
@@ -360,7 +448,7 @@ export class VideoPlayback {
     }
     if (this.mode === "switching") return true;
     if (this.mode !== "source" || !this.descriptor) return false;
-    this.sourceFailed = true;
+    this.failedSourceUrl = this.descriptor.source?.url;
     this.targetTime = this.video.currentTime || this.targetTime;
     this.rate = this.video.playbackRate;
     this.switching = true;
@@ -444,6 +532,7 @@ export class VideoPlayback {
   private resetMedia(): void {
     this.stopProgressCheck();
     this.sourceGeneration += 1;
+    this.nativeFrameReady = false;
     this.resetAudioCheck();
     this.ready = false;
     this.loaded = false;
@@ -465,6 +554,7 @@ export class VideoPlayback {
     this.video.removeEventListener("timeupdate", this.checkSourceAudio);
     this.video.removeEventListener("seeking", this.resetAudioCheck);
     for (const event of this.observedEvents) this.video.removeEventListener(event, this.observeMedia);
+    document.removeEventListener("visibilitychange", this.observeVisibility);
     this.resetMedia();
   }
 }

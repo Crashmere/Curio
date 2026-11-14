@@ -454,7 +454,7 @@ export function VideoPlayer({
 
     const onVisibility = () => {
       if (document.hidden && document.pictureInPictureElement !== el) {
-        source.suspend();
+        source.suspend(true);
       } else if (!document.hidden) {
         restorePausedFrame();
       }

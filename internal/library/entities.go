@@ -550,6 +550,10 @@ func (l *Library) retryAssets(w http.ResponseWriter, r *http.Request) {
 			fail(w, 500, err)
 			return
 		}
+		if _, err = tx.Exec("DELETE FROM catalog_settings WHERE key=? AND CASE WHEN json_valid(value) THEN json_extract(value,'$.state') END='error'", nativeRemuxIntentPrefix+hash); err != nil {
+			fail(w, 500, err)
+			return
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		fail(w, 500, err)
@@ -597,6 +601,7 @@ func (l *Library) purgeAssets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	l.cancelPlayback(p.IDs)
+	l.cancelNativeRemux(p.IDs)
 	l.activeMu.Lock()
 	for _, hash := range p.IDs {
 		if job := l.active[hash]; job != nil {

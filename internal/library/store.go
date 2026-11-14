@@ -40,6 +40,9 @@ type Library struct {
 	locks         map[string]*objectLock
 	activeMu      sync.Mutex
 	active        map[string]*activeJob
+	nativeMu      sync.Mutex
+	nativeActive  map[string]*activeJob
+	nativeWake    chan struct{}
 	gpuOnce       sync.Once
 	gpuAvailable  bool
 	imageMu       sync.Mutex
@@ -221,7 +224,7 @@ func open(root string) (*Library, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Library{DB: db, Root: root, Wake: make(chan struct{}, 1), Workers: 2, GPU: make(chan struct{}, 1), CPU: make(chan struct{}, 2), backgroundCPU: make(chan struct{}, 1), backgroundGPU: make(chan struct{}, 1), locks: map[string]*objectLock{}, active: map[string]*activeJob{}}, nil
+	return &Library{DB: db, Root: root, Wake: make(chan struct{}, 1), Workers: 2, GPU: make(chan struct{}, 1), CPU: make(chan struct{}, 2), backgroundCPU: make(chan struct{}, 1), backgroundGPU: make(chan struct{}, 1), locks: map[string]*objectLock{}, active: map[string]*activeJob{}, nativeActive: map[string]*activeJob{}, nativeWake: make(chan struct{}, 1)}, nil
 }
 
 func (l *Library) Configure(workers, gpuSlots int) error {

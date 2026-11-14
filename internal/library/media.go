@@ -91,6 +91,11 @@ func (l *Library) Worker(ctx context.Context) {
 	// Probe video support before admitting background GPU work.
 	l.nvidiaAvailable(ctx)
 	var workers sync.WaitGroup
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		l.nativeRemuxWorker(ctx)
+	}()
 	for i := 0; i < l.Workers; i++ {
 		workers.Add(1)
 		go func() {
@@ -177,21 +182,34 @@ func (l *Library) finishPurge(ctx context.Context, hash string) error {
 	if err := l.waitPlayback(ctx, []string{hash}); err != nil {
 		return err
 	}
+	// Hash-lock registration barriers prevent late publishers. Release the lock
+	// while draining jobs because native publication needs the same lock.
 	unlock := l.lock(hash)
-	defer unlock()
 	l.activeMu.Lock()
 	job := l.active[hash]
 	if job != nil {
 		job.cancel()
 	}
 	l.activeMu.Unlock()
-	if job != nil {
+	l.nativeMu.Lock()
+	nativeJob := l.nativeActive[hash]
+	if nativeJob != nil {
+		nativeJob.cancel()
+	}
+	l.nativeMu.Unlock()
+	unlock()
+	for _, active := range []*activeJob{job, nativeJob} {
+		if active == nil {
+			continue
+		}
 		select {
-		case <-job.done:
+		case <-active.done:
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
+	unlock = l.lock(hash)
+	defer unlock()
 	a, err := l.asset(hash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
@@ -233,6 +251,9 @@ func (l *Library) finishPurge(ctx context.Context, hash string) error {
 	}
 	defer tx.Rollback()
 	if _, err = tx.Exec("DELETE FROM uploads WHERE id=?", hash); err != nil {
+		return err
+	}
+	if _, err = tx.Exec("DELETE FROM catalog_settings WHERE key=?", nativeRemuxIntentPrefix+hash); err != nil {
 		return err
 	}
 	if _, err = tx.Exec("DELETE FROM assets WHERE id=? AND purge_pending=1", hash); err != nil {

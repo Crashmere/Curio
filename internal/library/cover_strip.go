@@ -202,6 +202,9 @@ func (l *Library) warmCoverStrip(hash string) {
 			spec, err = p.specification(p.ctx, l, f, stat)
 		}
 		if err == nil {
+			if _, nativeErr := l.enqueueNativeRemux(spec); nativeErr != nil && p.ctx.Err() == nil && l.playbackAllowed(hash) == nil {
+				slog.Warn("precompute native MP4 playback", "hash", hash, "error", nativeErr)
+			}
 			var entry *playbackEntry
 			entry, err = p.coverStrip(p.ctx, l, spec)
 			if err == nil {
