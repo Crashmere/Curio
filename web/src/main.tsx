@@ -212,6 +212,7 @@ function App() {
       if (sidebarOpen) { event.preventDefault(); setSidebarOpen(false); }
       else if (filterOpen) { event.preventDefault(); setFilterOpen(false); }
       else if (selecting || selected.size || selectingAll) { event.preventDefault(); exitSelection(); }
+      else if (collectionId) { event.preventDefault(); navigate("collections"); }
       else if (gameId) { event.preventDefault(); navigate("games"); }
     }
   });
