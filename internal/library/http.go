@@ -407,6 +407,9 @@ func (l *Library) listAssets(w http.ResponseWriter, r *http.Request) {
 			fail(w, 500, err)
 			return
 		}
+		// Keep group anchors ahead of ordinary media across page boundaries.
+		order = `EXISTS(SELECT 1 FROM collection_group_assets g WHERE g.asset_id=a.id AND g.collection_id=?) DESC,` + order
+		args = append(args, q.Get("collection"))
 	}
 	limit := pageNumber(q, "limit", 120, 1, maximum)
 	offset := pageNumber(q, "offset", 0, 0, 100000000)

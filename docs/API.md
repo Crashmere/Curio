@@ -55,7 +55,7 @@ Asset list filters are parallel query parameters:
 | `sort` | `newest` (default), `oldest`, `name`, `size`, `capturedNewest`, `capturedOldest`; capture sorts place unknown times last |
 | `limit`, `offset` | Default limit 120, maximum 240 (2000 with `ids`); next request uses `nextOffset` |
 
-With `grouped=1`, `total` remains the number of matching media, while `limit`, `offset` and `nextOffset` count gallery entries. Each group's anchor is its first matching media in the selected sort order. Requests selecting every media item must omit `grouped`.
+With `grouped=1`, `total` remains the number of matching media, while `limit`, `offset` and `nextOffset` count gallery entries. Group anchors precede ungrouped media across all pages; both subsets follow the selected sort order. Each group's anchor is its first matching media in that order. Requests selecting every media item must omit `grouped`.
 
 ## Editing and Organization
 

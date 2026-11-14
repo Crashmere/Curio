@@ -10,6 +10,7 @@ export function collectionEntries(assets: Asset[], groups: MediaGroup[], pages: 
   const memberships = new Map(groups.flatMap(group => group.assetIds.map(id => [id, group] as const)));
   const members = new Map([...assets, ...Object.values(pages).flatMap(page => page.items)].map(asset => [asset.id, asset]));
   const seen = new Set<string>();
+  const groupEntries: GalleryEntry[] = [];
   const entries: GalleryEntry[] = [];
   for (const asset of assets) {
     const group = memberships.get(asset.id);
@@ -17,10 +18,10 @@ export function collectionEntries(assets: Asset[], groups: MediaGroup[], pages: 
     else if (!seen.has(group.id)) {
       seen.add(group.id);
       const items = group.assetIds.map(id => members.get(id)).filter((item): item is Asset => !!item);
-      entries.push({ group, items });
+      groupEntries.push({ group, items });
     }
   }
-  return entries;
+  return [...groupEntries, ...entries];
 }
 
 export function CollectionGallery({ entries, expanded, formation, selected, selecting, busy, render, toggle, selectGroup, add, rename, saveName, dissolve }: {

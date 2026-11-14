@@ -160,6 +160,7 @@ function App() {
       window.history[history === "replace" ? "replaceState" : "pushState"](null, "", path);
     }
     cancelSelectAll();
+    if (collectionId !== collection) setExpandedGroups(new Set());
     if (next === "screenshots" && view !== "screenshots") { setSort("capturedNewest"); setFilters(previous => ({ ...previous, kind: "" })); }
     else if (next !== "screenshots" && view === "screenshots") setSort("newest");
     setNavigation(target); setSelected(new Set()); setSelecting(false); setSidebarOpen(false); setViewer(null);
