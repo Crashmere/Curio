@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { base as APP_BASE, ApiError as HttpServiceError, api as requestJson, type Asset } from "./api";
+import { base as APP_BASE, ApiError as HttpServiceError, api as requestJson, type Asset, type PlaybackDescriptor } from "./api";
+import { BrowserCoverFrames } from "./browser-cover-frames";
 
 export type CoverStripFrame = { time: number; x: number; y: number; width: number; height: number };
 type CoverStripPayload = { revision: string; duration: number; width: number; height: number; frames: CoverStripFrame[] };
@@ -126,18 +127,25 @@ export class CoverFrameRequests {
   private running = 0;
   private waiting = new Map<() => void, () => void>();
   private active = new Set<AbortController>();
+  private browser?: BrowserCoverFrames;
+  private browserFailed = false;
+
+  constructor(private readonly playbackResource: string, private readonly rotation = 0) {}
 
   setMode(mode: "preview" | "fallback" | "stopped") {
     this.mode = mode;
     if (mode === "stopped") {
       for (const abort of this.waiting.values()) abort();
       for (const controller of this.active) controller.abort();
+      this.browser?.dispose();
+      this.browser = undefined;
+      this.browserFailed = false;
     } else {
       this.pump();
     }
   }
 
-  load(url: string, signal: AbortSignal): Promise<Blob> {
+  load(url: string, time: number, signal: AbortSignal): Promise<Blob> {
     if (signal.aborted) return Promise.reject(signal.reason);
     return new Promise((resolve, reject) => {
       const controller = new AbortController();
@@ -164,13 +172,7 @@ export class CoverFrameRequests {
         started = true;
         this.running++;
         this.active.add(controller);
-        void fetch(url, { credentials: "same-origin", signal: controller.signal }).then(async (response) => {
-          if (!response.ok) throw new HttpServiceError("候选帧加载失败", response.status);
-          const blob = await response.blob();
-          controller.signal.throwIfAborted();
-          if (blob.size > 8 * 1024 * 1024) throw new Error("Candidate frame exceeds its output bound");
-          return blob;
-        }).then((blob) => finish(blob), (error) => finish(undefined, error));
+        void this.capture(url, time, controller.signal).then((blob) => finish(blob), (error) => finish(undefined, error));
       };
       signal.addEventListener("abort", abort, { once: true });
       this.waiting.set(start, abort);
@@ -178,9 +180,34 @@ export class CoverFrameRequests {
     });
   }
 
+  private async capture(url: string, time: number, signal: AbortSignal): Promise<Blob> {
+    if (!this.browserFailed) {
+      const browser = this.browser ??= new BrowserCoverFrames(async (sourceSignal) => {
+        const descriptor = await requestJson<PlaybackDescriptor>(this.playbackResource, undefined, undefined, sourceSignal);
+        return descriptor.source;
+      }, this.rotation);
+      try {
+        return await browser.capture(time, signal);
+      } catch {
+        signal.throwIfAborted();
+        if (this.browser === browser) {
+          browser.dispose();
+          this.browser = undefined;
+          this.browserFailed = true;
+        }
+      }
+    }
+    const response = await fetch(url, { credentials: "same-origin", signal });
+    if (!response.ok) throw new HttpServiceError("候选帧加载失败", response.status);
+    const blob = await response.blob();
+    signal.throwIfAborted();
+    if (blob.size > 8 * 1024 * 1024) throw new Error("Candidate frame exceeds its output bound");
+    return blob;
+  }
+
   private pump() {
-    // While the atlas loads, leave capacity for the selected large frame.
-    const limit = this.mode === "fallback" ? 2 : 1;
+    // Native seeks share one decoder; early server thumbnails leave an exact-preview slot.
+    const limit = this.mode === "fallback" && this.browserFailed ? 2 : 1;
     while (this.mode !== "stopped" && this.running < limit) {
       const next = this.waiting.keys().next().value;
       if (!next) break;

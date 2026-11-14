@@ -51,8 +51,9 @@ export function ExactCoverPreview({ asset, time, strip }: { asset: Asset; time: 
   </>;
 }
 
-function StripFrameThumb({ url, viewportRef, enabled, requests }: {
+function StripFrameThumb({ url, time, viewportRef, enabled, requests }: {
   url: string;
+  time: number;
   viewportRef: RefObject<HTMLDivElement | null>;
   enabled: boolean;
   requests: CoverFrameRequests;
@@ -79,13 +80,13 @@ function StripFrameThumb({ url, viewportRef, enabled, requests }: {
     if (!enabled || !requested) return;
     const controller = new AbortController();
     let objectUrl: string | undefined;
-    requests.load(url, controller.signal).then((blob) => {
+    requests.load(url, time, controller.signal).then((blob) => {
       if (controller.signal.aborted) return;
       objectUrl = URL.createObjectURL(blob);
       setImageUrl(objectUrl);
     }, () => { if (!controller.signal.aborted) setFailed(true); });
     return () => { controller.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
-  }, [enabled, requested, requests, url]);
+  }, [enabled, requested, requests, time, url]);
 
   return (
     <span ref={thumbRef} className="frame-strip-thumb">
@@ -117,9 +118,13 @@ export function FrameTimelineStrip({
   stripState: CoverStripState;
   onSeek: (targetSeconds: number) => void;
 }) {
+  const playbackResource = `playback/${asset.id}`;
   const viewportRef = useRef<HTMLDivElement>(null);
-  const requestsRef = useRef<CoverFrameRequests | null>(null);
-  if (!requestsRef.current) requestsRef.current = new CoverFrameRequests();
+  const requestsRef = useRef<{ key: string; requests: CoverFrameRequests } | null>(null);
+  if (!requestsRef.current || requestsRef.current.key !== playbackResource) {
+    requestsRef.current = { key: playbackResource, requests: new CoverFrameRequests(playbackResource) };
+  }
+  const requests = requestsRef.current.requests;
   const [earlyFrames, setEarlyFrames] = useState(false);
   const fps = asset.frameRate || 30;
   const strip = stripState.strip;
@@ -130,13 +135,13 @@ export function FrameTimelineStrip({
   const closest = timestamps.reduce((best, at, index) => Math.abs(at - time) < Math.abs(timestamps[best] - time) ? index : best, 0);
 
   useEffect(() => {
-    requestsRef.current!.setMode(stripState.status === "error" ? "fallback" : stripState.status === "loading" ? "preview" : "stopped");
+    requests.setMode(stripState.status === "error" ? "fallback" : stripState.status === "loading" ? "preview" : "stopped");
     setEarlyFrames(false);
     if (stripState.status !== "loading") return;
     const timer = setTimeout(() => setEarlyFrames(true), 200);
     return () => clearTimeout(timer);
-  }, [stripState.status]);
-  useEffect(() => () => requestsRef.current!.setMode("stopped"), []);
+  }, [stripState.status, requests]);
+  useEffect(() => () => requests.setMode("stopped"), [requests]);
 
   return (
     <div ref={viewportRef} className="frame-strip-scroll">
@@ -161,8 +166,8 @@ export function FrameTimelineStrip({
               {displayedDuration > 0 && (strip ? (
                 <span className="frame-strip-thumb"><FrameStripImage strip={strip} frame={strip.frames[idx]} rotation={0} className="frame-strip-image" /></span>
               ) : (
-                <StripFrameThumb key={frameSrc} url={frameSrc} viewportRef={viewportRef}
-                  enabled={earlyFrames || stripState.status === "error"} requests={requestsRef.current!} />
+                <StripFrameThumb key={frameSrc} url={frameSrc} time={ts} viewportRef={viewportRef}
+                  enabled={earlyFrames || stripState.status === "error"} requests={requests} />
               ))}
             </button>
           );
