@@ -123,7 +123,6 @@ export function acquireCoverStrip(key: string, signal: AbortSignal): Promise<Lea
 
 export class CoverFrameRequests {
   private mode: "preview" | "fallback" | "stopped" = "preview";
-  private started = 0;
   private running = 0;
   private waiting = new Map<() => void, () => void>();
   private active = new Set<AbortController>();
@@ -163,7 +162,6 @@ export class CoverFrameRequests {
         this.waiting.delete(start);
         if (signal.aborted) { finish(undefined, signal.reason); return; }
         started = true;
-        this.started++;
         this.running++;
         this.active.add(controller);
         void fetch(url, { credentials: "same-origin", signal: controller.signal }).then(async (response) => {
@@ -181,9 +179,9 @@ export class CoverFrameRequests {
   }
 
   private pump() {
-    // Two early samples use one decoder, leaving capacity for the selected large frame.
+    // While the atlas loads, leave capacity for the selected large frame.
     const limit = this.mode === "fallback" ? 2 : 1;
-    while (this.mode !== "stopped" && this.running < limit && (this.mode === "fallback" || this.started < 2)) {
+    while (this.mode !== "stopped" && this.running < limit) {
       const next = this.waiting.keys().next().value;
       if (!next) break;
       next();
