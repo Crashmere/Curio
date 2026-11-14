@@ -107,7 +107,23 @@ export class BrowserCoverFrames {
     private rotation = 0,
   ) {}
 
-  async capture(time: number, signal: AbortSignal): Promise<Blob> {
+  capture(time: number, signal: AbortSignal): Promise<Blob> {
+    return this.readFrame(time, signal, true, (canvas, signal) =>
+      bounded(signal, MEDIA_TIMEOUT, () => new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((blob) => {
+          if (blob?.size) resolve(blob);
+          else reject(new Error("Native video preview could not be encoded"));
+        }, "image/png");
+      })),
+    );
+  }
+
+  captureCanvas(time: number, signal: AbortSignal): Promise<HTMLCanvasElement> {
+    return this.readFrame(time, signal, false, async canvas => canvas);
+  }
+
+  private async readFrame<T>(time: number, signal: AbortSignal, waitForCallback: boolean,
+    read: (canvas: HTMLCanvasElement, signal: AbortSignal) => Promise<T>): Promise<T> {
     signal.throwIfAborted();
     this.lifetime.signal.throwIfAborted();
     if (!Number.isFinite(time) || time < 0) throw new Error("Invalid video frame time");
@@ -125,17 +141,11 @@ export class BrowserCoverFrames {
       await waitMedia(video, controller.signal,
         () => !video.seeking && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA,
         () => { video.currentTime = target; });
-      await waitDecodedFrame(video, controller.signal);
+      if (waitForCallback) await waitDecodedFrame(video, controller.signal);
       controller.signal.throwIfAborted();
-      const canvas = this.paint(video);
-      const blob = await bounded(controller.signal, MEDIA_TIMEOUT, () => new Promise<Blob>((resolve, reject) => {
-        canvas.toBlob((blob) => {
-          if (blob?.size) resolve(blob);
-          else reject(new Error("Native video preview could not be encoded"));
-        }, "image/png");
-      }));
+      const result = await read(this.paint(video), controller.signal);
       controller.signal.throwIfAborted();
-      return blob;
+      return result;
     } catch (error) {
       this.releaseMedia();
       throw error;

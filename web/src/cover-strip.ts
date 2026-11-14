@@ -4,7 +4,7 @@ import { BrowserCoverFrames } from "./browser-cover-frames";
 
 export type CoverStripFrame = { time: number; x: number; y: number; width: number; height: number };
 type CoverStripPayload = { revision: string; duration: number; width: number; height: number; frames: CoverStripFrame[] };
-export type CoverStrip = CoverStripPayload & { imageUrl: string };
+export type CoverStrip = CoverStripPayload & { imageUrl: string; image: HTMLImageElement };
 type Entry = { key: string; strip: CoverStrip; refs: number; bytes: number; used: number; retired: boolean; disposed: boolean };
 type Lease = { strip: CoverStrip; release: () => void };
 type Pending = { controller: AbortController; waiters: number; promise: Promise<Entry> };
@@ -19,6 +19,7 @@ function dispose(entry: Entry) {
   if (entry.disposed || entry.refs > 0) return;
   entry.disposed = true;
   URL.revokeObjectURL(entry.strip.imageUrl);
+  entry.strip.image.removeAttribute("src");
   cacheBytes -= entry.bytes;
 }
 
@@ -67,7 +68,7 @@ async function fetchStrip(key: string, signal: AbortSignal): Promise<Entry> {
     image.src = imageUrl;
     await image.decode();
     signal.throwIfAborted();
-    const entry: Entry = { key, strip: { ...payload, imageUrl }, refs: 0,
+    const entry: Entry = { key, strip: { ...payload, imageUrl, image }, refs: 0,
       bytes: blob.size + payload.width * payload.height * 4, used: Date.now(), retired: false, disposed: false };
     const previous = entries.get(key);
     if (previous) retire(previous);

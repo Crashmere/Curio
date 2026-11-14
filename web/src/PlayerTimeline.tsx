@@ -1,4 +1,8 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from "react";
+import { Image as ImageIcon, LoaderCircle } from "lucide-react";
+import { useCoverStrip } from "./cover-strip";
+import { TimelineFramePreview, type TimelinePreviewMedia } from "./timeline-preview";
+export type { TimelinePreviewMedia } from "./timeline-preview";
 
 export function formatDurationClock(seconds: number) {
   const total = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
@@ -129,29 +133,78 @@ export function PlayerTimeEditor({ time, maxTime, disabled, onCommit, onEditingC
   );
 }
 
-export function PlayerSeekPreview({ maxTime, disabled, style, children }: {
+export function PlayerSeekPreview({ maxTime, disabled, style, media, children }: {
   maxTime: number;
   disabled: boolean;
   style: CSSProperties;
+  media?: TimelinePreviewMedia;
   children: ReactNode;
 }) {
   const seekRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const labelRef = useRef<HTMLSpanElement>(null);
+  const pictureRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const framesRef = useRef<TimelineFramePreview | null>(null);
   const pointerX = useRef<number | null>(null);
+  const anchorRef = useRef(0);
   const raf = useRef(0);
+  const hoveredRef = useRef(false);
+  const [hovering, setHovering] = useState(false);
+  const [pageVisible, setPageVisible] = useState(!document.hidden);
+  const stripState = useCoverStrip(media?.stripResource,
+    !!media && !disabled && pageVisible && (media.prefetch || hovering));
+  const stripStateRef = useRef(stripState);
+  stripStateRef.current = stripState;
+
+  function positionFloat(element: HTMLElement, anchor: number, width: number) {
+    const floatWidth = element.getBoundingClientRect().width;
+    const left = Math.max(0, Math.min(width - floatWidth, anchor - floatWidth / 2));
+    element.style.transform = "translate3d(" + left + "px, 0, 0)";
+    element.style.setProperty("--preview-anchor", anchor - left + "px");
+    element.setAttribute("data-visible", "true");
+  }
+
+  function refreshPicture() {
+    const picture = pictureRef.current;
+    const seek = seekRef.current;
+    const frames = framesRef.current;
+    if (!picture || !seek || !frames || pointerX.current === null) return;
+    picture.setAttribute("data-ready", String(frames.ready));
+    picture.setAttribute("data-failed", String(stripStateRef.current.status === "error" && frames.failed));
+    positionFloat(picture, anchorRef.current, seek.getBoundingClientRect().width);
+  }
 
   function hidePreview() {
     pointerX.current = null;
     cancelAnimationFrame(raf.current);
     raf.current = 0;
-    const preview = previewRef.current;
-    preview?.removeAttribute("data-visible");
-    preview?.style.removeProperty("transform");
-    preview?.style.removeProperty("--preview-anchor");
+    for (const preview of [previewRef.current, pictureRef.current]) {
+      preview?.removeAttribute("data-visible");
+      preview?.style.removeProperty("transform");
+      preview?.style.removeProperty("--preview-anchor");
+    }
+    framesRef.current?.pause();
+    if (hoveredRef.current) { hoveredRef.current = false; setHovering(false); }
   }
 
-  useEffect(() => hidePreview(), [maxTime, disabled]);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!media || !canvas || disabled || !pageVisible) return;
+    const frames = new TimelineFramePreview(media, canvas, refreshPicture);
+    framesRef.current = frames;
+    frames.setStrip(stripStateRef.current.strip);
+    return () => {
+      frames.dispose();
+      if (framesRef.current === frames) framesRef.current = null;
+    };
+  }, [media?.playbackResource, media?.rotation, media?.width, media?.height, !!media, disabled, pageVisible]);
+  useEffect(() => { framesRef.current?.setSource(media?.source); }, [media?.source]);
+  useEffect(() => {
+    framesRef.current?.setStrip(stripState.strip);
+    refreshPicture();
+  }, [stripState]);
+  useEffect(() => hidePreview(), [maxTime, disabled, media?.playbackResource, media?.rotation]);
   useEffect(() => {
     const seek = seekRef.current;
     if (!seek) return;
@@ -159,13 +212,24 @@ export function PlayerSeekPreview({ maxTime, disabled, style, children }: {
     observer.observe(seek);
     return () => observer.disconnect();
   }, []);
-  useEffect(() => () => cancelAnimationFrame(raf.current), []);
+  useEffect(() => {
+    const changed = () => {
+      setPageVisible(!document.hidden);
+      if (document.hidden) hidePreview();
+    };
+    document.addEventListener("visibilitychange", changed);
+    return () => {
+      document.removeEventListener("visibilitychange", changed);
+      cancelAnimationFrame(raf.current);
+    };
+  }, []);
 
   function followPointer(event: PointerEvent<HTMLDivElement>) {
     if (event.pointerType !== "mouse" || disabled || maxTime <= 0) return;
+    if (!hoveredRef.current) { hoveredRef.current = true; setHovering(true); }
     pointerX.current = event.clientX;
     if (raf.current) return;
-    // Paint only the floating clock, rather than rerendering the video on mousemove.
+    // Crop cached pixels and move both floating windows in the same pointer frame.
     raf.current = requestAnimationFrame(() => {
       raf.current = 0;
       const seek = seekRef.current;
@@ -174,14 +238,15 @@ export function PlayerSeekPreview({ maxTime, disabled, style, children }: {
       const input = seek?.querySelector('input[type="range"]');
       if (!seek || !preview || !label || !input || pointerX.current === null) return;
       const box = input.getBoundingClientRect();
+      const seekBox = seek.getBoundingClientRect();
       const inset = (parseFloat(getComputedStyle(seek).getPropertyValue("--player-seek-thumb-size")) || 11) / 2;
       const ratio = Math.max(0, Math.min(1, (pointerX.current - box.left - inset) / Math.max(1, box.width - inset * 2)));
-      const anchor = box.left - seek.getBoundingClientRect().left + inset + ratio * (box.width - inset * 2);
-      label.textContent = formatDurationClock(ratio * maxTime);
-      const left = Math.max(0, Math.min(seek.clientWidth - preview.offsetWidth, anchor - preview.offsetWidth / 2));
-      preview.style.transform = `translate3d(${left}px, 0, 0)`;
-      preview.style.setProperty("--preview-anchor", `${anchor - left}px`);
-      preview.setAttribute("data-visible", "true");
+      anchorRef.current = box.left - seekBox.left + inset + ratio * (box.width - inset * 2);
+      const time = ratio * maxTime;
+      label.textContent = formatDurationClock(time);
+      positionFloat(preview, anchorRef.current, seekBox.width);
+      framesRef.current?.update(time);
+      refreshPicture();
     });
   }
 
@@ -190,6 +255,11 @@ export function PlayerSeekPreview({ maxTime, disabled, style, children }: {
       onPointerEnter={followPointer} onPointerMove={followPointer}
       onPointerLeave={hidePreview} onPointerCancel={hidePreview}>
       {children}
+      {media && <div ref={pictureRef} className="player-frame-preview" aria-hidden="true">
+        <canvas ref={canvasRef} />
+        <span className="player-frame-loading"><LoaderCircle size={14} className="spin" /></span>
+        <span className="player-frame-unavailable"><ImageIcon size={18} /></span>
+      </div>}
       <div ref={previewRef} className="player-seek-preview" aria-hidden="true">
         <span ref={labelRef}>0:00</span>
       </div>

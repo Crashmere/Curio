@@ -8,6 +8,13 @@ export function useCompactViewer() {
   }, () => compactQuery.matches);
 }
 
+export function canPrefetchMedia() {
+  const connection = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string; downlink?: number } }).connection;
+  return !document.hidden && navigator.onLine && !connection?.saveData
+    && !/(^|-)2g$|3g/.test(connection?.effectiveType || "")
+    && (connection?.downlink === undefined || connection.downlink >= 1.5);
+}
+
 export function useViewerControls(playing: boolean, pinned: boolean) {
   const [hidden, setHidden] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);

@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { Image as ImageIcon, LoaderCircle, Maximize, Pause, PictureInPicture2, Play, RefreshCw, StepBack, StepForward, Volume2, VolumeX } from "lucide-react";
-import { base, type Asset } from "./api";
+import { base, type Asset, type PlaybackDescriptor } from "./api";
 import { coverFrameTimes } from "./cover-frames";
-import { CoverFrameRequests, type CoverStrip, type CoverStripFrame, type CoverStripState } from "./cover-strip";
+import { coverStripResource, CoverFrameRequests, type CoverStrip, type CoverStripFrame, type CoverStripState } from "./cover-strip";
 import { VideoPlayback, type PlaybackRepresentation } from "./video-playback";
-import { useCompactViewer } from "./viewer-interactions";
+import { canPrefetchMedia, useCompactViewer } from "./viewer-interactions";
 import { CompatibilityPlaybackGlyph, SkipSecondsGlyph } from "./player-icons";
-import { formatDurationClock, PlayerSeekPreview, PlayerTimeEditor } from "./PlayerTimeline";
+import { formatDurationClock, PlayerSeekPreview, PlayerTimeEditor, type TimelinePreviewMedia } from "./PlayerTimeline";
 import { useIsPresent } from "./motion";
 import "./video-player.css";
 
@@ -249,6 +249,7 @@ export function VideoPlayer({
   const [diagnostics, setDiagnostics] = useState<ReturnType<VideoPlayback["getDiagnostics"]> | null>(null);
   const [diagnosticsCopy, setDiagnosticsCopy] = useState("");
   const [sourceReady, setSourceReady] = useState(false);
+  const [previewSource, setPreviewSource] = useState<PlaybackDescriptor["source"]>(undefined);
   const [playbackRepresentation, setPlaybackRepresentation] =
     useState<PlaybackRepresentation>(null);
   const [sourceFrameRate, setSourceFrameRate] = useState<number | undefined>(undefined);
@@ -378,6 +379,7 @@ export function VideoPlayer({
     }
     if (isFramePicker) setStarted(true);
     setSourceReady(false);
+    setPreviewSource(undefined);
     setPlaybackRepresentation(null);
     setSourceFrameRate(undefined);
     lastObservedMediaTime.current = undefined;
@@ -386,6 +388,7 @@ export function VideoPlayer({
       onReady: setSourceReady,
       onModeChange: setPlaybackRepresentation,
       onDescriptor: (descriptor) => {
+        setPreviewSource(descriptor.source);
         if (descriptor.duration && Number.isFinite(descriptor.duration) && descriptor.duration > 0) {
           setDuration(descriptor.duration);
         }
@@ -648,6 +651,15 @@ export function VideoPlayer({
     ? Math.max(0, effectiveDuration - 0.5 / nominalFps)
     : effectiveDuration;
   const seekDisabled = locked || !isPresent || !sourceReady || !effectiveDuration;
+  const timelinePreview: TimelinePreviewMedia = {
+    stripResource: coverStripResource(asset),
+    playbackResource: `playback/${sourceHash}?rotation=0`,
+    source: previewSource,
+    rotation: sourceRotation,
+    width: asset.width,
+    height: asset.height,
+    prefetch: canPrefetchMedia(),
+  };
 
   return (
     <div
@@ -928,9 +940,11 @@ export function VideoPlayer({
             onEditingChange={setTimeEditing}
           />
           <PlayerSeekPreview
+            key={sourceHash}
             maxTime={maxSeekTime}
             disabled={seekDisabled}
             style={{ "--played": `${playedRatio}%` } as CSSProperties}
+            media={timelinePreview}
           >
             <div className="player-buffered" aria-hidden="true">
               {duration > 0 &&

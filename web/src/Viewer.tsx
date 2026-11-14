@@ -10,7 +10,7 @@ import { acquireCoverStrip, coverStripResource, useCoverStrip } from "./cover-st
 import { ImageViewer } from "./ImageViewer";
 import { TagChip } from "./TagChip";
 import { canDecodeTank, TankDecoder } from "./TankDecoder";
-import { useCompactViewer, useViewerControls } from "./viewer-interactions";
+import { canPrefetchMedia, useCompactViewer, useViewerControls } from "./viewer-interactions";
 import { ContainerCoverMenu } from "./ContainerCoverMenu";
 import { MotionPresence, useIsPresent } from "./motion";
 
@@ -80,15 +80,12 @@ export function Viewer({ asset, scope, tags, collections, games, close, previous
       saveData?: boolean; effectiveType?: string; downlink?: number;
       addEventListener?: EventTarget["addEventListener"]; removeEventListener?: EventTarget["removeEventListener"];
     } }).connection;
-    const canPrefetch = () => !document.hidden && navigator.onLine && !connection?.saveData
-      && !/(^|-)2g$|3g/.test(connection?.effectiveType || "")
-      && (connection?.downlink === undefined || connection.downlink >= 1.5);
-    if (!canPrefetch()) return;
+    if (!canPrefetchMedia()) return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
-      if (canPrefetch()) void acquireCoverStrip(stripResource, controller.signal).then((loaded) => loaded.release(), () => {});
+      if (canPrefetchMedia()) void acquireCoverStrip(stripResource, controller.signal).then((loaded) => loaded.release(), () => {});
     }, 400);
-    const stopUnavailable = () => { if (!canPrefetch()) controller.abort(); };
+    const stopUnavailable = () => { if (!canPrefetchMedia()) controller.abort(); };
     document.addEventListener("visibilitychange", stopUnavailable);
     window.addEventListener("offline", stopUnavailable);
     connection?.addEventListener?.("change", stopUnavailable);
