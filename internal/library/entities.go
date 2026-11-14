@@ -292,10 +292,12 @@ func ensureCollectionPins(db *sql.DB) error {
 func (l *Library) container(kind, entityID, scope string) (Container, error) {
 	var c Container
 	pinned := "0"
+	excluded := "0"
 	if kind == "collections" {
 		pinned = "pinned"
+		excluded = collectionExcludedSQL
 	}
-	err := l.DB.QueryRow("SELECT id,name,hidden,"+pinned+",created_at FROM "+kind+" WHERE id=?", entityID).Scan(&c.ID, &c.Name, &c.Hidden, &c.Pinned, &c.CreatedAt)
+	err := l.DB.QueryRow("SELECT c.id,c.name,c.hidden,"+pinned+","+excluded+",c.created_at FROM "+kind+" c WHERE c.id=?", entityID).Scan(&c.ID, &c.Name, &c.Hidden, &c.Pinned, &c.ExcludeFromAll, &c.CreatedAt)
 	if err != nil {
 		return c, err
 	}
@@ -359,10 +361,21 @@ func (l *Library) listContainers(w http.ResponseWriter, r *http.Request, kind st
 }
 
 type containerPatch struct {
-	Name    *string `json:"name"`
-	Hidden  *bool   `json:"hidden"`
-	Pinned  *bool   `json:"pinned"`
-	GroupID *string `json:"groupId"`
+	Name           *string `json:"name"`
+	Hidden         *bool   `json:"hidden"`
+	Pinned         *bool   `json:"pinned"`
+	ExcludeFromAll *bool   `json:"excludeFromAll"`
+	GroupID        *string `json:"groupId"`
+}
+
+func saveCollectionExclusion(tx *sql.Tx, entityID string, excluded bool) error {
+	key := "collection_exclude_from_all:" + entityID
+	if !excluded {
+		_, err := tx.Exec("DELETE FROM catalog_settings WHERE key=?", key)
+		return err
+	}
+	_, err := tx.Exec("INSERT INTO catalog_settings(key,value) VALUES(?,'1') ON CONFLICT(key) DO UPDATE SET value='1'", key)
+	return err
 }
 
 func (p containerPatch) validate() error {
@@ -392,6 +405,10 @@ func (l *Library) createContainer(w http.ResponseWriter, r *http.Request, kind s
 		fail(w, 400, "只有收藏集支持固定")
 		return
 	}
+	if p.ExcludeFromAll != nil && kind != "collections" {
+		fail(w, 400, "只有收藏集支持从全部素材排除")
+		return
+	}
 	if p.GroupID != nil && kind != "collections" {
 		fail(w, 400, "只有收藏集支持分组")
 		return
@@ -407,6 +424,7 @@ func (l *Library) createContainer(w http.ResponseWriter, r *http.Request, kind s
 	values := "?,?,?,?"
 	args := []any{entityID, name, hidden, created}
 	pinned := p.Pinned != nil && *p.Pinned
+	excluded := p.ExcludeFromAll != nil && *p.ExcludeFromAll
 	if kind == "collections" {
 		columns += ",pinned"
 		values += ",?"
@@ -414,7 +432,7 @@ func (l *Library) createContainer(w http.ResponseWriter, r *http.Request, kind s
 	}
 	var err error
 	if kind == "collections" {
-		err = l.createCollectionWithLayout(r.Context(), entityID, p.GroupID, columns, values, args)
+		err = l.createCollectionWithLayout(r.Context(), entityID, p.GroupID, columns, values, args, excluded)
 	} else {
 		_, err = l.DB.Exec("INSERT INTO "+kind+"("+columns+") VALUES("+values+")", args...)
 	}
@@ -440,7 +458,7 @@ func (l *Library) createContainer(w http.ResponseWriter, r *http.Request, kind s
 		fail(w, 400, "名称已存在或无法创建")
 		return
 	}
-	writeJSON(w, 201, Container{ID: entityID, Name: name, Hidden: hidden, Pinned: pinned, CreatedAt: created})
+	writeJSON(w, 201, Container{ID: entityID, Name: name, Hidden: hidden, Pinned: pinned, ExcludeFromAll: excluded, CreatedAt: created})
 }
 
 func (l *Library) updateContainer(w http.ResponseWriter, r *http.Request, kind string) {
@@ -458,6 +476,10 @@ func (l *Library) updateContainer(w http.ResponseWriter, r *http.Request, kind s
 	}
 	if p.Pinned != nil && kind != "collections" {
 		fail(w, 400, "只有收藏集支持固定")
+		return
+	}
+	if p.ExcludeFromAll != nil && kind != "collections" {
+		fail(w, 400, "只有收藏集支持从全部素材排除")
 		return
 	}
 	entityID := chi.URLParam(r, "id")
@@ -479,18 +501,37 @@ func (l *Library) updateContainer(w http.ResponseWriter, r *http.Request, kind s
 		set = append(set, "pinned=?")
 		args = append(args, *p.Pinned)
 	}
+	tx, err := l.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		fail(w, 500, err)
+		return
+	}
+	defer tx.Rollback()
+	var exists bool
+	if err = tx.QueryRow("SELECT EXISTS(SELECT 1 FROM "+kind+" WHERE id=?)", entityID).Scan(&exists); err != nil {
+		fail(w, 500, err)
+		return
+	}
+	if !exists {
+		fail(w, 404, "分类不存在")
+		return
+	}
 	if len(set) > 0 {
 		args = append(args, entityID)
-		result, err := l.DB.Exec("UPDATE "+kind+" SET "+strings.Join(set, ",")+" WHERE id=?", args...)
-		if err != nil {
+		if _, err = tx.Exec("UPDATE "+kind+" SET "+strings.Join(set, ",")+" WHERE id=?", args...); err != nil {
 			fail(w, 400, "名称冲突或无法修改")
 			return
 		}
-		n, _ := result.RowsAffected()
-		if n == 0 {
-			fail(w, 404, "分类不存在")
+	}
+	if p.ExcludeFromAll != nil {
+		if err = saveCollectionExclusion(tx, entityID, *p.ExcludeFromAll); err != nil {
+			fail(w, 500, err)
 			return
 		}
+	}
+	if err = tx.Commit(); err != nil {
+		fail(w, 500, err)
+		return
 	}
 	c, err := l.container(kind, entityID, requestScope(r.URL.Query()))
 	if err != nil {

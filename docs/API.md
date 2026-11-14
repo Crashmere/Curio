@@ -32,7 +32,7 @@ An asset includes `id`, original `name`, editable `title`, `notes`, `sourceUrl`,
 
 `contentHash` and `size` describe the current stored object. `normalized:true` indicates a losslessly replaced MP4 container; `id` remains the original upload fingerprint and all references use that stable ID. The original and current hashes both resolve for upload deduplication. Normalization changes byte layout, not encoded video/audio samples or logical movie metadata; downloads no longer promise the discarded original container bytes.
 
-`GET /api/info` returns `total` for live non-screenshot assets and `screenshots` for live classified game media. Their sum is the live catalog count in that scope. Stars, trash, jobs and `bytes` still span both categories. The browser's All Materials view uses `screenshot=0`; an asset list with neither screenshot nor game filters spans both categories.
+`GET /api/info` returns `total` for live assets shown in All Materials: neither enabled game media nor members of an excluded collection. `catalogTotal` counts all live assets in the scope, including excluded collection members and game media; `screenshots` counts live classified game media. Stars, trash, jobs and `bytes` retain their full scoped coverage. The browser's All Materials view uses `allMaterials=1`; an asset list without this filter retains excluded collection members.
 
 Asset list filters are parallel query parameters:
 
@@ -45,6 +45,7 @@ Asset list filters are parallel query parameters:
 | `group` | One collection group ID; all other media filters still apply |
 | `grouped` | `1` with `collection` pages by ungrouped media and one anchor per matching group; ignored with `group` or `ids` |
 | `screenshot` | `1` selects game media (images and recordings); `0` excludes it; omitted includes both categories |
+| `allMaterials` | `1` excludes enabled game media and members of any collection with `excludeFromAll:true`, within the requested scope |
 | `game` | Game registry ID, or `unassigned` for screenshots without a game |
 | `format` | Lowercase original extension, such as `png` or `mp4` |
 | `starred`, `unorganized`, `trash` | `1` enables the corresponding selection; ordinary lists exclude trash |
@@ -88,6 +89,8 @@ Both container types use the same contract:
 Tag names are globally case-insensitive unique. Creating an existing same-visibility tag can reuse its ID; visibility is not changed by that reuse. Collection names do not identify physical storage or duplicate originals.
 
 Collections additionally accept optional boolean `pinned` in POST and PATCH and return it in container responses and asset memberships. POST defaults to false; omitting it from PATCH preserves the existing value. `PATCH /api/collections/{id}` with `{"pinned":true}` pins the sidebar shortcut, and false removes that shortcut without deleting the collection. Pinning is shared across devices and scopes and does not change names, hidden flags, counts, media or memberships. Collection lists include both pinned and unpinned items; the browser filters only individual sidebar shortcuts. Tags return `pinned:false` and reject pin input.
+
+Collections also accept optional boolean `excludeFromAll` in POST and PATCH and return it in container responses and asset memberships. POST defaults to false; omission from PATCH preserves the current value. `{"excludeFromAll":true}` excludes every member from `allMaterials=1`, including assets also belonging to non-excluded collections. False removes only this collection's exclusion; other excluded memberships and game classification still apply. The setting is shared across devices and visibility scopes, independently of pinning and hiding. It preserves asset metadata, memberships, collection counts and covers, originals and access through other views. Tags return `excludeFromAll:false` and reject exclusion input.
 
 Collection creation additionally accepts optional `groupId` to place the new collection into an existing collection-index group. Group validation, collection creation, membership, appended global order and the layout revision commit together. A deleted target returns HTTP 409 with `code: "collection_group_missing"` without creating a collection. The new collection's default hidden flag still follows the request scope, independently of the group's presentation scope. Tags and container PATCH requests reject `groupId`; move existing collections through the layout API.
 

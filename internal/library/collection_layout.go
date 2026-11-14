@@ -228,7 +228,7 @@ func syncCollectionLayout(ctx context.Context, tx *sql.Tx) error {
 	return writeCollectionLayout(ctx, tx, layout)
 }
 
-func (l *Library) createCollectionWithLayout(ctx context.Context, entityID string, groupID *string, columns, values string, args []any) error {
+func (l *Library) createCollectionWithLayout(ctx context.Context, entityID string, groupID *string, columns, values string, args []any, excluded bool) error {
 	tx, err := l.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -252,6 +252,11 @@ func (l *Library) createCollectionWithLayout(ctx context.Context, entityID strin
 	}
 	if _, err = tx.ExecContext(ctx, "INSERT INTO collections("+columns+") VALUES("+values+")", args...); err != nil {
 		return err
+	}
+	if excluded {
+		if err = saveCollectionExclusion(tx, entityID, true); err != nil {
+			return err
+		}
 	}
 	if stored {
 		layout.CollectionOrder = append(layout.CollectionOrder, entityID)
@@ -281,6 +286,9 @@ func (l *Library) deleteCollectionWithLayout(ctx context.Context, entityID strin
 		return n, err
 	}
 	if err = syncCollectionLayout(ctx, tx); err != nil {
+		return 0, err
+	}
+	if err = saveCollectionExclusion(tx, entityID, false); err != nil {
 		return 0, err
 	}
 	if err = pruneContainerCovers(tx); err != nil {

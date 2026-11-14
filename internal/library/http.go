@@ -227,7 +227,7 @@ func (l *Library) info(w http.ResponseWriter, r *http.Request) {
 	scope := requestScope(r.URL.Query())
 	base := " FROM assets a WHERE a.purge_pending=0 AND " + scopeSQL(scope)
 	out := map[string]any{"name": "Curio", "version": Version, "chunkSize": ChunkSize, "workers": l.Workers, "gpuSlots": cap(l.GPU), "cpuOperations": cap(l.CPU), "scope": scope}
-	for key, condition := range map[string]string{"total": "a.trashed_at='' AND NOT " + screenshotSQL, "screenshots": "a.trashed_at='' AND " + screenshotSQL, "starred": "a.trashed_at='' AND a.starred=1", "unorganized": "a.trashed_at='' AND NOT " + organizedSQL, "trash": "a.trashed_at!=''", "queued": "a.status IN ('queued','processing')", "errors": "a.status='error'"} {
+	for key, condition := range map[string]string{"total": "a.trashed_at='' AND " + allMaterialsSQL, "catalogTotal": "a.trashed_at=''", "screenshots": "a.trashed_at='' AND " + screenshotSQL, "starred": "a.trashed_at='' AND a.starred=1", "unorganized": "a.trashed_at='' AND NOT " + organizedSQL, "trash": "a.trashed_at!=''", "queued": "a.status IN ('queued','processing')", "errors": "a.status='error'"} {
 		var n int64
 		if err := l.DB.QueryRow("SELECT count(*)" + base + " AND " + condition).Scan(&n); err != nil {
 			fail(w, 500, err)
@@ -257,6 +257,9 @@ func assetFilter(q url.Values) (string, []any, error) {
 	}
 	if q.Get("unorganized") == "1" {
 		where += " AND NOT " + organizedSQL
+	}
+	if q.Get("allMaterials") == "1" {
+		where += " AND " + allMaterialsSQL
 	}
 	if q.Get("screenshot") == "1" {
 		where += " AND " + screenshotSQL

@@ -67,13 +67,14 @@ type HiddenReason struct {
 }
 
 type Container struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Hidden    bool   `json:"hidden"`
-	Pinned    bool   `json:"pinned"`
-	Count     int64  `json:"count"`
-	CoverURL  string `json:"coverUrl,omitempty"`
-	CreatedAt string `json:"createdAt,omitempty"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Hidden         bool   `json:"hidden"`
+	Pinned         bool   `json:"pinned"`
+	ExcludeFromAll bool   `json:"excludeFromAll"`
+	Count          int64  `json:"count"`
+	CoverURL       string `json:"coverUrl,omitempty"`
+	CreatedAt      string `json:"createdAt,omitempty"`
 }
 
 type Asset struct {
@@ -308,6 +309,10 @@ func requestScope(q url.Values) string {
 
 const screenshotSQL = `EXISTS(SELECT 1 FROM screenshots s WHERE s.asset_id=a.id AND s.enabled=1)`
 
+const collectionExcludedSQL = `EXISTS(SELECT 1 FROM catalog_settings e WHERE e.key='collection_exclude_from_all:'||c.id AND e.value='1')`
+
+const allMaterialsSQL = `NOT ` + screenshotSQL + ` AND NOT EXISTS(SELECT 1 FROM asset_collections j JOIN collections c ON c.id=j.collection_id WHERE j.asset_id=a.id AND ` + collectionExcludedSQL + `)`
+
 const organizedSQL = `(EXISTS(SELECT 1 FROM asset_tags j WHERE j.asset_id=a.id) OR EXISTS(SELECT 1 FROM asset_collections j WHERE j.asset_id=a.id) OR ` + screenshotSQL + `)`
 
 const storedSizeSQL = `COALESCE((SELECT size FROM asset_storage WHERE asset_id=a.id AND state='ready'),a.size)`
@@ -371,17 +376,19 @@ func (l *Library) hydrate(items []Asset) error {
 	}
 	for _, rel := range []struct{ table, join, col, kind string }{{"tags", "asset_tags", "tag_id", "tag"}, {"collections", "asset_collections", "collection_id", "collection"}} {
 		pinned := "0"
+		excluded := "0"
 		if rel.kind == "collection" {
 			pinned = "c.pinned"
+			excluded = collectionExcludedSQL
 		}
-		rows, err := l.DB.Query("SELECT j.asset_id,c.id,c.name,c.hidden,"+pinned+" FROM "+rel.join+" j JOIN "+rel.table+" c ON c.id=j."+rel.col+" WHERE j.asset_id IN ("+placeholders+") ORDER BY c.name COLLATE NOCASE", args...)
+		rows, err := l.DB.Query("SELECT j.asset_id,c.id,c.name,c.hidden,"+pinned+","+excluded+" FROM "+rel.join+" j JOIN "+rel.table+" c ON c.id=j."+rel.col+" WHERE j.asset_id IN ("+placeholders+") ORDER BY c.name COLLATE NOCASE", args...)
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
 			var assetID string
 			var c Container
-			if err = rows.Scan(&assetID, &c.ID, &c.Name, &c.Hidden, &c.Pinned); err != nil {
+			if err = rows.Scan(&assetID, &c.ID, &c.Name, &c.Hidden, &c.Pinned, &c.ExcludeFromAll); err != nil {
 				rows.Close()
 				return err
 			}

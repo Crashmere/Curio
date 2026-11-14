@@ -1,9 +1,9 @@
 import { DragEvent, MouseEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowDown, ArrowUp, Check, ChevronRight, Folder, FolderInput, FolderPlus, GripVertical, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronRight, Folder, FolderInput, FolderPlus, GripVertical, MoreHorizontal, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { CollectionGroupState, CollectionIndexGroup, Entity, Scope } from "./api";
 import { Empty } from "./components";
-import { EntityCard } from "./EntityGrid";
+import { CollectionPreferenceActions, EntityCard } from "./EntityGrid";
 import { collectionSections, createCollectionDragMotion, moveCollection, moveCollectionGroup } from "./collection-group-layout";
 import "./collection-index.css";
 
@@ -13,7 +13,7 @@ type Menu = { kind: "collection" | "group"; id: string; left: number; top: numbe
 export type CollectionIndexProps = {
   items: Entity[]; scope: Scope; state: CollectionGroupState; searching: boolean; busy: boolean; query?: string;
   open: (entity: Entity) => void; edit: (entity: Entity) => void; rename: (entity: Entity) => void;
-  pin: (entity: Entity) => void; remove: (entity: Entity) => void; create: (groupId?: string) => void;
+  pin: (entity: Entity) => void; exclude: (entity: Entity) => void; remove: (entity: Entity) => void; create: (groupId?: string) => void;
   save: (next: CollectionGroupState) => Promise<void>;
   createGroup: (collection?: Entity) => void; renameGroup: (group: CollectionIndexGroup) => void; removeGroup: (group: CollectionIndexGroup) => void;
 };
@@ -25,7 +25,7 @@ function readClosed(scope: Scope): Set<string> {
   } catch { return new Set(); }
 }
 
-export function CollectionIndex({ items, scope, state, searching, busy, query, open, rename, pin, remove, create, save, createGroup, renameGroup, removeGroup }: CollectionIndexProps) {
+export function CollectionIndex({ items, scope, state, searching, busy, query, open, rename, pin, exclude, remove, create, save, createGroup, renameGroup, removeGroup }: CollectionIndexProps) {
   const root = useRef<HTMLDivElement>(null);
   const [motion] = useState(() => createCollectionDragMotion(() => root.current));
   const [closed, setClosed] = useState(() => ({ normal: readClosed("normal"), hidden: readClosed("hidden") }));
@@ -222,7 +222,7 @@ export function CollectionIndex({ items, scope, state, searching, busy, query, o
       <div className="action-menu-heading" title={menuEntity?.name ?? menuGroup?.name}>{menuEntity?.name ?? menuGroup?.name}</div>
       {menuEntity ? <>
         <button className="action-menu-item" role="menuitem" disabled={busy} onMouseEnter={() => setMoveOpen(false)} onClick={() => { closeMenu(); rename(menuEntity); }}><Pencil size={15} />重命名</button>
-        <button className="action-menu-item" role="menuitem" disabled={busy} onMouseEnter={() => setMoveOpen(false)} onClick={() => { closeMenu(); pin(menuEntity); }}>{menuEntity.pinned ? <PinOff size={15} /> : <Pin size={15} />}{menuEntity.pinned ? "取消固定" : "固定到侧栏"}</button>
+        <CollectionPreferenceActions entity={menuEntity} busy={busy} pin={pin} exclude={exclude} close={closeMenu} onMouseEnter={() => setMoveOpen(false)} />
         <button ref={moveButton} className={`action-menu-item ${moveOpen ? "is-open" : ""}`} role="menuitem" aria-haspopup="menu" aria-expanded={moveOpen} disabled={busy} onMouseEnter={() => setMoveOpen(true)} onClick={() => setMoveOpen(true)}><FolderInput size={15} />移动到<ChevronRight className="collection-menu-arrow" size={14} /></button>
         <div className="action-menu-divider" role="separator" />
         <button className="action-menu-item action-menu-danger" role="menuitem" disabled={busy} onMouseEnter={() => setMoveOpen(false)} onClick={() => { closeMenu(); remove(menuEntity); }}><Trash2 size={15} />删除收藏集</button>

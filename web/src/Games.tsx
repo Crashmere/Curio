@@ -100,7 +100,7 @@ export function ScreenshotEditor({ asset, count, games, scope, close, save }: { 
         {asset && <label>截图 / 录像时间<input type="datetime-local" step="1" value={capturedAt} disabled={busy} onChange={event => setCapturedAt(event.target.value)} /></label>}
         <p className="form-help">时间优先读取 Steam 文件名、_YYYYMMDDHHmmss 或 2025-11-22 22-42-05 / 2025-11-22-22-42-05 格式，其次取文件内部拍摄、创建与修改时间的最早值，最后使用上传时保留的本地修改时间。{gameId === "auto" ? "游戏无法识别时进入未指定游戏；已归类素材保留原有信息。" : asset ? "可手动修改或清空，未知时间排在最后。" : "已归类素材保留各自的时间。"}</p>
       </>}
-      {!enabled && <p className="form-help">移出游戏截图后回到全部素材；没有标签或收藏集时也会进入未整理。原件与其他关联保留，重复导入不会重新覆盖这一选择。</p>}
+      {!enabled && <p className="form-help">移出游戏截图后恢复为普通素材；没有标签或收藏集时也会进入未整理。原件与其他关联保留，重复导入不会重新覆盖这一选择。</p>}
       {error && <div className="inline-error">{error}</div>}
       <footer className="dialog-footer"><button type="button" className="button" data-dialog-close disabled={busy}>取消</button><button type="submit" className="button primary" disabled={busy || enabled && pendingGame}>{busy ? <RotateCw size={15} className="spin" /> : <Check size={15} />}保存</button></footer>
     </form>

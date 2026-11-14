@@ -243,7 +243,8 @@ input[type="search"]::-webkit-search-cancel-button { display: none; }
 .entity-open { text-align: left; width: 100%; }
 .entity-cover { position: relative; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #e8ecdf, #dce4cf); color: #a0af89; border: 1px solid #dce3ce; border-radius: 11px; aspect-ratio: 1.45; overflow: hidden; }
 .entity-cover img { width: 100%; height: 100%; object-fit: cover; }
-.collection-pin-badge { position: absolute; top: 9px; right: 9px; display: inline-flex; align-items: center; gap: 4px; padding: 5px 8px; border: 1px solid #dce3ce; border-radius: 6px; background: #f8faedf2; color: var(--accent-dark); font-size: 10px; }
+.collection-status-badges { position: absolute; top: 9px; right: 9px; display: flex; gap: 5px; }
+.collection-status-badge { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 1px solid #dce3ce; border-radius: 6px; background: #f8faedf2; color: var(--accent-dark); }
 .entity-card-info { padding: 13px 50px 0 2px; }
 .entity-card h2 { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; color: #667557; overflow-wrap: anywhere; }
 .entity-card-info > span { display: block; margin-top: 6px; font-size: 10px; color: #a0aa91; }

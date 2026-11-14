@@ -1,6 +1,6 @@
 import { ComponentPropsWithoutRef, ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Folder, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Tag, Trash2 } from "lucide-react";
+import { Folder, ListMinus, ListPlus, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Tag, Trash2 } from "lucide-react";
 import { Entity } from "./api";
 import { Empty } from "./components";
 
@@ -11,7 +11,10 @@ export function EntityCard({ entity, kind, open, actions, disabled, className = 
     <button className="entity-open" disabled={disabled} draggable={false} onClick={() => open(entity)}>
       <div className="entity-cover">
         {entity.coverUrl ? <img src={entity.coverUrl} alt="" loading="lazy" draggable={false} /> : kind === "collections" ? <Folder size={35} strokeWidth={1.2} /> : <Tag size={30} strokeWidth={1.2} />}
-        {kind === "collections" && entity.pinned && <span className="collection-pin-badge"><Pin size={12} />已固定</span>}
+        {kind === "collections" && (entity.pinned || entity.excludeFromAll) && <div className="collection-status-badges">
+          {entity.pinned && <span className="collection-status-badge" role="img" aria-label="已固定到侧栏" title="已固定到侧栏"><Pin size={14} aria-hidden="true" /></span>}
+          {entity.excludeFromAll && <span className="collection-status-badge" role="img" aria-label="已从全部素材排除" title="已从全部素材排除"><ListMinus size={14} aria-hidden="true" /></span>}
+        </div>}
       </div>
       <div className="entity-card-info"><h2>{entity.name}</h2><span>{entity.count} 个素材</span></div>
     </button>
@@ -19,10 +22,20 @@ export function EntityCard({ entity, kind, open, actions, disabled, className = 
   </article>;
 }
 
-export function EntityGrid({ items, kind, searching, busy, open, edit, rename, pin, remove, create }: {
+export function CollectionPreferenceActions({ entity, busy, pin, exclude, close, onMouseEnter }: {
+  entity: Entity; busy: boolean; pin: (entity: Entity) => void; exclude: (entity: Entity) => void;
+  close: () => void; onMouseEnter?: () => void;
+}) {
+  return <>
+    <button className="action-menu-item" role="menuitem" disabled={busy} onMouseEnter={onMouseEnter} onClick={() => { close(); pin(entity); }}>{entity.pinned ? <PinOff size={15} /> : <Pin size={15} />}{entity.pinned ? "取消固定" : "固定到侧栏"}</button>
+    <button className="action-menu-item" role="menuitem" disabled={busy} onMouseEnter={onMouseEnter} onClick={() => { close(); exclude(entity); }}>{entity.excludeFromAll ? <ListPlus size={15} /> : <ListMinus size={15} />}{entity.excludeFromAll ? "恢复到全部素材" : "从全部素材排除"}</button>
+  </>;
+}
+
+export function EntityGrid({ items, kind, searching, busy, open, edit, rename, pin, exclude, remove, create }: {
   items: Entity[]; kind: "tags" | "collections"; searching: boolean; busy: boolean;
   open: (entity: Entity) => void; edit: (entity: Entity) => void; rename: (entity: Entity) => void;
-  pin: (entity: Entity) => void; remove: (entity: Entity) => void; create: () => void;
+  pin: (entity: Entity) => void; exclude: (entity: Entity) => void; remove: (entity: Entity) => void; create: () => void;
 }) {
   const [menu, setMenu] = useState<{ id: string; left: number; top: number }>();
   const menuRoot = useRef<HTMLDivElement>(null);
@@ -71,7 +84,7 @@ export function EntityGrid({ items, kind, searching, busy, open, edit, rename, p
     {menu && menuEntity && createPortal(<div ref={menuRoot} className="compact-action-menu collection-action-menu" style={{ left: menu.left, top: menu.top }} role="menu" aria-label={`收藏集操作：${menuEntity.name}`}>
       <div className="action-menu-heading" title={menuEntity.name}>{menuEntity.name}</div>
       <button className="action-menu-item" role="menuitem" disabled={busy} onClick={() => { setMenu(undefined); rename(menuEntity); }}><Pencil size={15} />重命名</button>
-      <button className="action-menu-item" role="menuitem" disabled={busy} onClick={() => { setMenu(undefined); pin(menuEntity); }}>{menuEntity.pinned ? <PinOff size={15} /> : <Pin size={15} />}{menuEntity.pinned ? "取消固定" : "固定到侧栏"}</button>
+      <CollectionPreferenceActions entity={menuEntity} busy={busy} pin={pin} exclude={exclude} close={() => setMenu(undefined)} />
       <div className="action-menu-divider" role="separator" />
       <button className="action-menu-item action-menu-danger collection-menu-delete" role="menuitem" disabled={busy} onClick={() => { setMenu(undefined); remove(menuEntity); }}><Trash2 size={15} />删除收藏集</button>
     </div>, document.body)}
