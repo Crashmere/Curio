@@ -120,8 +120,9 @@ function App() {
   const galleryAssets = entries.flatMap(entry => entry.asset ? [entry.asset] : expandedGroups.has(entry.group.id) ? entry.items : []);
   const galleryIndices = new Map(galleryAssets.map((asset, index) => [asset.id, index]));
   const selectedAssets = entries.flatMap(entry => entry.asset ? [entry.asset] : entry.items).filter(asset => selected.has(asset.id));
-  const selectedAreStarred = selectedAssets.length === selected.size && selectedAssets.every(asset => asset.starred);
-  const selectedSupportGames = selectedAssets.length === selected.size && selectedAssets.every(supportsGameMedia);
+  const selectionComplete = selectedAssets.length === selected.size;
+  const selectedAreStarred = selectionComplete && selectedAssets.every(asset => asset.starred);
+  const selectedSupportGames = selectionComplete && selectedAssets.every(supportsGameMedia);
   const groupedAssetIds = new Set(groups.flatMap(group => group.assetIds));
   const selectedUngroupedIds = [...selected].filter(id => !groupedAssetIds.has(id));
   const selectedInGroups = [...selected].some(id => groupedAssetIds.has(id));
@@ -872,8 +873,8 @@ function App() {
       <button className="button subtle" title="全选当前筛选结果，包含尚未加载的素材" disabled={loading || loadingMore || selectingAll || busy || !total || !!error} onClick={() => void selectAll()}>{selectingAll ? <><RotateCw size={14} className="spin" />正在全选</> : allSelected ? "取消全选" : "全选"}</button>
       {!!selected.size && !selectingAll && <><span className="selection-divider" />{view !== "trash" ? <>
         <button className="button" title={selectedSupportGames ? undefined : "仅图片和录像可移入游戏截图"} disabled={busy || !selectedSupportGames} onClick={() => setModal({ type: "screenshots", ids: [...selected] })}><Gamepad2 size={15} />移入游戏截图</button>
-        <button className="button" disabled={busy} onClick={() => setModal({ type: "memberships", kind: "tags", ids: [...selected] })}><Tag size={15} />标签</button>
-        <button className="button" disabled={busy} onClick={() => setModal({ type: "memberships", kind: "collections", ids: [...selected] })}><Folder size={15} />收藏集</button>
+        <button className="button" disabled={busy || !selectionComplete} onClick={() => setModal({ type: "memberships", kind: "tags", ids: [...selected] })}><Tag size={15} />标签</button>
+        <button className="button" disabled={busy || !selectionComplete} onClick={() => setModal({ type: "memberships", kind: "collections", ids: [...selected] })}><Folder size={15} />收藏集</button>
         {collectionId && <><button className="button group-create" title="将所选未分组素材组成一组，已分组素材会被忽略" disabled={busy || loading || selectedUngroupedIds.length < 2 || selected.size > 2000} onClick={() => setModal({ type: "group", ids: selectedUngroupedIds })}><Group size={15} />组成一组</button>{selectedInGroups && <button className="button" disabled={busy || loading} onClick={() => void editGroup(null, "remove")}><Ungroup size={15} />移出分组</button>}</>}
         {(collectionId || tagId) && <button className="button" title="仅移除当前关联，保留素材与其他标签、收藏集" disabled={busy} onClick={() => void patch([...selected], collectionId ? { removeCollectionIds: [collectionId] } : { removeTagIds: [tagId] }, collectionId ? "已移出当前收藏集" : "已移出当前标签")}><Unlink size={15} />{collectionId ? "移出当前收藏集" : "移出当前标签"}</button>}<button className="icon-button" title={selectedAreStarred ? "取消星标" : "添加星标"} aria-label={selectedAreStarred ? "取消星标" : "添加星标"} disabled={busy} onClick={() => void patch([...selected], { starred: !selectedAreStarred }, "星标已更新")}><Star size={17} /></button><button className="icon-button" title="单独隐藏" aria-label="单独隐藏" disabled={busy} onClick={() => void patch([...selected], { hidden: true }, "已标记隐藏")}><EyeOff size={17} /></button><button className="icon-button" title="取消单独隐藏" aria-label="取消单独隐藏" disabled={busy} onClick={() => void patch([...selected], { hidden: false }, "已取消单独隐藏；标签或收藏集的隐藏仍会生效")}><Eye size={17} /></button><button className="icon-button" title="打包下载" aria-label="打包下载" disabled={busy} onClick={downloadSelected}><Download size={17} /></button><button className="icon-button danger" title="移入回收站" aria-label="移入回收站" disabled={busy} onClick={() => void patch([...selected], { trash: true }, "已移入回收站")}><Trash2 size={17} /></button></> : <><button className="button" disabled={busy} onClick={() => void patch([...selected], { trash: false }, "素材已恢复")}><RotateCw size={15} />恢复</button><button className="button danger" disabled={busy} onClick={() => setModal({ type: "purge", ids: [...selected] })}><Trash2 size={15} />永久删除</button></>}</>}
     </div>}
@@ -891,7 +892,7 @@ function App() {
       setModal(current => current === modal ? null : current);
       notify("分组已删除，收藏集和素材全部保留");
     }} />}
-    {modal?.type === "memberships" && <MembershipEditor key={modal.kind} kind={modal.kind} count={modal.ids.length} scope={scope} items={modal.kind === "tags" ? tags : collections} created={entity => { const update = (items: Entity[]) => [...items.filter(item => item.id !== entity.id), entity]; if (modal.kind === "tags") setTags(update); else setCollections(update); }} close={() => setModal(null)} save={async value => { await api(scoped("assets", scope), { ids: modal.ids, ...value }, "PATCH"); setModal(null); setSelected(new Set()); changed(); notify(modal.kind === "tags" ? "标签已更新" : "收藏集已更新"); }} />}
+    {modal?.type === "memberships" && <MembershipEditor key={modal.kind} kind={modal.kind} count={modal.ids.length} assets={selectedAssets} scope={scope} items={modal.kind === "tags" ? tags : collections} created={entity => { const update = (items: Entity[]) => [...items.filter(item => item.id !== entity.id), entity]; if (modal.kind === "tags") setTags(update); else setCollections(update); }} close={() => setModal(null)} save={async value => { await api(scoped("assets", scope), { ids: modal.ids, ...value }, "PATCH"); setModal(null); setSelected(new Set()); changed(); notify(modal.kind === "tags" ? "标签已更新" : "收藏集已更新"); }} />}
     {modal?.type === "purge" && <Purge count={modal.ids.length} close={() => setModal(null)} confirm={async () => { await api("assets/purge", { ids: modal.ids, confirm: true }); setModal(null); setSelected(new Set()); changed(); notify("永久删除已提交"); }} />}
     {modal?.type === "remove-entity" && <RemoveEntity kind={modal.kind} entity={modal.entity} close={() => setModal(null)} confirm={async () => { await api(`${modal.kind}/${modal.entity.id}`, undefined, "DELETE"); setModal(null); if (tagId === modal.entity.id || collectionId === modal.entity.id) navigate("all"); changed(); notify("已移除，不影响原件"); }} />}
     {dragging && <div className="drop-overlay"><Upload size={42} strokeWidth={1.4} /><strong>松开即可收集</strong><span>{uploadTargetLabel || (scope === "hidden" ? "保存到隐藏模式" : "保存到普通模式")}</span></div>}
@@ -929,30 +930,38 @@ function EntityEditor({ kind, entity, renameOnly = false, groupId, scope, close,
   }
   return <Dialog title={`${renameOnly ? "重命名" : entity ? "编辑" : "新建"}${label}`} close={close} dirty={dirty} busy={busy}><form className="metadata-form" onSubmit={event => { event.preventDefault(); void save(); }}><label>名称<input value={name} disabled={busy} onChange={event => setName(event.target.value)} maxLength={200} placeholder={kind === "collections" ? "例如：桌面壁纸、某款游戏" : "例如：头像、梗图"} autoFocus={renameOnly} onFocus={event => { if (renameOnly) event.currentTarget.select(); }} /></label>{!renameOnly && <><div className="form-switches"><label><input type="checkbox" checked={hidden} disabled={busy} onChange={event => setHidden(event.target.checked)} />隐藏此{label}</label></div><p className="form-help">隐藏后，关联的全部素材都会进入隐藏模式，即使它们同时属于其他普通{label}。</p></>}{error && <div className="inline-error">{error}</div>}<footer className="dialog-footer">{remove && <button type="button" className="button danger entity-delete" disabled={busy} onClick={() => { if (dirty) setError("请先保存或取消当前修改，再删除收藏集"); else remove(); }}><Trash2 size={15} />删除收藏集</button>}<button type="button" className="button" data-dialog-close disabled={busy}>取消</button><button className="button primary" type="submit" disabled={!name.trim() || busy}>{busy ? <RotateCw size={15} className="spin" /> : <Check size={15} />}保存</button></footer></form></Dialog>;
 }
-function MembershipEditor({ kind, count, scope, items, created, close, save }: { kind: "tags" | "collections"; count: number; scope: Scope; items: Entity[]; created: (entity: Entity) => void; close: () => void; save: (value: Patch) => Promise<void> }) {
+function MembershipEditor({ kind, count, assets, scope, items, created, close, save }: { kind: "tags" | "collections"; count: number; assets: Asset[]; scope: Scope; items: Entity[]; created: (entity: Entity) => void; close: () => void; save: (value: Patch) => Promise<void> }) {
   const label = kind === "tags" ? "标签" : "收藏集";
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [action, setAction] = useState("add");
+  // Keep the opening baseline stable while library polling refreshes the props.
+  const [initialIds] = useState(() => {
+    const memberships = assets.map(asset => new Set(asset[kind].map(item => item.id)));
+    return [...(memberships[0] ?? [])].filter(id => memberships.every(ids => ids.has(id)));
+  });
+  const [selectedIds, setSelectedIds] = useState(initialIds);
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
   const working = busy || creating;
-  const dirty = !!selectedIds.length || action !== "add";
+  const initial = new Set(initialIds);
+  const selected = new Set(selectedIds);
+  const addIds = selectedIds.filter(id => !initial.has(id));
+  const removeIds = initialIds.filter(id => !selected.has(id));
+  const dirty = !!addIds.length || !!removeIds.length;
   async function submit() {
-    if (working || !selectedIds.length) return;
+    if (working || !dirty) return;
     setBusy(true); setError("");
     const value: Patch = kind === "tags"
-      ? action === "add" ? { addTagIds: selectedIds } : { removeTagIds: selectedIds }
-      : action === "add" ? { addCollectionIds: selectedIds } : { removeCollectionIds: selectedIds };
+      ? { addTagIds: addIds, removeTagIds: removeIds }
+      : { addCollectionIds: addIds, removeCollectionIds: removeIds };
     try { await save(value); } catch (error) { setError(error instanceof Error ? error.message : String(error)); } finally { setBusy(false); }
   }
   return <Dialog title={`管理${label} · ${count} 个素材`} close={close} wide dirty={dirty} busy={working}>
     <div className="metadata-form">
-      <div className="form-section"><label>操作<select value={action} disabled={working} onChange={event => setAction(event.target.value)}><option value="add">添加{label}</option><option value="remove">移除{label}</option></select></label></div>
-      <EntityPicker kind={kind} scope={scope} items={items} selected={selectedIds} change={setSelectedIds} disabled={busy} allowCreate={action === "add"} onBusyChange={setCreating} onCreated={created} />
+      <p className="form-help">已勾选所有所选素材共同所在的{label}。取消勾选即移除，新增勾选即添加，点击应用后保存；未改动的关联保持原样。</p>
+      <EntityPicker kind={kind} scope={scope} items={items} selected={selectedIds} change={setSelectedIds} disabled={busy} onBusyChange={setCreating} onCreated={created} />
       <p className="form-help">有标签、收藏集或归入游戏截图的素材算作已整理；全部移除后回到未整理。</p>
       {error && <div className="inline-error">{error}</div>}
-      <footer className="dialog-footer"><button className="button" data-dialog-close disabled={working}>取消</button><button className="button primary" onClick={() => void submit()} disabled={working || !selectedIds.length}>{busy ? <RotateCw size={15} className="spin" /> : <Check size={15} />}应用</button></footer>
+      <footer className="dialog-footer"><button className="button" data-dialog-close disabled={working}>取消</button><button className="button primary" onClick={() => void submit()} disabled={working || !dirty}>{busy ? <RotateCw size={15} className="spin" /> : <Check size={15} />}应用</button></footer>
     </div>
   </Dialog>;
 }
