@@ -34,6 +34,8 @@ Tag and collection index searches filter the current index rather than switching
 
 The selection toolbar opens independent game classification, tag and collection editors. Both membership editors initially check the intersection of memberships across all selected media, including select-all pages and collapsed group members. The opening intersection remains the draft baseline during background polling. Applying changes sends additions for newly checked choices and removals for unchecked common choices in one atomic incremental asset patch. Unchanged partial memberships remain on their existing media; the editors never replace complete membership sets. Returning every choice to its initial state leaves no pending change.
 
+The batch collection picker uses the collection index's shared section builder and layout data, loaded alongside the scoped catalog. Group order, collection order within each group and the final `未分组` section match the index; choices flow left to right in a responsive grid. Search filters those sections without changing their order or draft selections. Newly created collections appear at the end of `未分组`, following the index's creation order.
+
 ### Collection Index Groups
 
 The collection index organizes its cards into named sections and a reserved `未分组` section. Each collection belongs to at most one index group. Group-array order controls section order; one complete global collection order controls card order within every section. Dissolving an index group returns its collections to `未分组` without changing collections, media memberships, pins or originals. These index groups are independent of the media groups inside a collection.

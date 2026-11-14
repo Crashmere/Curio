@@ -425,7 +425,7 @@ function App() {
           view === "jobs" ? loadJobPages(controller.signal) : Promise.resolve(null),
           collectionId ? api<{ items: MediaGroup[] }>(groupsPath(), undefined, undefined, controller.signal) : Promise.resolve({ items: [] }),
           api<{ items: Game[] }>(scoped("games", scope), undefined, undefined, controller.signal),
-          view === "collections" ? api<CollectionGroupState>("collection-groups", undefined, undefined, controller.signal) : Promise.resolve(null)
+          api<CollectionGroupState>("collection-groups", undefined, undefined, controller.signal)
         ]);
         const prepared = assetContent ? await prepareGroupMedia(assetContent.items, groupList.items, assetPath(), controller.signal) : {};
         if (controller.signal.aborted) return;
@@ -470,7 +470,7 @@ function App() {
         viewer ? api<Asset>(scoped(`assets/${viewer.id}`, scope), undefined, undefined, signal).catch(() => null) : Promise.resolve(null),
         collectionId ? api<{ items: MediaGroup[] }>(groupsPath(), undefined, undefined, signal) : Promise.resolve({ items: [] }),
         api<{ items: Game[] }>(scoped("games", scope), undefined, undefined, signal),
-        view === "collections" ? api<CollectionGroupState>("collection-groups", undefined, undefined, signal) : Promise.resolve(null)
+        api<CollectionGroupState>("collection-groups", undefined, undefined, signal)
       ]);
       const prepared = await prepareGroupMedia(assetContent || [...assets, ...Object.values(groupPages).flatMap(page => page.items)], groupList.items, assetPath(), signal);
       if (token !== pageToken.current || nameRevision !== groupNameRevision.current || layoutEpoch !== collectionLayoutEpoch.current) return;
@@ -892,7 +892,7 @@ function App() {
       setModal(current => current === modal ? null : current);
       notify("分组已删除，收藏集和素材全部保留");
     }} />}
-    {modal?.type === "memberships" && <MembershipEditor key={modal.kind} kind={modal.kind} count={modal.ids.length} assets={selectedAssets} scope={scope} items={modal.kind === "tags" ? tags : collections} created={entity => { const update = (items: Entity[]) => [...items.filter(item => item.id !== entity.id), entity]; if (modal.kind === "tags") setTags(update); else setCollections(update); }} close={() => setModal(null)} save={async value => { await api(scoped("assets", scope), { ids: modal.ids, ...value }, "PATCH"); setModal(null); setSelected(new Set()); changed(); notify(modal.kind === "tags" ? "标签已更新" : "收藏集已更新"); }} />}
+    {modal?.type === "memberships" && <MembershipEditor key={modal.kind} kind={modal.kind} count={modal.ids.length} assets={selectedAssets} scope={scope} items={modal.kind === "tags" ? tags : collections} collectionLayout={collectionLayout} created={entity => { const update = (items: Entity[]) => [...items.filter(item => item.id !== entity.id), entity]; if (modal.kind === "tags") setTags(update); else setCollections(update); }} close={() => setModal(null)} save={async value => { await api(scoped("assets", scope), { ids: modal.ids, ...value }, "PATCH"); setModal(null); setSelected(new Set()); changed(); notify(modal.kind === "tags" ? "标签已更新" : "收藏集已更新"); }} />}
     {modal?.type === "purge" && <Purge count={modal.ids.length} close={() => setModal(null)} confirm={async () => { await api("assets/purge", { ids: modal.ids, confirm: true }); setModal(null); setSelected(new Set()); changed(); notify("永久删除已提交"); }} />}
     {modal?.type === "remove-entity" && <RemoveEntity kind={modal.kind} entity={modal.entity} close={() => setModal(null)} confirm={async () => { await api(`${modal.kind}/${modal.entity.id}`, undefined, "DELETE"); setModal(null); if (tagId === modal.entity.id || collectionId === modal.entity.id) navigate("all"); changed(); notify("已移除，不影响原件"); }} />}
     {dragging && <div className="drop-overlay"><Upload size={42} strokeWidth={1.4} /><strong>松开即可收集</strong><span>{uploadTargetLabel || (scope === "hidden" ? "保存到隐藏模式" : "保存到普通模式")}</span></div>}
@@ -930,7 +930,7 @@ function EntityEditor({ kind, entity, renameOnly = false, groupId, scope, close,
   }
   return <Dialog title={`${renameOnly ? "重命名" : entity ? "编辑" : "新建"}${label}`} close={close} dirty={dirty} busy={busy}><form className="metadata-form" onSubmit={event => { event.preventDefault(); void save(); }}><label>名称<input value={name} disabled={busy} onChange={event => setName(event.target.value)} maxLength={200} placeholder={kind === "collections" ? "例如：桌面壁纸、某款游戏" : "例如：头像、梗图"} autoFocus={renameOnly} onFocus={event => { if (renameOnly) event.currentTarget.select(); }} /></label>{!renameOnly && <><div className="form-switches"><label><input type="checkbox" checked={hidden} disabled={busy} onChange={event => setHidden(event.target.checked)} />隐藏此{label}</label></div><p className="form-help">隐藏后，关联的全部素材都会进入隐藏模式，即使它们同时属于其他普通{label}。</p></>}{error && <div className="inline-error">{error}</div>}<footer className="dialog-footer">{remove && <button type="button" className="button danger entity-delete" disabled={busy} onClick={() => { if (dirty) setError("请先保存或取消当前修改，再删除收藏集"); else remove(); }}><Trash2 size={15} />删除收藏集</button>}<button type="button" className="button" data-dialog-close disabled={busy}>取消</button><button className="button primary" type="submit" disabled={!name.trim() || busy}>{busy ? <RotateCw size={15} className="spin" /> : <Check size={15} />}保存</button></footer></form></Dialog>;
 }
-function MembershipEditor({ kind, count, assets, scope, items, created, close, save }: { kind: "tags" | "collections"; count: number; assets: Asset[]; scope: Scope; items: Entity[]; created: (entity: Entity) => void; close: () => void; save: (value: Patch) => Promise<void> }) {
+function MembershipEditor({ kind, count, assets, scope, items, collectionLayout, created, close, save }: { kind: "tags" | "collections"; count: number; assets: Asset[]; scope: Scope; items: Entity[]; collectionLayout: CollectionGroupState; created: (entity: Entity) => void; close: () => void; save: (value: Patch) => Promise<void> }) {
   const label = kind === "tags" ? "标签" : "收藏集";
   // Keep the opening baseline stable while library polling refreshes the props.
   const [initialIds] = useState(() => {
@@ -958,7 +958,7 @@ function MembershipEditor({ kind, count, assets, scope, items, created, close, s
   return <Dialog title={`管理${label} · ${count} 个素材`} close={close} wide dirty={dirty} busy={working}>
     <div className="metadata-form">
       <p className="form-help">已勾选所有所选素材共同所在的{label}。取消勾选即移除，新增勾选即添加，点击应用后保存；未改动的关联保持原样。</p>
-      <EntityPicker kind={kind} scope={scope} items={items} selected={selectedIds} change={setSelectedIds} disabled={busy} onBusyChange={setCreating} onCreated={created} />
+      <EntityPicker kind={kind} scope={scope} items={items} selected={selectedIds} change={setSelectedIds} disabled={busy} onBusyChange={setCreating} onCreated={created} collectionLayout={collectionLayout} />
       <p className="form-help">有标签、收藏集或归入游戏截图的素材算作已整理；全部移除后回到未整理。</p>
       {error && <div className="inline-error">{error}</div>}
       <footer className="dialog-footer"><button className="button" data-dialog-close disabled={working}>取消</button><button className="button primary" onClick={() => void submit()} disabled={working || !dirty}>{busy ? <RotateCw size={15} className="spin" /> : <Check size={15} />}应用</button></footer>

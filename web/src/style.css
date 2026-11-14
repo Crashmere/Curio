@@ -303,6 +303,13 @@ input[type="search"]::-webkit-search-cancel-button { display: none; }
 .metadata-form .entity-picker-search input { width: auto; flex: 1 1 160px; }
 .entity-picker .choice-chips { max-height: 180px; overflow-y: auto; scrollbar-width: thin; padding: 2px; }
 .entity-picker .choice-chips > button { max-width: 100%; overflow-wrap: anywhere; text-align: left; }
+.entity-picker-sections { max-height: 360px; overflow-y: auto; scrollbar-width: thin; padding: 2px; }
+.entity-picker-section + .entity-picker-section { margin-top: 18px; }
+.entity-picker-section h4 { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; color: var(--ink); font-size: 12px; font-weight: 600; }
+.entity-picker-section h4 > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.entity-picker-sections .choice-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 140px), 1fr)); max-height: none; overflow: visible; padding: 0; }
+.entity-picker-sections .choice-chips > button { min-width: 0; }
+.entity-picker-sections .choice-chips > button > svg { flex-shrink: 0; }
 .form-switches { display: flex; align-items: center; gap: 23px; flex-wrap: wrap; margin-top: 22px; }
 .form-switches label, .confirm-check { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #7b9364; }
 .form-help { color: #a4b294; font-size: 10px; line-height: 1.9; margin-top: 15px; }
