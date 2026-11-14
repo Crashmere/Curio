@@ -266,11 +266,14 @@ func (l *Library) probePlayback(ctx context.Context, hash, stamp string) (*playb
 	}
 	if spec.duration <= 0 {
 		spec.duration = playbackNumber(raw.Format.Duration)
+	} else {
+		// Covers and browser movie clocks are relative to the container origin.
+		spec.duration += spec.start - spec.frameStart
 	}
 	if spec.sourceAudio != nil {
-		spec.sourceAudio.Start -= spec.start
+		spec.sourceAudio.Start -= spec.frameStart
 	}
-	if !video || spec.width <= 0 || spec.height <= 0 || spec.duration <= 0 || math.IsNaN(spec.start) || math.IsInf(spec.start, 0) {
+	if !video || spec.width <= 0 || spec.height <= 0 || spec.duration <= 0 || math.IsNaN(spec.start) || math.IsInf(spec.start, 0) || math.IsNaN(spec.frameStart) || math.IsInf(spec.frameStart, 0) {
 		return nil, errPlaybackTime
 	}
 	iso, webm := false, false
@@ -301,8 +304,10 @@ func (l *Library) probePlayback(ctx context.Context, hash, stamp string) (*playb
 			}
 		}
 	}
-	// Native playback exposes source PTS; the compatibility stream starts at zero.
-	if math.Abs(spec.start) > 0.001 {
+	// Small track lead is ordinary encoder delay; nonzero movie origins expose
+	// incompatible native clocks and still require the normalized stream.
+	videoLead := spec.start - spec.frameStart
+	if math.Abs(spec.frameStart) > 0.001 || videoLead < -0.001 || videoLead > 0.25 {
 		spec.sourceCodecs = ""
 	}
 	if spec.hdr {
@@ -363,7 +368,7 @@ func (l *Library) playbackInfo(w http.ResponseWriter, r *http.Request) {
 		playbackFailure(w, err)
 		return
 	}
-	result := playbackDescriptor{Stream: playbackSource{URL: fmt.Sprintf("/curio/media/%s/stream/index.m3u8?timeline=s2", spec.hash), Mime: "application/vnd.apple.mpegurl"}, Duration: spec.duration, FrameRate: spec.frameRate}
+	result := playbackDescriptor{Stream: playbackSource{URL: fmt.Sprintf("/curio/media/%s/stream/index.m3u8?timeline=%s&recipe=%s", spec.hash, playbackShortSegments, playbackRecipe), Mime: "application/vnd.apple.mpegurl"}, Duration: spec.duration, FrameRate: spec.frameRate}
 	if spec.hasAlpha {
 		result.FallbackError = errPlaybackAlpha.Error()
 	}
@@ -398,9 +403,9 @@ func (l *Library) streamPlaylist(w http.ResponseWriter, r *http.Request) {
 		if duration <= 0 {
 			break
 		}
-		fmt.Fprintf(&playlist, "#EXTINF:%.6f,\n%d.ts", duration, index)
+		fmt.Fprintf(&playlist, "#EXTINF:%.6f,\n%d.ts?recipe=%s", duration, index, playbackRecipe)
 		if timeline != "" {
-			fmt.Fprintf(&playlist, "?timeline=%s", timeline)
+			fmt.Fprintf(&playlist, "&timeline=%s", timeline)
 		}
 		playlist.WriteByte('\n')
 	}

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { Image as ImageIcon, LoaderCircle, Maximize, Pause, PictureInPicture2, Play, RefreshCw, StepBack, StepForward, Volume2, VolumeX } from "lucide-react";
-import { base, type Asset, type PlaybackDescriptor } from "./api";
+import { base, type Asset } from "./api";
 import { coverFrameTimes } from "./cover-frames";
 import { coverStripResource, CoverFrameRequests, type CoverStrip, type CoverStripFrame, type CoverStripState } from "./cover-strip";
 import { VideoPlayback, type PlaybackRepresentation } from "./video-playback";
@@ -249,7 +249,7 @@ export function VideoPlayer({
   const [diagnostics, setDiagnostics] = useState<ReturnType<VideoPlayback["getDiagnostics"]> | null>(null);
   const [diagnosticsCopy, setDiagnosticsCopy] = useState("");
   const [sourceReady, setSourceReady] = useState(false);
-  const [previewSource, setPreviewSource] = useState<PlaybackDescriptor["source"]>(undefined);
+  const [previewSource, setPreviewSource] = useState<TimelinePreviewMedia["source"]>(undefined);
   const [playbackRepresentation, setPlaybackRepresentation] =
     useState<PlaybackRepresentation>(null);
   const [sourceFrameRate, setSourceFrameRate] = useState<number | undefined>(undefined);
@@ -271,7 +271,7 @@ export function VideoPlayer({
   const touchStart = useRef<{ id: number; x: number; y: number; canceled: boolean } | undefined>(undefined);
   const ignoreNextClick = useRef(false);
   const isMounted = useRef(true);
-  const lastObservedMediaTime = useRef<number | undefined>(undefined);
+  const lastObservedFrame = useRef<{ time: number; clock: number } | undefined>(undefined);
   const measuredFrameInterval = useRef<number | undefined>(undefined);
   const playbackRef = useRef<VideoPlayback | null>(null);
 
@@ -330,14 +330,15 @@ export function VideoPlayer({
   function emitFrameState() {
     const el = videoRef.current;
     if (!el || !callbacksRef.current.onFrame) return;
-    const totalLen = Number.isFinite(el.duration) ? el.duration : 0;
+    const totalLen = playbackRef.current?.duration || 0;
     const fps = frameRateRef.current;
-    const observed = lastObservedMediaTime.current;
+    const observed = lastObservedFrame.current;
+    // Pick inside the presented frame to absorb 90 kHz transport rounding.
     const effectiveNow =
       !el.seeking &&
       observed !== undefined &&
-      Math.abs(observed - el.currentTime) < 1 / fps
-        ? observed
+      Math.abs(observed.clock - el.currentTime) < 1 / fps
+        ? observed.time + 1 / 90_000
         : el.currentTime;
     callbacksRef.current.onFrame({
       time: Math.max(0, Math.min(Math.max(0, totalLen - 0.5 / fps), effectiveNow)),
@@ -382,13 +383,13 @@ export function VideoPlayer({
     setPreviewSource(undefined);
     setPlaybackRepresentation(null);
     setSourceFrameRate(undefined);
-    lastObservedMediaTime.current = undefined;
+    lastObservedFrame.current = undefined;
     measuredFrameInterval.current = undefined;
     const source = new VideoPlayback(el, sourceHash, {
       onReady: setSourceReady,
       onModeChange: setPlaybackRepresentation,
       onDescriptor: (descriptor) => {
-        setPreviewSource(descriptor.source);
+        setPreviewSource(descriptor.source ? { ...descriptor.source, duration: descriptor.duration } : undefined);
         if (descriptor.duration && Number.isFinite(descriptor.duration) && descriptor.duration > 0) {
           setDuration(descriptor.duration);
         }
@@ -403,9 +404,9 @@ export function VideoPlayer({
         setPlaying(false);
         setCurrentTime(time);
         setBufferedRanges([]);
-        lastObservedMediaTime.current = undefined;
+        lastObservedFrame.current = undefined;
         measuredFrameInterval.current = undefined;
-        callbacksRef.current.onFrame?.({ time, duration: el.duration || 0, ready: false });
+        callbacksRef.current.onFrame?.({ time, duration: playbackRef.current?.duration || 0, ready: false });
       },
       onError: (message, resume) => {
         setErrorMsg(message);
@@ -436,14 +437,14 @@ export function VideoPlayer({
     let vfcHandle = 0;
     const onVideoFrame = (_now: number, meta: VideoFrameCallbackMetadata) => {
       if (
-        lastObservedMediaTime.current !== undefined &&
+        lastObservedFrame.current !== undefined &&
         !el?.paused &&
         !el?.seeking
       ) {
-        const dt = meta.mediaTime - lastObservedMediaTime.current;
+        const dt = meta.mediaTime - lastObservedFrame.current.time;
         if (dt > 0 && dt < 0.2) measuredFrameInterval.current = dt;
       }
-      lastObservedMediaTime.current = meta.mediaTime;
+      if (!el?.seeking) lastObservedFrame.current = { time: meta.mediaTime, clock: el.currentTime };
       emitFrameState();
       vfcHandle = el?.requestVideoFrameCallback(onVideoFrame) || 0;
     };
@@ -599,13 +600,15 @@ export function VideoPlayer({
     const stepDt = validRate
       ? 1 / validRate
       : measuredFrameInterval.current || 1 / 30;
-    const baseTime = validRate
-      ? Math.floor((el.currentTime + stepDt * 0.01) / stepDt) * stepDt
-      : !el.seeking &&
-          lastObservedMediaTime.current !== undefined &&
-          Math.abs(lastObservedMediaTime.current - el.currentTime) < stepDt
-        ? lastObservedMediaTime.current
-        : el.currentTime;
+    const observed = lastObservedFrame.current;
+    const baseTime =
+      !el.seeking &&
+      observed !== undefined &&
+      Math.abs(observed.clock - el.currentTime) < stepDt
+        ? observed.time
+        : validRate
+          ? Math.floor((el.currentTime + stepDt * 0.01) / stepDt) * stepDt
+          : el.currentTime;
 
     const target = Math.max(
       0,
@@ -725,7 +728,7 @@ export function VideoPlayer({
         }}
         onLoadedMetadata={(e) => {
           const el = e.currentTarget;
-          const len = Number.isFinite(el.duration) ? el.duration : 0;
+          const len = playbackRef.current?.duration || 0;
           setDuration(len);
           setSupportsPip(
             !!document.pictureInPictureEnabled && !el.disablePictureInPicture,
@@ -785,6 +788,7 @@ export function VideoPlayer({
         }}
         onWaiting={() => setBuffering(true)}
         onSeeking={() => {
+          lastObservedFrame.current = undefined;
           playbackRef.current?.seeking();
           setBuffering(true);
           emitFrameState();

@@ -117,8 +117,11 @@ func (l *Library) encodePlaybackSegment(ctx context.Context, scratch string, spe
 		if mode == "nvenc-cuda" {
 			args = append(args, "-hwaccel", "cuda", "-hwaccel_output_format", "cuda")
 		}
-		// Absolute input seeking preserves videos whose first PTS is nonzero.
-		args = append(args, "-seek_timestamp", "1", "-ss", playbackTime(spec.start+start), "-i", spec.path, "-t", playbackTime(duration), "-map", "0:v:0", "-map", "0:a:0?")
+		// Seeking to the first video keyframe would discard earlier audio in the movie.
+		if start > 0 {
+			args = append(args, "-seek_timestamp", "1", "-ss", playbackTime(spec.frameStart+start))
+		}
+		args = append(args, "-i", spec.path, "-t", playbackTime(duration), "-map", "0:v:0", "-map", "0:a:0?")
 		filters := []string{}
 		if spec.hdr {
 			filters = append(filters, playbackHDRFilters(spec)...)
@@ -132,18 +135,20 @@ func (l *Library) encodePlaybackSegment(ctx context.Context, scratch string, spe
 		} else {
 			filters = append(filters, "scale="+scale, "format=yuv420p")
 		}
-		args = append(args, "-vf", strings.Join(filters, ","), "-fps_mode", "passthrough")
+		// Preserve frames just before a boundary instead of rounding their PTS past -t.
+		args = append(args, "-vf", strings.Join(filters, ","), "-fps_mode", "passthrough", "-enc_time_base:v", "1/90000")
 		gop := max(1, min(600, int(math.Ceil(max(30, spec.frameRate)*timeline.seconds()))))
 		if gpu {
 			args = append(args, "-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "22", "-b:v", "0", "-maxrate", "8M", "-bufsize", "8M", "-forced-idr", "1")
 		} else {
 			args = append(args, "-c:v", "libx264", "-preset", "fast", "-crf", "22", "-maxrate", "8M", "-bufsize", "8M")
 		}
-		args = append(args, "-g", strconv.Itoa(gop), "-bf", "0", "-force_key_frames", "0", "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-ar", "48000", "-map_metadata", "-1")
+		// TS cannot signal AAC skip samples; keep priming from rebasing the HLS clock.
+		args = append(args, "-g", strconv.Itoa(gop), "-bf", "0", "-force_key_frames", "0", "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-ar", "48000", "-bsf:a", "noise=drop=lt(pts\\,0)", "-map_metadata", "-1")
 		if spec.hdr {
 			args = append(args, "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv")
 		}
-		// A fixed positive bias avoids negative AAC priming/wrapped TS timestamps.
+		// A fixed positive bias keeps transport timestamps away from wrapped ranges.
 		args = append(args, "-output_ts_offset", playbackTime(start+1), "-avoid_negative_ts", "disabled", "-mpegts_flags", "+resend_headers", "-muxdelay", "0", "-muxpreload", "0", "-f", "mpegts", "-fs", strconv.FormatInt(playbackSegmentLimit, 10), "-threads", "2", "-y", output)
 		var releaseCPU, releaseGPU func()
 		if mode != "nvenc-cuda" {

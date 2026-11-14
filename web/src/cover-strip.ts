@@ -7,13 +7,25 @@ type CoverStripPayload = { revision: string; duration: number; width: number; he
 export type CoverStrip = CoverStripPayload & { imageUrl: string; image: HTMLImageElement };
 type Entry = { key: string; strip: CoverStrip; refs: number; bytes: number; used: number; retired: boolean; disposed: boolean };
 type Lease = { strip: CoverStrip; release: () => void };
-type Pending = { controller: AbortController; waiters: number; promise: Promise<Entry> };
+type Pending = { controller: AbortController; waiters: number; promise: Promise<Entry>; started: number; idleTimer?: ReturnType<typeof setTimeout> };
 export type CoverStripState = { status: "idle" | "loading" | "ready" | "error"; strip?: CoverStrip };
 
 const entries = new Map<string, Entry>();
 const pending = new Map<string, Pending>();
 const CACHE_BYTES = 24 * 1024 * 1024;
+const REQUEST_GRACE = 2000;
 let cacheBytes = 0;
+
+function deferUnusedRequest(job: Pending) {
+  clearTimeout(job.idleTimer);
+  job.idleTimer = setTimeout(() => { if (!job.waiters) job.controller.abort(); }, REQUEST_GRACE);
+  const unused = [...pending.values()].filter(item => !item.waiters && item.idleTimer)
+    .sort((a, b) => a.started - b.started);
+  for (const stale of unused.slice(0, Math.max(0, unused.length - 2))) {
+    clearTimeout(stale.idleTimer);
+    stale.controller.abort();
+  }
+}
 
 function dispose(entry: Entry) {
   if (entry.disposed || entry.refs > 0) return;
@@ -89,12 +101,19 @@ export function acquireCoverStrip(key: string, signal: AbortSignal): Promise<Lea
   if (!job || job.controller.signal.aborted) {
     const controller = new AbortController();
     const promise = fetchStrip(key, controller.signal);
-    job = { controller, promise, waiters: 0 };
+    job = { controller, promise, waiters: 0, started: Date.now() };
     pending.set(key, job);
     const current = job;
-    promise.then(() => { if (pending.get(key) === current) pending.delete(key); }, () => { if (pending.get(key) === current) pending.delete(key); });
+    const done = () => {
+      clearTimeout(current.idleTimer);
+      if (pending.get(key) === current) pending.delete(key);
+      if (!current.waiters) trimCache();
+    };
+    promise.then(done, done);
   }
   const current = job;
+  clearTimeout(current.idleTimer);
+  current.idleTimer = undefined;
   current.waiters++;
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -106,7 +125,7 @@ export function acquireCoverStrip(key: string, signal: AbortSignal): Promise<Lea
     const abort = () => {
       if (settled) return;
       finish();
-      if (!current.waiters) current.controller.abort();
+      if (!current.waiters) deferUnusedRequest(current);
       reject(signal.reason);
     };
     signal.addEventListener("abort", abort, { once: true });
@@ -185,8 +204,8 @@ export class CoverFrameRequests {
     if (!this.browserFailed) {
       const browser = this.browser ??= new BrowserCoverFrames(async (sourceSignal) => {
         const descriptor = await requestJson<PlaybackDescriptor>(this.playbackResource, undefined, undefined, sourceSignal);
-        return descriptor.source;
-      }, this.rotation);
+        return descriptor.source ? { ...descriptor.source, duration: descriptor.duration } : undefined;
+      }, this.rotation, this.playbackResource);
       try {
         return await browser.capture(time, signal);
       } catch {
@@ -219,8 +238,15 @@ export class CoverFrameRequests {
 
 export function useCoverStrip(resource: string | undefined, enabled: boolean): CoverStripState {
   const [state, setState] = useState<CoverStripState & { resource?: string }>({ status: "idle" });
+  const [visible, setVisible] = useState(!document.hidden);
+  const active = enabled && visible;
   useEffect(() => {
-    if (!enabled || !resource) { setState({ status: "idle" }); return; }
+    const changed = () => setVisible(!document.hidden);
+    document.addEventListener("visibilitychange", changed);
+    return () => document.removeEventListener("visibilitychange", changed);
+  }, []);
+  useEffect(() => {
+    if (!active || !resource) { setState({ status: "idle" }); return; }
     const controller = new AbortController();
     let release: (() => void) | undefined;
     setState({ status: "loading", resource });
@@ -230,17 +256,20 @@ export function useCoverStrip(resource: string | undefined, enabled: boolean): C
       setState({ status: "ready", resource, strip: loaded.strip });
     }, () => { if (!controller.signal.aborted) setState({ status: "error", resource }); });
     return () => { controller.abort(); release?.(); };
-  }, [resource, enabled]);
-  if (!enabled || !resource) return { status: "idle" };
+  }, [resource, active]);
+  if (!active || !resource) return { status: "idle" };
   return state.resource === resource ? state : { status: "loading" };
 }
 
 function clearCache() {
   for (const entry of entries.values()) retire(entry);
-  for (const job of pending.values()) job.controller.abort();
+  for (const job of pending.values()) {
+    clearTimeout(job.idleTimer);
+    job.controller.abort();
+  }
 }
 
 window.addEventListener("curio-cover-strip-invalidated", clearCache);
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) for (const entry of entries.values()) retire(entry);
+  if (document.hidden) clearCache();
 });

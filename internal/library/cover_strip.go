@@ -24,6 +24,8 @@ const coverStripRecipe = "cover-strip-v1"
 const coverStripSuffix = "-cover-strip-v1"
 const coverStripDimension = 320
 const coverStripColumns = 5
+const coverStripSeekBatch = 3
+const coverStripDecodePixels = 3840 * 2160
 
 type coverStripFrame struct {
 	Time   float64 `json:"time"`
@@ -118,7 +120,7 @@ func (p *playbackCache) coverStrip(ctx context.Context, l *Library, spec *playba
 		return entry, nil
 	}
 	if job := p.jobs[key]; job != nil {
-		if job.waiters == 0 {
+		if job.waiters == 0 && job.orphan == nil {
 			p.mu.Unlock()
 			select {
 			case <-ctx.Done():
@@ -126,6 +128,10 @@ func (p *playbackCache) coverStrip(ctx context.Context, l *Library, spec *playba
 			case <-job.done:
 				return p.coverStrip(ctx, l, spec)
 			}
+		}
+		if job.orphan != nil {
+			job.orphan.Stop()
+			job.orphan = nil
 		}
 		job.waiters++
 		p.mu.Unlock()
@@ -209,8 +215,80 @@ func (l *Library) warmCoverStrip(hash string) {
 }
 
 var coverStripPTS = regexp.MustCompile(`\bn:\s*\d+\s+pts:\s*(-?\d+)\s+pts_time:`)
+var coverStripBatchPTS = regexp.MustCompile(`showinfo@candidate(\d+)\s+@[^\n]*?\bn:\s*0\s+pts:\s*(-?\d+)\s+pts_time:`)
 
-func (l *Library) extractCoverStrip(ctx context.Context, spec *playbackSpec, work string, targets []float64) ([]float64, []string, error) {
+func coverStripFilters(spec *playbackSpec, mode string) []string {
+	if spec.hdr {
+		filters := []string{}
+		if mode == "cuda" {
+			filters = append(filters, "hwdownload", "format=p010le")
+		}
+		return append(filters, coverHDRFilters(spec, coverStripDimension)...)
+	}
+	scale := fmt.Sprintf("w='min(%d,iw)':h='min(%d,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2", coverStripDimension, coverStripDimension)
+	if mode == "cpu" {
+		return []string{"scale=" + scale}
+	}
+	filters := []string{}
+	if mode != "cuda" {
+		filters = append(filters, "format=nv12", "hwupload")
+	}
+	return append(filters, "scale_cuda="+scale+":format=yuv420p", "hwdownload", "format=yuv420p")
+}
+
+func (l *Library) extractCoverStripSeeks(ctx context.Context, spec *playbackSpec, work, mode string, first int, targets []float64) ([]float64, []string, error) {
+	args := []string{"-nostdin", "-v", "info", "-filter_threads", "4", "-filter_complex_threads", "1", "-copyts", "-init_hw_device", "cuda=gpu:0", "-filter_hw_device", "gpu"}
+	graphs := make([]string, len(targets))
+	paths := make([]string, len(targets))
+	for i, target := range targets {
+		args = append(args, "-protocol_whitelist", "file,pipe", "-threads", "2")
+		if mode == "cuda" {
+			args = append(args, "-hwaccel", "cuda", "-hwaccel_device", "gpu", "-hwaccel_output_format", "cuda")
+		}
+		at := math.Floor((spec.frameStart+target)*1e6) / 1e6
+		args = append(args, "-seek_timestamp", "1", "-ss", strconv.FormatFloat(at, 'f', 6, 64), "-i", spec.path)
+		graphs[i] = fmt.Sprintf("[%d:v:0]%s,showinfo@candidate%d[frame%d]", i, strings.Join(coverStripFilters(spec, mode), ","), i, i)
+		paths[i] = filepath.Join(work, fmt.Sprintf("frame-%03d.png", first+i+1))
+	}
+	args = append(args, "-filter_complex", strings.Join(graphs, ";"))
+	for i, path := range paths {
+		args = append(args, "-map", fmt.Sprintf("[frame%d]", i), "-an", "-fps_mode", "passthrough", "-frames:v", "1", "-map_metadata", "-1", "-q:v", "3", "-threads", "2", "-y", path)
+	}
+	logs, err := l.runVideoSampleCommand(ctx, args, true, true)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: %w: %s", mode, err, logs[max(0, len(logs)-2000):])
+	}
+	times := make([]float64, len(targets))
+	found := make([]bool, len(targets))
+	for _, stamp := range coverStripBatchPTS.FindAllStringSubmatch(logs, -1) {
+		i, err := strconv.Atoi(stamp[1])
+		if err != nil || i >= len(targets) || found[i] {
+			continue
+		}
+		pts, err := strconv.ParseInt(stamp[2], 10, 64)
+		at := max(0, float64(pts)*spec.timeBase-spec.frameStart)
+		if err != nil || at >= spec.duration {
+			return nil, nil, errFrameTime
+		}
+		times[i], found[i] = at, true
+	}
+	for _, ok := range found {
+		if !ok {
+			return nil, nil, errFrameTime
+		}
+	}
+	return times, paths, nil
+}
+
+func coverStripBatchSize(spec *playbackSpec, mode string) int {
+	if spec.duration <= 60 || spec.hdr || mode == "cpu" {
+		return 1
+	}
+	// Share CUDA startup while bounding simultaneous decoder surfaces to one 4K frame budget.
+	return min(coverStripSeekBatch, max(1, coverStripDecodePixels/(spec.width*spec.height)))
+}
+
+func (l *Library) extractCoverStrip(ctx context.Context, spec *playbackSpec, work string, targets []float64) ([]float64, []string, string, error) {
 	modes := []string{"cpu"}
 	if !spec.hasAlpha && l.nvidiaAvailable(ctx) {
 		if !spec.hdr {
@@ -230,7 +308,19 @@ func (l *Library) extractCoverStrip(ctx context.Context, spec *playbackSpec, wor
 		lastErr = nil
 		var times []float64
 		var paths []string
-		for index, seek := range seeks {
+		seekBatch := coverStripBatchSize(spec, mode)
+		for index := 0; index < len(seeks); index += seekBatch {
+			if seekBatch > 1 {
+				group := seeks[index:min(index+seekBatch, len(seeks))]
+				groupTimes, groupPaths, err := l.extractCoverStripSeeks(ctx, spec, work, mode, index, group)
+				if err != nil {
+					lastErr = err
+					break
+				}
+				times, paths = append(times, groupTimes...), append(paths, groupPaths...)
+				continue
+			}
+			seek := seeks[index]
 			gpu := mode != "cpu"
 			args := []string{"-nostdin", "-v", "info", "-protocol_whitelist", "file,pipe", "-threads", "2", "-filter_threads", "4", "-filter_complex_threads", "1", "-copyts"}
 			if gpu {
@@ -256,22 +346,7 @@ func (l *Library) extractCoverStrip(ctx context.Context, spec *playbackSpec, wor
 				filters = append(filters, "select='gt("+strings.Join(selects, "+")+",0)'")
 				frames, pattern = len(targets), filepath.Join(work, "frame-%03d.png")
 			}
-			if spec.hdr {
-				if mode == "cuda" {
-					filters = append(filters, "hwdownload", "format=p010le")
-				}
-				filters = append(filters, coverHDRFilters(spec, coverStripDimension)...)
-			} else {
-				scale := fmt.Sprintf("w='min(%d,iw)':h='min(%d,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2", coverStripDimension, coverStripDimension)
-				if gpu {
-					if mode != "cuda" {
-						filters = append(filters, "format=nv12", "hwupload")
-					}
-					filters = append(filters, "scale_cuda="+scale+":format=yuv420p", "hwdownload", "format=yuv420p")
-				} else {
-					filters = append(filters, "scale="+scale)
-				}
-			}
+			filters = append(filters, coverStripFilters(spec, mode)...)
 			args = append(args, "-vf", strings.Join(filters, ",")+",showinfo", "-fps_mode", "passthrough", "-frames:v", strconv.Itoa(frames), "-map_metadata", "-1", "-q:v", "3", "-threads", "2", "-y", pattern)
 			logs, err := l.runVideoSampleCommand(ctx, args, gpu, true)
 			if err != nil {
@@ -301,16 +376,17 @@ func (l *Library) extractCoverStrip(ctx context.Context, spec *playbackSpec, wor
 			}
 		}
 		if lastErr == nil && len(paths) > 0 {
-			return times, paths, nil
+			return times, paths, mode, nil
 		}
 		if ctx.Err() != nil {
-			return nil, nil, ctx.Err()
+			return nil, nil, "", ctx.Err()
 		}
 	}
-	return nil, nil, fmt.Errorf("could not extract candidate frames: %w", lastErr)
+	return nil, nil, "", fmt.Errorf("could not extract candidate frames: %w", lastErr)
 }
 
 func (l *Library) generateCoverStrip(ctx context.Context, spec *playbackSpec) (*playbackEntry, error) {
+	started := time.Now()
 	probe, err := spec.frameVideo()
 	if err != nil {
 		return nil, err
@@ -329,7 +405,7 @@ func (l *Library) generateCoverStrip(ctx context.Context, spec *playbackSpec) (*
 		return nil, err
 	}
 	defer os.RemoveAll(work)
-	times, paths, err := l.extractCoverStrip(ctx, spec, work, targets)
+	times, paths, engine, err := l.extractCoverStrip(ctx, spec, work, targets)
 	if err != nil {
 		return nil, err
 	}
@@ -418,6 +494,11 @@ func (l *Library) generateCoverStrip(ctx context.Context, spec *playbackSpec) (*
 	if err != nil {
 		return nil, err
 	}
+	passes := 1
+	if spec.duration > 60 {
+		passes = (len(paths) + coverStripBatchSize(spec, engine) - 1) / coverStripBatchSize(spec, engine)
+	}
+	slog.Info("candidate atlas generated", "hash", spec.hash, "elapsedMs", time.Since(started).Milliseconds(), "candidates", len(record.Frames), "engine", engine, "decodePasses", passes)
 	return &playbackEntry{hash: spec.hash, data: encoded.Bytes(), strip: record}, nil
 }
 

@@ -16,6 +16,7 @@ const FRAME_STEP = 0.1;
 const MAX_WIDTH = 320;
 const MAX_HEIGHT = 200;
 const CACHE_BYTES = 8 * 1024 * 1024;
+const REFINE_DELAY = 250;
 
 function sizeCanvas(canvas: HTMLCanvasElement, width: number, height: number) {
   const scale = Math.min(1, MAX_WIDTH / width, MAX_HEIGHT / height);
@@ -45,6 +46,7 @@ export class TimelineFramePreview {
   private nativeFailed = false;
   private disposed = false;
   private idleTimer?: ReturnType<typeof setTimeout>;
+  private refineTimer?: ReturnType<typeof setTimeout>;
   ready = false;
 
   constructor(private media: TimelinePreviewMedia, private canvas: HTMLCanvasElement,
@@ -70,15 +72,25 @@ export class TimelineFramePreview {
   update(time: number): boolean {
     if (this.disposed) return false;
     clearTimeout(this.idleTimer);
-    this.latest = Math.round(Math.max(0, time) / FRAME_STEP) * FRAME_STEP;
+    const target = Math.round(Math.max(0, time) / FRAME_STEP) * FRAME_STEP;
+    if (this.latest !== target) {
+      this.latest = target;
+      clearTimeout(this.refineTimer);
+      // Moving pointers use the atlas; only a settled target needs an original-video seek.
+      this.refineTimer = setTimeout(() => {
+        this.refineTimer = undefined;
+        this.pump();
+      }, REFINE_DELAY);
+    }
     this.paintNearby(this.latest);
-    this.pump();
     return this.ready;
   }
 
   pause() {
     this.latest = undefined;
     clearTimeout(this.idleTimer);
+    clearTimeout(this.refineTimer);
+    this.refineTimer = undefined;
     // Keep one warm decoder briefly for fast re-entry; no new seeks while hidden.
     this.idleTimer = setTimeout(() => {
       this.browser?.dispose();
@@ -91,6 +103,7 @@ export class TimelineFramePreview {
     this.disposed = true;
     this.latest = undefined;
     clearTimeout(this.idleTimer);
+    clearTimeout(this.refineTimer);
     this.lifetime.abort();
     this.browser?.dispose();
     for (const frame of this.frames.values()) frame.width = frame.height = 0;
@@ -161,17 +174,18 @@ export class TimelineFramePreview {
 
   private pump() {
     const time = this.latest;
-    if (this.running || this.disposed || this.nativeFailed || time === undefined || this.frames.has(time)) return;
+    if (this.running || this.refineTimer || this.disposed || this.nativeFailed || time === undefined || this.frames.has(time)) return;
     const browser = this.browser ??= new BrowserCoverFrames(async signal => {
       if (this.source) return this.source;
       const descriptor = await requestJson<PlaybackDescriptor>(this.media.playbackResource, undefined, undefined, signal);
-      return descriptor.source;
-    }, this.media.rotation);
+      return descriptor.source ? { ...descriptor.source, duration: descriptor.duration } : undefined;
+    }, this.media.rotation, this.media.playbackResource);
     this.running = true;
     // Native seeks are serial. A moving pointer replaces the pending target, not the decoder.
     void browser.captureCanvas(time, this.lifetime.signal).then(frame => {
       if (this.disposed || this.browser !== browser) return;
       const bitmap = copyFrame(frame);
+      frame.width = frame.height = 0;
       this.remember(time, bitmap);
       if (this.latest === time) {
         this.paintBitmap(bitmap);

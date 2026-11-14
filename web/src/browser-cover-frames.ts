@@ -1,4 +1,4 @@
-export type BrowserCoverSource = { url: string };
+export type BrowserCoverSource = { url: string; duration?: number };
 
 const MEDIA_TIMEOUT = 4000;
 
@@ -97,10 +97,11 @@ function waitDecodedFrame(video: HTMLVideoElement, signal: AbortSignal): Promise
   }));
 }
 
-export class BrowserCoverFrames {
+class BrowserFrameDecoder {
   private lifetime = new AbortController();
   private video?: HTMLVideoElement;
   private canvas?: HTMLCanvasElement;
+  private duration?: number;
 
   constructor(
     private resolveSource: (signal: AbortSignal) => Promise<BrowserCoverSource | undefined>,
@@ -137,7 +138,8 @@ export class BrowserCoverFrames {
     try {
       const video = await this.prepare(controller.signal);
       if (!Number.isFinite(video.duration) || video.duration <= 0) throw new Error("Native video duration is unavailable");
-      const target = Math.min(time, Math.max(0, video.duration - 0.001));
+      const duration = this.duration && this.duration > 0 ? Math.min(this.duration, video.duration) : video.duration;
+      const target = Math.min(time, Math.max(0, duration - 0.001));
       await waitMedia(video, controller.signal,
         () => !video.seeking && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA,
         () => { video.currentTime = target; });
@@ -165,6 +167,7 @@ export class BrowserCoverFrames {
     const source = await bounded(signal, 10000, (signal) => this.resolveSource(signal));
     signal.throwIfAborted();
     if (!source) throw new Error("Native video source is unavailable");
+    this.duration = source.duration;
     const url = new URL(source.url, window.location.href);
     if (url.origin !== window.location.origin || !/^https?:$/.test(url.protocol)) {
       throw new Error("Native video source must be same-origin");
@@ -199,6 +202,7 @@ export class BrowserCoverFrames {
   }
 
   private releaseMedia() {
+    this.duration = undefined;
     if (this.video) {
       this.video.pause();
       this.video.removeAttribute("src");
@@ -212,3 +216,108 @@ export class BrowserCoverFrames {
     }
   }
 }
+
+type DecoderEntry = {
+  key: string | symbol;
+  decoder: BrowserFrameDecoder;
+  controller: AbortController;
+  queue: Promise<void>;
+  refs: number;
+  disposed: boolean;
+};
+
+const decoders = new Map<string | symbol, DecoderEntry>();
+
+function releaseDecoder(entry: DecoderEntry) {
+  if (entry.disposed) return;
+  entry.disposed = true;
+  if (decoders.get(entry.key) === entry) decoders.delete(entry.key);
+  entry.controller.abort();
+  entry.decoder.dispose();
+}
+
+export class BrowserCoverFrames {
+  private lifetime = new AbortController();
+  private entry?: DecoderEntry;
+  private key: string | symbol;
+
+  constructor(
+    private resolveSource: (signal: AbortSignal) => Promise<BrowserCoverSource | undefined>,
+    private rotation = 0,
+    resource?: string,
+  ) {
+    const angle = Number.isFinite(rotation) ? ((rotation % 360) + 360) % 360 : 0;
+    this.key = resource ? `${resource.split("?")[0]}:${angle}` : Symbol();
+  }
+
+  capture(time: number, signal: AbortSignal): Promise<Blob> {
+    return this.request(signal, entry => entry.decoder.capture(time, entry.controller.signal));
+  }
+
+  captureCanvas(time: number, signal: AbortSignal): Promise<HTMLCanvasElement> {
+    return this.request(signal, async entry => {
+      const frame = await entry.decoder.captureCanvas(time, entry.controller.signal);
+      const copy = document.createElement("canvas");
+      copy.width = frame.width;
+      copy.height = frame.height;
+      copy.getContext("2d")?.drawImage(frame, 0, 0);
+      return copy;
+    });
+  }
+
+  dispose() {
+    this.lifetime.abort();
+    if (!this.entry) return;
+    if (--this.entry.refs === 0) releaseDecoder(this.entry);
+    this.entry = undefined;
+  }
+
+  private acquire(): DecoderEntry {
+    if (this.entry && !this.entry.disposed) return this.entry;
+    let entry = decoders.get(this.key);
+    if (!entry) {
+      if (decoders.size >= 2) throw new Error("Native video preview is busy");
+      entry = { key: this.key, decoder: new BrowserFrameDecoder(this.resolveSource, this.rotation),
+        controller: new AbortController(), queue: Promise.resolve(), refs: 0, disposed: false };
+      decoders.set(this.key, entry);
+    }
+    entry.refs++;
+    this.entry = entry;
+    return entry;
+  }
+
+  private request<T>(signal: AbortSignal, read: (entry: DecoderEntry) => Promise<T>): Promise<T> {
+    if (signal.aborted || this.lifetime.signal.aborted) {
+      return Promise.reject(signal.aborted ? signal.reason : this.lifetime.signal.reason);
+    }
+    let entry: DecoderEntry;
+    try { entry = this.acquire(); }
+    catch (error) { return Promise.reject(error); }
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (ok: boolean, value: unknown) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", abort);
+        this.lifetime.signal.removeEventListener("abort", abort);
+        if (ok) resolve(value as T);
+        else reject(value);
+      };
+      const abort = () => finish(false, signal.aborted ? signal.reason : this.lifetime.signal.reason);
+      signal.addEventListener("abort", abort, { once: true });
+      this.lifetime.signal.addEventListener("abort", abort, { once: true });
+      const run = async () => {
+        if (settled) return;
+        if (entry.disposed) { finish(false, new Error("Native video preview was released")); return; }
+        // Obsolete consumers stop waiting, but an active seek stays warm for the next consumer.
+        try { finish(true, await read(entry)); }
+        catch (error) { finish(false, error); }
+      };
+      entry.queue = entry.queue.then(run, run);
+    });
+  }
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) for (const entry of decoders.values()) releaseDecoder(entry);
+});

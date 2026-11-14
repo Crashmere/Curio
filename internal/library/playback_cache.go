@@ -19,7 +19,7 @@ const (
 	playbackReservation    = 2 * playbackSegmentLimit
 	playbackCacheTTL       = 20 * time.Minute
 	playbackDeadline       = 75 * time.Second
-	playbackRecipe         = "h264-ts-sdr-v2"
+	playbackRecipe         = "h264-ts-sdr-v3"
 )
 
 var errPlaybackClosed = errors.New("视频播放暂不可用")
@@ -47,6 +47,7 @@ type playbackJob struct {
 	spec     *playbackSpec
 	err      error
 	reserve  int64
+	orphan   *time.Timer
 }
 
 type playbackSpecEntry struct {
@@ -233,7 +234,21 @@ func (p *playbackCache) await(ctx context.Context, job *playbackJob) error {
 		} else {
 			job.waiters--
 			if job.waiters == 0 {
-				job.cancel()
+				if job.strip && !p.closed {
+					// Hover and editor handoffs can briefly leave an atlas without a reader.
+					var orphan *time.Timer
+					orphan = time.AfterFunc(3*time.Second, func() {
+						p.mu.Lock()
+						defer p.mu.Unlock()
+						if job.orphan == orphan && !job.finished && job.waiters == 0 {
+							job.orphan = nil
+							job.cancel()
+						}
+					})
+					job.orphan = orphan
+				} else {
+					job.cancel()
+				}
 			}
 		}
 		return err
@@ -267,6 +282,10 @@ func (p *playbackCache) newJobLocked(key, hash string, reserve int64, deadline t
 func (p *playbackCache) finishJob(ctx context.Context, key string, job *playbackJob, entry *playbackEntry, spec *playbackSpec, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if job.orphan != nil {
+		job.orphan.Stop()
+		job.orphan = nil
+	}
 	p.reserved -= job.reserve
 	if ctx.Err() != nil {
 		err = ctx.Err()

@@ -153,6 +153,11 @@ export class VideoPlayback {
     return this.switching;
   }
 
+  get duration(): number {
+    const duration = this.descriptor?.duration ?? this.video.duration;
+    return Number.isFinite(duration) && duration > 0 ? duration : 0;
+  }
+
   prepare(): Promise<void> {
     if (this.ready) return Promise.resolve();
     if (this.preparing) return this.preparing;
@@ -427,8 +432,8 @@ export class VideoPlayback {
       return;
     }
     this.video.playbackRate = this.rate;
-    const duration = this.video.duration;
-    const target = Number.isFinite(duration)
+    const duration = this.duration;
+    const target = duration > 0
       ? Math.min(this.targetTime, Math.max(0, duration - 0.001))
       : this.targetTime;
     if (Math.abs(this.video.currentTime - target) > 0.001) {
