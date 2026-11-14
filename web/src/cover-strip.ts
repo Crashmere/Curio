@@ -121,6 +121,76 @@ export function acquireCoverStrip(key: string, signal: AbortSignal): Promise<Lea
   });
 }
 
+export class CoverFrameRequests {
+  private mode: "preview" | "fallback" | "stopped" = "preview";
+  private started = 0;
+  private running = 0;
+  private waiting = new Map<() => void, () => void>();
+  private active = new Set<AbortController>();
+
+  setMode(mode: "preview" | "fallback" | "stopped") {
+    this.mode = mode;
+    if (mode === "stopped") {
+      for (const abort of this.waiting.values()) abort();
+      for (const controller of this.active) controller.abort();
+    } else {
+      this.pump();
+    }
+  }
+
+  load(url: string, signal: AbortSignal): Promise<Blob> {
+    if (signal.aborted) return Promise.reject(signal.reason);
+    return new Promise((resolve, reject) => {
+      const controller = new AbortController();
+      let started = false;
+      let finished = false;
+      const finish = (blob?: Blob, error?: unknown) => {
+        if (finished) return;
+        finished = true;
+        signal.removeEventListener("abort", abort);
+        this.waiting.delete(start);
+        this.active.delete(controller);
+        if (started) this.running--;
+        if (blob) resolve(blob);
+        else reject(error);
+        this.pump();
+      };
+      const abort = () => {
+        controller.abort();
+        if (!started) finish(undefined, controller.signal.reason);
+      };
+      const start = () => {
+        this.waiting.delete(start);
+        if (signal.aborted) { finish(undefined, signal.reason); return; }
+        started = true;
+        this.started++;
+        this.running++;
+        this.active.add(controller);
+        void fetch(url, { credentials: "same-origin", signal: controller.signal }).then(async (response) => {
+          if (!response.ok) throw new HttpServiceError("候选帧加载失败", response.status);
+          const blob = await response.blob();
+          controller.signal.throwIfAborted();
+          if (blob.size > 8 * 1024 * 1024) throw new Error("Candidate frame exceeds its output bound");
+          return blob;
+        }).then((blob) => finish(blob), (error) => finish(undefined, error));
+      };
+      signal.addEventListener("abort", abort, { once: true });
+      this.waiting.set(start, abort);
+      this.pump();
+    });
+  }
+
+  private pump() {
+    // Two early samples use one decoder, leaving capacity for the selected large frame.
+    const limit = this.mode === "fallback" ? 2 : 1;
+    while (this.mode !== "stopped" && this.running < limit && (this.mode === "fallback" || this.started < 2)) {
+      const next = this.waiting.keys().next().value;
+      if (!next) break;
+      next();
+    }
+  }
+}
+
 export function useCoverStrip(resource: string | undefined, enabled: boolean): CoverStripState {
   const [state, setState] = useState<CoverStripState & { resource?: string }>({ status: "idle" });
   useEffect(() => {

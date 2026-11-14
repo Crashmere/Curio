@@ -6,7 +6,7 @@ import { Dialog, isTextInput, kindNames, stateNames } from "./components";
 import { EntityPicker } from "./EntityPicker";
 import { ExactCoverPreview, FrameTimelineStrip, type FramePlayheadState, PLAYER_SKIP_SECONDS, VideoPlayer } from "./VideoPlayer";
 import { CompatibilityPlaybackGlyph } from "./player-icons";
-import { coverStripResource, useCoverStrip } from "./cover-strip";
+import { acquireCoverStrip, coverStripResource, useCoverStrip } from "./cover-strip";
 import { ImageViewer } from "./ImageViewer";
 import { TagChip } from "./TagChip";
 import { canDecodeTank, TankDecoder } from "./TankDecoder";
@@ -67,7 +67,34 @@ export function Viewer({ asset, scope, tags, collections, games, close, previous
   const [hovered, setHovered] = useState(false);
   const [frame, setFrame] = useState<FramePlayheadState>({ time: 0, duration: 0, ready: false });
   const stage = useRef<HTMLDivElement>(null);
-  const stripState = useCoverStrip(coverStripResource(asset), coverPicker);
+  const stripResource = coverStripResource(asset);
+  const stripState = useCoverStrip(stripResource, coverPicker);
+  useEffect(() => {
+    if (!stripResource) return;
+    const connection = (navigator as Navigator & { connection?: {
+      saveData?: boolean; effectiveType?: string; downlink?: number;
+      addEventListener?: EventTarget["addEventListener"]; removeEventListener?: EventTarget["removeEventListener"];
+    } }).connection;
+    const canPrefetch = () => !document.hidden && navigator.onLine && !connection?.saveData
+      && !/(^|-)2g$|3g/.test(connection?.effectiveType || "")
+      && (connection?.downlink === undefined || connection.downlink >= 1.5);
+    if (!canPrefetch()) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      if (canPrefetch()) void acquireCoverStrip(stripResource, controller.signal).then((loaded) => loaded.release(), () => {});
+    }, 400);
+    const stopUnavailable = () => { if (!canPrefetch()) controller.abort(); };
+    document.addEventListener("visibilitychange", stopUnavailable);
+    window.addEventListener("offline", stopUnavailable);
+    connection?.addEventListener?.("change", stopUnavailable);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+      document.removeEventListener("visibilitychange", stopUnavailable);
+      window.removeEventListener("offline", stopUnavailable);
+      connection?.removeEventListener?.("change", stopUnavailable);
+    };
+  }, [stripResource]);
   const copyController = useRef<AbortController | null>(null);
   const controls = useViewerControls(playing, details || waiting || edit || tank || screenshotEdit || coverPicker || more || diagnostics || hovered);
   const format = (asset.format || asset.name.split(".").pop() || "").toLowerCase();
@@ -165,7 +192,7 @@ export function Viewer({ asset, scope, tags, collections, games, close, previous
           <button className="button primary" disabled={savingCover || !frame.duration} onClick={() => void saveCover(frame.time)}>{savingCover ? <RotateCw size={14} className="spin" /> : <Check size={14} />}{savingCover ? "正在生成封面" : "设为封面"}</button>
         </div>
       </div>
-      <FrameTimelineStrip asset={asset} time={frame.time} duration={frame.duration} locked={savingCover} stripState={stripState} onSeek={time => {
+      <FrameTimelineStrip key={asset.id} asset={asset} time={frame.time} duration={frame.duration} locked={savingCover} stripState={stripState} onSeek={time => {
         const video = stage.current?.querySelector("video"); if (video) { video.pause(); video.currentTime = time; }
       }} />
     </section>}
