@@ -323,7 +323,9 @@ func (l *Library) generateNativeRemux(ctx context.Context, hash, stamp string) (
 	}
 	defer release()
 	muxed, output := filepath.Join(work, "muxed.mp4"), filepath.Join(work, "native.mp4")
-	err = commandOutput(ctx, "ffmpeg", io.Discard, "-hide_banner", "-loglevel", "error", "-nostdin", "-protocol_whitelist", "file,pipe", "-copyts", "-copytb", "1", "-i", spec.path, "-map", "0", "-c", "copy", "-tag:v", spec.nativeVideoTag, "-map_metadata", "0", "-map_chapters", "0", "-avoid_negative_ts", "disabled", "-use_editlist", "1", "-video_track_timescale", strconv.FormatUint(uint64(spec.nativeVideoTimescale), 10), "-movie_timescale", strconv.FormatUint(uint64(spec.nativeMovieTimescale), 10), "-movflags", "+faststart", "-fs", strconv.FormatInt(outputLimit, 10), muxed)
+	// Preserve samples outside edit-list playback windows; the final moov restores
+	// the original edits instead of keeping FFmpeg's intermediate timing.
+	err = commandOutput(ctx, "ffmpeg", io.Discard, "-hide_banner", "-loglevel", "error", "-nostdin", "-protocol_whitelist", "file,pipe", "-copyts", "-copytb", "1", "-ignore_editlist", "1", "-i", spec.path, "-map", "0", "-c", "copy", "-tag:v", spec.nativeVideoTag, "-map_metadata", "0", "-map_chapters", "0", "-avoid_negative_ts", "disabled", "-use_editlist", "1", "-video_track_timescale", strconv.FormatUint(uint64(spec.nativeVideoTimescale), 10), "-movie_timescale", strconv.FormatUint(uint64(spec.nativeMovieTimescale), 10), "-movflags", "+faststart", "-fs", strconv.FormatInt(outputLimit, 10), muxed)
 	if err != nil {
 		return nil, err
 	}
