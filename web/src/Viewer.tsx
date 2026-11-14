@@ -12,8 +12,9 @@ import { TagChip } from "./TagChip";
 import { canDecodeTank, TankDecoder } from "./TankDecoder";
 import { useCompactViewer, useViewerControls } from "./viewer-interactions";
 import { ContainerCoverMenu } from "./ContainerCoverMenu";
+import { MotionPresence, useIsPresent } from "./motion";
 
-type Props = { asset: Asset; scope: Scope; tags: Entity[]; collections: Entity[]; games: Game[]; close: () => void; previous?: () => void; next?: () => void; changed: () => void; notify: (text: string) => void; tagDragKey: string; tagBusy: boolean; changeTag: (assetId: string, tag: Entity, remove: boolean) => void };
+type Props = { asset: Asset; scope: Scope; tags: Entity[]; collections: Entity[]; games: Game[]; close: () => void; previous?: () => void; next?: () => void; direction?: -1 | 0 | 1; changed: () => void; notify: (text: string) => void; tagDragKey: string; tagBusy: boolean; changeTag: (assetId: string, tag: Entity, remove: boolean) => void };
 const originalCopyBytes = 32 * 1024 * 1024;
 const originalCopyPixels = 40_000_000;
 
@@ -51,7 +52,8 @@ async function clipboardPNG(url: string, signal: AbortSignal): Promise<Blob> {
   });
 }
 
-export function Viewer({ asset, scope, tags, collections, games, close, previous, next, changed, notify, tagDragKey, tagBusy, changeTag }: Props) {
+export function Viewer({ asset, scope, tags, collections, games, close, previous, next, direction = 0, changed, notify, tagDragKey, tagBusy, changeTag }: Props) {
+  const isPresent = useIsPresent();
   const compact = useCompactViewer();
   const [details, setDetails] = useState(!compact);
   const [playing, setPlaying] = useState(false);
@@ -70,9 +72,9 @@ export function Viewer({ asset, scope, tags, collections, games, close, previous
   const [frame, setFrame] = useState<FramePlayheadState>({ time: 0, duration: 0, ready: false });
   const stage = useRef<HTMLDivElement>(null);
   const stripResource = coverStripResource(asset);
-  const stripState = useCoverStrip(stripResource, coverPicker);
+  const stripState = useCoverStrip(stripResource, coverPicker && isPresent);
   useEffect(() => {
-    if (!stripResource) return;
+    if (!stripResource || !isPresent) return;
     const connection = (navigator as Navigator & { connection?: {
       saveData?: boolean; effectiveType?: string; downlink?: number;
       addEventListener?: EventTarget["addEventListener"]; removeEventListener?: EventTarget["removeEventListener"];
@@ -96,21 +98,21 @@ export function Viewer({ asset, scope, tags, collections, games, close, previous
       window.removeEventListener("offline", stopUnavailable);
       connection?.removeEventListener?.("change", stopUnavailable);
     };
-  }, [stripResource]);
+  }, [stripResource, isPresent]);
   const copyController = useRef<AbortController | null>(null);
-  const controls = useViewerControls(playing, details || waiting || edit || tank || screenshotEdit || coverPicker || containerCoverMenu || more || diagnostics || hovered);
+  const controls = useViewerControls(playing && isPresent, details || waiting || edit || tank || screenshotEdit || coverPicker || containerCoverMenu || more || diagnostics || hovered);
   const format = (asset.format || asset.name.split(".").pop() || "").toLowerCase();
   const gameMedia = supportsGameMedia(asset);
   const canCopyOriginal = asset.kind === "image" && /^(jpe?g|png|webp|avif|gif|bmp|ico|apng)$/.test(format) && asset.mime !== "image/svg+xml" && !!asset.originalUrl
     && asset.size <= originalCopyBytes && asset.width > 0 && asset.height > 0 && asset.width * asset.height <= originalCopyPixels;
-  useEffect(() => { setCopying(false); return () => { copyController.current?.abort(); copyController.current = null; }; }, [asset.id]);
+  useEffect(() => { setCopying(false); return () => { copyController.current?.abort(); copyController.current = null; }; }, [asset.id, isPresent]);
   useEffect(() => { setEdit(false); setTank(false); setScreenshotEdit(false); setCoverPicker(false); setContainerCoverMenu(false); setMore(false); setDiagnostics(false); setPlaying(false); setWaiting(false); controls.reveal(); }, [asset.id]);
   useEffect(() => { if (!gameMedia) setScreenshotEdit(false); }, [gameMedia]);
   useEffect(() => { if (compact) setDetails(false); }, [compact]);
   const keyboard = useEffectEvent((event: KeyboardEvent) => {
     const playerSlider = asset.kind === "video" && event.target instanceof HTMLInputElement
       && event.target.type === "range" && !!stage.current?.contains(event.target);
-    if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey || (isTextInput(event.target) && !playerSlider) || edit || tank || screenshotEdit) return;
+    if (!isPresent || event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey || (isTextInput(event.target) && !playerSlider) || edit || tank || screenshotEdit) return;
     if (event.key === "Escape") {
       if (savingCover) return;
       if (more) setMore(false);
@@ -139,20 +141,24 @@ export function Viewer({ asset, scope, tags, collections, games, close, previous
     if (event.key === "ArrowRight" || event.key.toLowerCase() === "d") { event.preventDefault(); next?.(); }
   });
   useEffect(() => {
+    if (!isPresent) return;
     window.addEventListener("keydown", keyboard);
+    return () => window.removeEventListener("keydown", keyboard);
+  }, [isPresent]);
+  useEffect(() => {
     const before = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    return () => { window.removeEventListener("keydown", keyboard); document.body.style.overflow = before; };
+    return () => { document.body.style.overflow = before; };
   }, []);
   async function update(patch: Patch) {
-    if (busy) return;
+    if (busy || !isPresent) return;
     setBusy(true);
     try { await api(scoped(`assets/${asset.id}`, scope), patch, "PATCH"); changed(); }
     catch (error) { notify(error instanceof Error ? error.message : String(error)); }
     finally { setBusy(false); }
   }
   async function copyImage(original = false) {
-    if (copyController.current || (original && !canCopyOriginal)) return;
+    if (!isPresent || copyController.current || (original && !canCopyOriginal)) return;
     if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") { notify("浏览器不支持复制图片，请下载原件"); return; }
     const controller = new AbortController();
     copyController.current = controller; setCopying(true);
@@ -166,12 +172,13 @@ export function Viewer({ asset, scope, tags, collections, games, close, previous
     finally { if (copyController.current === controller) { copyController.current = null; setCopying(false); } }
   }
   function openCoverPicker() {
+    if (!isPresent) return;
     setMore(false); setContainerCoverMenu(false); setDetails(false); setDiagnostics(false);
     setFrame({ time: asset.cover?.time || 0, duration: asset.duration, ready: false });
     setCoverPicker(true); controls.reveal();
   }
   async function saveCover(time: number | null) {
-    if (savingCover) return;
+    if (savingCover || !isPresent) return;
     setSavingCover(true);
     try {
       await api(scoped(`assets/${asset.id}/cover`, scope), { time, expectedCover: asset.cover?.revision || "" }, "PATCH");
@@ -183,14 +190,14 @@ export function Viewer({ asset, scope, tags, collections, games, close, previous
   return <div className={`viewer ${compact ? "compact-viewer" : ""} ${coverPicker ? "with-cover-picker" : ""} ${controls.hidden ? "is-immersive" : ""}`} role="dialog" aria-modal="true" aria-label={asset.title || asset.name}
     onPointerMove={event => { if (!compact && asset.kind === "video" && event.pointerType !== "touch") controls.reveal(); }}>
     <header className="viewer-heading"><button className="icon-button" aria-label="关闭预览" disabled={savingCover} onClick={close}><X size={21} /></button><div className="viewer-name"><strong>{asset.title || asset.name}</strong><span>{kindNames[asset.kind]}{asset.effectiveHidden && <> · <EyeOff size={11} /> 隐藏</>}</span></div><div className="viewer-actions">{canDecodeTank(asset) && <button className="icon-button" title="坦克显形" aria-label="坦克显形" onClick={() => setTank(true)}><ScanEye size={18} /></button>}<button className={`icon-button ${asset.starred ? "is-active" : ""}`} title={asset.starred ? "取消星标" : "添加星标"} aria-label={asset.starred ? "取消星标" : "添加星标"} disabled={busy} onClick={() => void update({ starred: !asset.starred })}><Star size={18} fill={asset.starred ? "currentColor" : "none"} /></button><a className="icon-button" title="下载原件" aria-label="下载原件" href={asset.downloadUrl} download><Download size={18} /></a><button className={`icon-button ${details ? "is-active" : ""}`} title="素材信息" aria-label="素材信息" disabled={coverPicker} onClick={() => setDetails(!details)}><Info size={18} /></button>{!image && <button className={`icon-button ${more ? "is-active" : ""}`} title="视频选项" aria-label="视频选项" aria-haspopup="menu" aria-expanded={more} disabled={savingCover} onClick={() => { setContainerCoverMenu(false); setMore(!more); }}><Ellipsis size={20} /></button>}<ContainerCoverMenu asset={asset} scope={scope} open={containerCoverMenu} setOpen={open => { setContainerCoverMenu(open); if (open) setMore(false); }} disabled={savingCover || coverPicker || busy} changed={changed} notify={notify} /></div></header>
-    {more && <>
+    <MotionPresence key={`${asset.id}:video-menu`} present={more && isPresent} variant="menu">{more && <>
       <button className="viewer-menu-dismiss" aria-label="关闭视频选项" onClick={() => setMore(false)} />
       <div className="viewer-video-menu compact-action-menu" role="menu">
         <button role="menuitem" disabled={asset.status !== "ready"} onClick={openCoverPicker}><Film size={16} />选择视频封面</button>
         <button role="menuitem" onClick={() => { stage.current?.querySelector<HTMLButtonElement>("[data-player-compatibility]")?.click(); setMore(false); }}><CompatibilityPlaybackGlyph size={16} />使用兼容模式播放</button>
         <button role="menuitem" onClick={() => { setDiagnostics(true); setMore(false); }}><Info size={16} />播放诊断</button>
       </div>
-    </>}
+    </>}</MotionPresence>
     {coverPicker && <section className="viewer-cover-editor" aria-label="选择视频封面帧">
       <div className="cover-editor-head">
         <div className="cover-editor-status"><strong><Film size={16} />选择视频封面</strong><small>当前 {frame.time.toFixed(2)} 秒<span> · 可用 , / . 键逐帧微调</span></small></div>
@@ -205,25 +212,25 @@ export function Viewer({ asset, scope, tags, collections, games, close, previous
       }} />
     </section>}
     <div className={`viewer-body ${details ? "with-details" : ""}`}>
-      <div className="viewer-canvas" ref={stage}>
-        {image ? <ImageViewer key={asset.id} asset={asset} previous={previous} next={next} close={close} toggleChrome={controls.toggle} /> : <div className="media-stage dark"><VideoPlayer key={asset.id} asset={asset} locked={savingCover || edit || screenshotEdit} chromeHidden={controls.hidden} onActivity={controls.reveal} onToggleChrome={controls.toggle} onPrevious={() => previous?.()} onNext={() => next?.()} onClose={close} onPlaybackChange={setPlaying} onWaiting={setWaiting} onControlsHoverChange={setHovered} diagnosticsOpen={diagnostics} onCloseDiagnostics={() => setDiagnostics(false)} framePicker={coverPicker ? { initialTime: asset.cover?.time || 0, onChange: setFrame } : undefined} />{coverPicker && frame.ready && frame.duration > 0 && <ExactCoverPreview asset={asset} time={frame.time} strip={stripState.strip} />}</div>}
+      <div className="viewer-canvas" ref={stage} data-direction={direction < 0 ? "previous" : direction > 0 ? "next" : undefined}>
+        {image ? <ImageViewer key={asset.id} asset={asset} previous={previous} next={next} close={close} toggleChrome={controls.toggle} /> : <div className="media-stage dark" key={asset.id}><VideoPlayer key={asset.id} asset={asset} locked={savingCover || edit || screenshotEdit} chromeHidden={controls.hidden} onActivity={controls.reveal} onToggleChrome={controls.toggle} onPrevious={() => previous?.()} onNext={() => next?.()} onClose={close} onPlaybackChange={setPlaying} onWaiting={setWaiting} onControlsHoverChange={setHovered} diagnosticsOpen={diagnostics} onCloseDiagnostics={() => setDiagnostics(false)} framePicker={coverPicker ? { initialTime: asset.cover?.time || 0, onChange: setFrame } : undefined} />{coverPicker && frame.ready && frame.duration > 0 && <ExactCoverPreview asset={asset} time={frame.time} strip={stripState.strip} />}</div>}
         {!coverPicker && previous && <button className="viewer-step previous" aria-label="上一项" onClick={previous}><ChevronLeft size={23} /></button>}{!coverPicker && next && <button className="viewer-step next" aria-label="下一项" onClick={next}><ChevronRight size={23} /></button>}
       </div>
-      {details && compact && <button className="viewer-details-backdrop" aria-label="收起素材信息" onClick={() => setDetails(false)} />}
-      {details && <aside className="viewer-details"><div className="details-title"><h2>素材信息</h2><button className="button subtle" onClick={() => setEdit(true)}><Pencil size={14} />编辑</button>{compact && <button className="icon-button" aria-label="收起素材信息" onClick={() => setDetails(false)}><X size={18} /></button>}</div><dl className="metadata-grid"><dt>原文件名</dt><dd>{asset.name}</dd><dt>格式</dt><dd>{asset.mime || asset.name.split(".").pop()?.toUpperCase()}</dd><dt>尺寸</dt><dd>{asset.width && asset.height ? `${asset.width} × ${asset.height}` : "读取中"}</dd><dt>大小</dt><dd>{bytes(asset.size)}</dd>{asset.duration > 0 && <><dt>时长</dt><dd>{duration(asset.duration)}</dd></>}<dt>收集时间</dt><dd>{new Date(asset.createdAt).toLocaleString("zh-CN", { hour12: false })}</dd><dt>处理状态</dt><dd>{stateNames[asset.status] || asset.status}</dd></dl>
+      <MotionPresence key={`${asset.id}:details-backdrop`} present={details && compact && isPresent} variant="shade">{details && compact && <button className="viewer-details-backdrop" aria-label="收起素材信息" onClick={() => setDetails(false)} />}</MotionPresence>
+      <div className={`viewer-details-region ${details ? "is-open" : ""}`} inert={!details || !isPresent} aria-hidden={!details || !isPresent || undefined}><aside className="viewer-details"><div className="details-title"><h2>素材信息</h2><button className="button subtle" onClick={() => setEdit(true)}><Pencil size={14} />编辑</button>{compact && <button className="icon-button" aria-label="收起素材信息" onClick={() => setDetails(false)}><X size={18} /></button>}</div><dl className="metadata-grid"><dt>原文件名</dt><dd>{asset.name}</dd><dt>格式</dt><dd>{asset.mime || asset.name.split(".").pop()?.toUpperCase()}</dd><dt>尺寸</dt><dd>{asset.width && asset.height ? `${asset.width} × ${asset.height}` : "读取中"}</dd><dt>大小</dt><dd>{bytes(asset.size)}</dd>{asset.duration > 0 && <><dt>时长</dt><dd>{duration(asset.duration)}</dd></>}<dt>收集时间</dt><dd>{new Date(asset.createdAt).toLocaleString("zh-CN", { hour12: false })}</dd><dt>处理状态</dt><dd>{stateNames[asset.status] || asset.status}</dd></dl>
         {!image && <div className="details-section"><div className="details-title"><h3><Film size={14} />视频封面</h3><button className="button subtle" disabled={busy || asset.status !== "ready"} onClick={openCoverPicker}>选择封面</button></div><p className="muted">{asset.cover ? `已选择 ${asset.cover.time.toFixed(2)} 秒的画面` : "使用默认封面"}</p></div>}
         {asset.error && <div className="inline-error">{asset.error}<button className="button subtle" onClick={() => void api("assets/retry", { ids: [asset.id] }).then(changed).catch(error => notify(error.message))}><RotateCw size={14} />重试处理</button></div>}
         {(gameMedia || asset.screenshot) && <div className="details-section"><div className="details-title"><h3><Gamepad2 size={14} />游戏截图</h3><button className="button subtle" disabled={busy} onClick={() => gameMedia ? setScreenshotEdit(true) : void update({ screenshot: false })}>{gameMedia ? asset.screenshot ? "编辑" : "移入游戏截图" : "移出游戏截图"}</button></div>{asset.screenshot && <dl className="metadata-grid"><dt>游戏</dt><dd>{asset.game ? gameLabel(asset.game) : "未指定游戏"}</dd>{asset.game?.steamAppId && <><dt>Steam ID</dt><dd>{asset.game.steamAppId}</dd></>}<dt>{asset.kind === "video" ? "录像时间" : "截图时间"}</dt><dd>{captureLabel(asset.capturedAt)}</dd><dt>识别方式</dt><dd>{asset.screenshotSource === "steam" ? "Steam 文件名" : "手动指定"}</dd></dl>}</div>}
-        {!!asset.tags?.length && <div className="details-section"><h3>标签</h3><div className="entity-chips">{asset.tags.map(tag => <TagChip key={tag.id} tag={tag} assetId={asset.id} className="detail-tag" cancelKey={`${tagDragKey}:${edit}:${screenshotEdit}`} disabled={tagBusy || busy} change={changeTag} />)}</div></div>}
+        {!!asset.tags?.length && <div className="details-section"><h3>标签</h3><div className="entity-chips">{asset.tags.map(tag => <TagChip key={tag.id} tag={tag} assetId={asset.id} className="detail-tag" cancelKey={`${tagDragKey}:${edit}:${screenshotEdit}:${details}:${isPresent}`} disabled={tagBusy || busy || !details || !isPresent} change={changeTag} />)}</div></div>}
         {!!asset.collections?.length && <div className="details-section"><h3>收藏集</h3><div className="entity-chips">{asset.collections.map(collection => <span key={collection.id}>{collection.name}</span>)}</div></div>}
         {(asset.author || asset.sourceUrl || asset.notes) && <div className="details-section"><h3>来源与备注</h3>{asset.author && <p>{asset.author}</p>}{asset.sourceUrl && <a className="source-link" href={asset.sourceUrl} target="_blank" rel="noreferrer">{asset.sourceUrl}</a>}{asset.notes && <p className="notes">{asset.notes}</p>}</div>}
         {asset.effectiveHidden && <div className="details-section hidden-reasons"><h3><EyeOff size={13} />隐藏原因</h3>{asset.hiddenReasons?.map(reason => <p key={`${reason.kind}-${reason.id}`}>{reason.kind === "media" ? "素材单独隐藏" : `${reason.kind === "tag" ? "标签" : "收藏集"}：${reason.name}`}</p>)}</div>}
         <div className="details-bottom">{asset.kind === "image" && asset.previewUrl && <button className="button" disabled={copying} onClick={() => void copyImage()}><Copy size={15} />复制预览图</button>}{canCopyOriginal && <button className="button" title="按原始尺寸复制为 PNG，不改动原件" disabled={copying} onClick={() => void copyImage(true)}><Copy size={15} />复制原图（PNG）</button>}<button className="button danger subtle" disabled={busy} onClick={() => void update({ trash: !asset.trashedAt })}>{asset.trashedAt ? <RotateCw size={15} /> : <Trash2 size={15} />}{asset.trashedAt ? "恢复素材" : "移入回收站"}</button></div>
-      </aside>}
+      </aside></div>
     </div>
-    {edit && <MetadataEditor asset={asset} scope={scope} tags={tags} collections={collections} close={() => setEdit(false)} saved={() => { setEdit(false); changed(); }} notify={notify} />}
-    {tank && <TankDecoder key={asset.id} asset={asset} close={() => setTank(false)} />}
-    {screenshotEdit && gameMedia && <ScreenshotEditor asset={asset} count={1} games={games} scope={scope} close={() => setScreenshotEdit(false)} save={async patch => { await api(scoped(`assets/${asset.id}`, scope), patch, "PATCH"); setScreenshotEdit(false); changed(); notify("游戏截图信息已保存"); }} />}
+    <MotionPresence key={`${asset.id}:metadata`} present={edit && isPresent}>{edit && <MetadataEditor asset={asset} scope={scope} tags={tags} collections={collections} close={() => setEdit(false)} saved={() => { setEdit(false); changed(); }} notify={notify} />}</MotionPresence>
+    <MotionPresence key={`${asset.id}:tank`} present={tank && isPresent}>{tank && <TankDecoder key={asset.id} asset={asset} close={() => setTank(false)} />}</MotionPresence>
+    <MotionPresence key={`${asset.id}:screenshot`} present={screenshotEdit && gameMedia && isPresent}>{screenshotEdit && gameMedia && <ScreenshotEditor asset={asset} count={1} games={games} scope={scope} close={() => setScreenshotEdit(false)} save={async patch => { await api(scoped(`assets/${asset.id}`, scope), patch, "PATCH"); setScreenshotEdit(false); changed(); notify("游戏截图信息已保存"); }} />}</MotionPresence>
   </div>;
 }
 function MetadataEditor({ asset, scope, tags, collections, close, saved, notify }: { asset: Asset; scope: Scope; tags: Entity[]; collections: Entity[]; close: () => void; saved: () => void; notify: (message: string) => void }) {

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, FolderHeart, Image, Layers3, RotateCw } from "lucide-react";
 import { api, Asset, Scope, scoped } from "./api";
+import { MotionPresence, useIsPresent } from "./motion";
 
 type Target = { id: string; name: string; collectionName?: string; selected: boolean };
 type Targets = { groups: Target[]; collections: Target[] };
@@ -10,16 +11,17 @@ export function ContainerCoverMenu({ asset, scope, open, setOpen, disabled, chan
   asset: Asset; scope: Scope; open: boolean; setOpen: (open: boolean) => void; disabled: boolean;
   changed: () => void; notify: (message: string) => void;
 }) {
+  const isPresent = useIsPresent();
   const root = useRef<HTMLDivElement>(null);
   const [targets, setTargets] = useState<Targets>();
   const [kind, setKind] = useState<Kind>();
   const [saving, setSaving] = useState(false);
   useEffect(() => {
-    if (!open) return;
+    if (!open || !isPresent) return;
     const controller = new AbortController();
     setTargets(undefined); setKind(undefined);
     void api<Targets>(scoped(`assets/${asset.id}/cover-targets`, scope), undefined, undefined, controller.signal)
-      .then(setTargets).catch(error => { if (!controller.signal.aborted) { setOpen(false); notify(error.message); } });
+      .then(value => { if (!controller.signal.aborted) setTargets(value); }).catch(error => { if (!controller.signal.aborted) { setOpen(false); notify(error.message); } });
     const outside = (event: PointerEvent) => {
       if (event.target instanceof Node && !root.current?.contains(event.target)) setOpen(false);
     };
@@ -34,10 +36,10 @@ export function ContainerCoverMenu({ asset, scope, open, setOpen, disabled, chan
       document.removeEventListener("pointerdown", outside, true);
       window.removeEventListener("keydown", keyboard, true);
     };
-  }, [open, asset.id, scope]);
+  }, [open, asset.id, scope, isPresent]);
 
   async function save(kind: Kind, target: Target) {
-    if (saving) return;
+    if (saving || !open || !isPresent) return;
     setSaving(true);
     try {
       await api(scoped(`assets/${asset.id}/container-cover`, scope), { kind, targetId: target.id }, "PATCH");
@@ -46,6 +48,7 @@ export function ContainerCoverMenu({ asset, scope, open, setOpen, disabled, chan
     finally { setSaving(false); }
   }
   function choose(kind: Kind) {
+    if (!open || !isPresent) return;
     const items = targets?.[kind === "group" ? "groups" : "collections"] || [];
     if (items.length === 1) void save(kind, items[0]);
     else setKind(kind);
@@ -55,7 +58,7 @@ export function ContainerCoverMenu({ asset, scope, open, setOpen, disabled, chan
     <button className={`container-cover-toggle ${open ? "is-active" : ""}`} aria-haspopup="menu" aria-expanded={open} disabled={disabled || saving || !!asset.trashedAt} onClick={() => setOpen(!open)}>
       {saving ? <RotateCw size={15} className="spin" /> : <Image size={15} />}<span>设为封面</span><ChevronDown size={12} />
     </button>
-    {open && <div className="container-cover-menu compact-action-menu" role="menu" aria-label="设为封面" aria-busy={!targets || saving}>
+    <MotionPresence key={asset.id} present={open && isPresent} variant="menu">{open && <div className="container-cover-menu compact-action-menu" role="menu" aria-label="设为封面" aria-busy={!targets || saving}>
       {kind ? <>
         <button className="cover-menu-back" disabled={saving} onClick={() => setKind(undefined)}><ChevronLeft size={14} />选择{kind === "group" ? "分组" : "收藏集"}</button>
         <div className="action-menu-divider" role="separator" />
@@ -73,6 +76,6 @@ export function ContainerCoverMenu({ asset, scope, open, setOpen, disabled, chan
         </button>
         {!targets && <small className="cover-menu-loading"><RotateCw size={11} className="spin" />正在读取归属</small>}
       </>}
-    </div>}
+    </div>}</MotionPresence>
   </div>;
 }

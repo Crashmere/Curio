@@ -7,6 +7,7 @@ import { TagChip } from "./TagChip";
 export function MediaCard({ asset, tagId, collectionId, selected, selecting, active = true, loading = "lazy", retryKey = 0, open, select, tagDragKey, tagBusy, changeTag }: { asset: Asset; tagId: string; collectionId: string; selected: boolean; selecting: boolean; active?: boolean; loading?: "lazy" | "eager"; retryKey?: number; open: (event: React.MouseEvent) => void; select: (range: boolean) => void; tagDragKey: string; tagBusy: boolean; changeTag: (assetId: string, tag: Entity, remove: boolean) => void }) {
   const [hover, setHover] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [loadedThumbnail, setLoadedThumbnail] = useState("");
   const [retryStamp, setRetryStamp] = useState(0);
   function retryThumbnail() { if (failed) { setHover(false); setFailed(false); setRetryStamp(value => value + 1); } }
   const retry = useEffectEvent(retryThumbnail);
@@ -25,7 +26,7 @@ export function MediaCard({ asset, tagId, collectionId, selected, selecting, act
   const otherTags = asset.tags.filter(tag => tag.id !== tagId);
   return <article data-asset={asset.id} data-tag-drop-asset={active && !tagBusy ? asset.id : undefined} className={`media-card ${selected ? "selected" : ""} ${asset.hasAlpha ? "has-alpha" : ""}`} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
     <button className="media-open" onClick={open} style={{ aspectRatio: asset.width && asset.height ? Math.min(2.3, Math.max(0.45, asset.width / asset.height)) : 1 }} aria-label={`查看 ${asset.title || asset.name}`}>
-      {src && !failed ? <img src={src} alt={asset.title || asset.name} loading={loading} decoding={loading === "eager" ? "sync" : "async"} onError={() => { if (animationPreview) setHover(false); else setFailed(true); }} /> : <div className="media-placeholder">{asset.status === "error" ? <CircleAlert size={27} /> : asset.kind === "video" ? <Video size={30} /> : <Image size={30} strokeWidth={1.3} />}<span>{failed ? "缩略图加载失败" : asset.status === "error" ? "预览失败" : asset.status === "ready" ? kindNames[asset.kind] : "预览准备中"}</span></div>}
+      {src && !failed ? <img src={src} className={animationPreview || loadedThumbnail === thumbnail ? "is-loaded" : ""} alt={asset.title || asset.name} loading={loading} decoding={loading === "eager" ? "sync" : "async"} onLoad={() => { if (!animationPreview) setLoadedThumbnail(thumbnail); }} onError={() => { if (animationPreview) setHover(false); else setFailed(true); }} /> : <div className="media-placeholder">{asset.status === "error" ? <CircleAlert size={27} /> : asset.kind === "video" ? <Video size={30} /> : <Image size={30} strokeWidth={1.3} />}<span>{failed ? "缩略图加载失败" : asset.status === "error" ? "预览失败" : asset.status === "ready" ? kindNames[asset.kind] : "预览准备中"}</span></div>}
       <div className="media-shade" />
       {(asset.kind !== "image" || asset.status !== "ready") && <span className="media-kind">{asset.kind === "video" ? <Video size={11} /> : asset.kind === "animation" ? <Layers3 size={11} /> : <RotateCw size={11} />}{asset.kind === "video" && asset.duration > 0 ? duration(asset.duration) : asset.kind === "animation" ? "动图" : asset.status === "error" ? "失败" : "处理中"}</span>}
       {asset.starred && <span className="media-star"><Star size={13} fill="currentColor" /></span>}

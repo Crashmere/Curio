@@ -6,6 +6,7 @@ import { CoverFrameRequests, type CoverStrip, type CoverStripFrame, type CoverSt
 import { VideoPlayback, type PlaybackRepresentation } from "./video-playback";
 import { useCompactViewer } from "./viewer-interactions";
 import { CompatibilityPlaybackGlyph, SkipSecondsGlyph } from "./player-icons";
+import { useIsPresent } from "./motion";
 import "./video-player.css";
 
 function formatDurationClock(seconds: number) {
@@ -237,7 +238,7 @@ export function VideoPlayer({
   };
 }) {
   const compact = useCompactViewer();
-  const isPresent = true;
+  const isPresent = useIsPresent();
   const videoRef = useRef<HTMLVideoElement>(null);
   const stageBoxRef = useRef<HTMLDivElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
@@ -482,6 +483,16 @@ export function VideoPlayer({
   }, [sourceHash, sourceRotation, isFramePicker, initialFrameTime]);
 
   useEffect(() => {
+    if (!isPresent) {
+      resumeOnRelease.current = false;
+      pendingPreviewTime.current = null;
+      activeScrubValue.current = null;
+      touchStart.current = undefined;
+      setScrubTime(null);
+      cancelAnimationFrame(seekRafId.current);
+      seekRafId.current = 0;
+      clearTimeout(controlTimer.current);
+    }
     if (locked || !isPresent) playbackRef.current?.suspend();
     else restorePausedFrame();
   }, [locked, isPresent]);
@@ -506,8 +517,9 @@ export function VideoPlayer({
     setResumeOnly(false);
     try {
       await source.play();
+      if (!availabilityRef.current.isPresent || availabilityRef.current.locked) source.suspend();
     } catch (err) {
-      if (!isMounted.current || playbackRef.current !== source || (err as DOMException).name === "AbortError") return;
+      if (!isMounted.current || !availabilityRef.current.isPresent || playbackRef.current !== source || (err as DOMException).name === "AbortError") return;
       if ((err as DOMException).name !== "NotAllowedError" && source.handleMediaError()) return;
       setBuffering(false);
       setResumeOnly((err as DOMException).name === "NotAllowedError");
@@ -547,7 +559,7 @@ export function VideoPlayer({
       seekRafId.current = 0;
       const el = videoRef.current;
       const target = pendingPreviewTime.current;
-      if (!el || el.seeking || target === null) return;
+      if (!el || !availabilityRef.current.isPresent || availabilityRef.current.locked || el.seeking || target === null) return;
       pendingPreviewTime.current = null;
       el.currentTime = target;
     });

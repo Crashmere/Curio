@@ -1,12 +1,16 @@
 import { CSSProperties, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { Maximize, Minus, Pause, Play, Plus, RotateCw } from "lucide-react";
 import { Asset } from "./api";
+import { useIsPresent } from "./motion";
 
 type Point = { x: number; y: number };
 type Transform = Point & { scale: number | null };
 const clamp = (value: number, limit: number) => Math.max(-limit, Math.min(limit, value));
 
 export function ImageViewer({ asset, sourceOverride, pixels, bitmap, previous, next, close, toggleChrome }: { asset: Asset; sourceOverride?: string; pixels?: ImageData; bitmap?: ImageBitmap; previous?: () => void; next?: () => void; close?: () => void; toggleChrome?: () => void }) {
+  const isPresent = useIsPresent();
+  const presence = useRef(isPresent);
+  presence.current = isPresent;
   const stage = useRef<HTMLDivElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const raster = useRef<HTMLCanvasElement>(null);
@@ -65,7 +69,7 @@ export function ImageViewer({ asset, sourceOverride, pixels, bitmap, previous, n
     return { x: clientX - rect.left - rect.width / 2, y: clientY - rect.top - rect.height / 2 };
   }
   function zoomTo(value: number, anchor: Point = { x: 0, y: 0 }, destination = anchor) {
-    if (!ready) return;
+    if (!isPresent || !ready) return;
     const before = bounded(current.current);
     const oldScale = before.scale ?? fit;
     const nextScale = Math.min(maximum, Math.max(minimum, value));
@@ -91,7 +95,16 @@ export function ImageViewer({ asset, sourceOverride, pixels, bitmap, previous, n
     else if (pixels) context.putImageData(pixels, 0, 0);
   }, [pixels, bitmap, frozen]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; clearTimeout(tapTimer.current); }; }, []);
+  useEffect(() => {
+    if (isPresent) return;
+    clearTimeout(tapTimer.current);
+    lastTap.current = null;
+    origin.current = null;
+    pointers.current.clear();
+    setDragging(false);
+  }, [isPresent]);
   function reloadPreview() {
+    if (!isPresent) return;
     setRetryStamp(value => value + 1);
     setPreviewFailed(false);
     setPreviewLoaded(false);
@@ -112,7 +125,7 @@ export function ImageViewer({ asset, sourceOverride, pixels, bitmap, previous, n
   }, [animation, animating]);
 
   const wheel = useEffectEvent((event: WheelEvent) => {
-    if (!ready) return;
+    if (!isPresent || !ready) return;
     event.preventDefault();
     const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? area.height : 1);
     zoomTo((bounded(current.current).scale ?? fit) * Math.exp(-delta * 0.002), point(event.clientX, event.clientY));
@@ -123,12 +136,12 @@ export function ImageViewer({ asset, sourceOverride, pixels, bitmap, previous, n
     return () => element.removeEventListener("wheel", wheel);
   }, []);
   useEffect(() => {
-    if (!needsOriginal || !canLoadOriginal || asset.size > 32 * 1024 * 1024 || size.width * size.height > 40_000_000) return;
+    if (!isPresent || !needsOriginal || !canLoadOriginal || asset.size > 32 * 1024 * 1024 || size.width * size.height > 40_000_000) return;
     const timer = setTimeout(() => setRequestOriginal(true), 240);
     return () => clearTimeout(timer);
-  }, [needsOriginal, canLoadOriginal]);
+  }, [needsOriginal, canLoadOriginal, isPresent]);
   useEffect(() => {
-    if (!requestOriginal || sourceOverride || pixels || bitmap) return;
+    if (!isPresent || !requestOriginal || sourceOverride || pixels || bitmap) return;
     let active = true;
     const original = new Image();
     setQuality("loading");
@@ -141,7 +154,7 @@ export function ImageViewer({ asset, sourceOverride, pixels, bitmap, previous, n
     original.onerror = () => { if (active) setQuality("fallback"); };
     original.src = asset.originalUrl;
     return () => { active = false; original.onload = null; original.onerror = null; original.src = ""; };
-  }, [requestOriginal, asset.originalUrl, sourceOverride, !!pixels, !!bitmap]);
+  }, [requestOriginal, asset.originalUrl, sourceOverride, !!pixels, !!bitmap, isPresent]);
 
   function release(pointerId: number) {
     pointers.current.delete(pointerId);
@@ -162,7 +175,7 @@ export function ImageViewer({ asset, sourceOverride, pixels, bitmap, previous, n
     } catch { if (mounted.current) setAnimating(false); }
     finally { if (mounted.current) setFreezing(false); }
   }
-  function restartAnimation() { setFrozen(null); setAnimating(true); setAnimationRevision(value => value + 1); }
+  function restartAnimation() { if (isPresent) { setFrozen(null); setAnimating(true); setAnimationRevision(value => value + 1); } }
   const mediaSource = animation && !animating ? asset.thumbnailUrl : quality === "original" ? asset.originalUrl : asset.previewUrl;
   const reloaded = (url: string) => url && retryStamp ? `${url}${url.includes("?") ? "&" : "?"}retry=${retryStamp}` : url;
   const source = sourceOverride || (quality === "original" ? mediaSource : reloaded(mediaSource));
@@ -171,7 +184,7 @@ export function ImageViewer({ asset, sourceOverride, pixels, bitmap, previous, n
     <div ref={stage} className={`media-stage image-stage ${asset.hasAlpha ? background : "neutral"} ${dragging ? "is-dragging" : ""} ${zoomed ? "is-zoomed" : ""}`}>
       <div ref={viewport} className="image-viewport"
         onPointerDown={event => {
-          if (!ready || event.button !== 0 || pointers.current.size >= 2) return;
+          if (!isPresent || !ready || event.button !== 0 || pointers.current.size >= 2) return;
           event.preventDefault();
           pointers.current.set(event.pointerId, point(event.clientX, event.clientY));
           if (pointers.current.size === 1) origin.current = { point: point(event.clientX, event.clientY), moved: false, pinched: false, zoomed };
@@ -180,7 +193,7 @@ export function ImageViewer({ asset, sourceOverride, pixels, bitmap, previous, n
           setDragging(true);
         }}
         onPointerMove={event => {
-          if (!pointers.current.has(event.pointerId)) return;
+          if (!isPresent || !pointers.current.has(event.pointerId)) return;
           const before = [...pointers.current.values()];
           pointers.current.set(event.pointerId, point(event.clientX, event.clientY));
           const after = [...pointers.current.values()];
@@ -195,6 +208,7 @@ export function ImageViewer({ asset, sourceOverride, pixels, bitmap, previous, n
           }
         }}
         onPointerUp={event => {
+          if (!isPresent) { origin.current = null; release(event.pointerId); return; }
           const gesture = origin.current;
           const end = point(event.clientX, event.clientY);
           release(event.pointerId);
@@ -210,7 +224,7 @@ export function ImageViewer({ asset, sourceOverride, pixels, bitmap, previous, n
               else zoomTo(longImage ? widthFit : fit >= 0.99 ? fit * 2.5 : Math.min(1, fit * 2.5), end);
             } else {
               lastTap.current = { time: now, point: end };
-              tapTimer.current = setTimeout(() => toggleChrome?.(), 280);
+              tapTimer.current = setTimeout(() => { if (presence.current) toggleChrome?.(); }, 280);
             }
           } else if (event.pointerType === "touch" && !gesture.zoomed && !zoomed) {
             clearTimeout(tapTimer.current); lastTap.current = null;
