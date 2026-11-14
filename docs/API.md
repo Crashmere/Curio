@@ -73,6 +73,8 @@ Optional text fields are `title`, `notes`, `sourceUrl` and `author`. `hidden` an
 
 `tagIds` and `collectionIds` replace complete membership sets when present. `addTagIds`, `removeTagIds`, `addCollectionIds` and `removeCollectionIds` apply incremental membership changes. An empty replacement list removes all memberships of that kind. Batches fail atomically when selected assets or required containers are unavailable.
 
+Optional `preserveCollectionGroups: {"collectionId":"<source-collection-id>","groupIds":["<source-group-id>"]}` copies selected source groups into `addCollectionIds` in the same transaction. It requires at least one added collection, disallows `collectionIds` replacement and rejects collections present in both additions and removals. The browser supplies groups whose displayed members are all selected. Only selected live members in the request scope are copied; other members and groups remain unchanged. Each source group must have at least one such member. Names and saved covers among selected members are captured before source membership removals. Destination groups get independent IDs. An existing group containing only copied members can be completed or reused without changing its name or cover; groups containing unrelated members or splitting the selection return HTTP 400 and roll back all changes. Repeated additions reuse compatible groups while the source remains available. Omitting this field retains ordinary membership-only behavior.
+
 Both container types use the same contract:
 
 | Method and path | Behavior |

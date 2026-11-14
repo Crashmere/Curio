@@ -14,23 +14,24 @@ import (
 )
 
 type assetPatch struct {
-	IDs                 []string  `json:"ids"`
-	Title               *string   `json:"title"`
-	Notes               *string   `json:"notes"`
-	SourceURL           *string   `json:"sourceUrl"`
-	Author              *string   `json:"author"`
-	Screenshot          *bool     `json:"screenshot"`
-	GameID              *string   `json:"gameId"`
-	CapturedAt          *string   `json:"capturedAt"`
-	Hidden              *bool     `json:"hidden"`
-	Starred             *bool     `json:"starred"`
-	Trash               *bool     `json:"trash"`
-	TagIDs              *[]string `json:"tagIds"`
-	CollectionIDs       *[]string `json:"collectionIds"`
-	AddTagIDs           []string  `json:"addTagIds"`
-	RemoveTagIDs        []string  `json:"removeTagIds"`
-	AddCollectionIDs    []string  `json:"addCollectionIds"`
-	RemoveCollectionIDs []string  `json:"removeCollectionIds"`
+	IDs                      []string                  `json:"ids"`
+	Title                    *string                   `json:"title"`
+	Notes                    *string                   `json:"notes"`
+	SourceURL                *string                   `json:"sourceUrl"`
+	Author                   *string                   `json:"author"`
+	Screenshot               *bool                     `json:"screenshot"`
+	GameID                   *string                   `json:"gameId"`
+	CapturedAt               *string                   `json:"capturedAt"`
+	Hidden                   *bool                     `json:"hidden"`
+	Starred                  *bool                     `json:"starred"`
+	Trash                    *bool                     `json:"trash"`
+	TagIDs                   *[]string                 `json:"tagIds"`
+	CollectionIDs            *[]string                 `json:"collectionIds"`
+	AddTagIDs                []string                  `json:"addTagIds"`
+	RemoveTagIDs             []string                  `json:"removeTagIds"`
+	AddCollectionIDs         []string                  `json:"addCollectionIds"`
+	RemoveCollectionIDs      []string                  `json:"removeCollectionIds"`
+	PreserveCollectionGroups *collectionGroupSelection `json:"preserveCollectionGroups"`
 }
 
 func validateContainers(ids []string) error {
@@ -86,10 +87,31 @@ func (p *assetPatch) validate() error {
 			return err
 		}
 	}
+	if p.PreserveCollectionGroups != nil {
+		selection := p.PreserveCollectionGroups
+		if !validID.MatchString(selection.CollectionID) || len(selection.GroupIDs) == 0 || len(selection.GroupIDs) > len(p.IDs) {
+			return fmt.Errorf("分组来源无效")
+		}
+		for _, groupID := range selection.GroupIDs {
+			if !validID.MatchString(groupID) {
+				return fmt.Errorf("分组编号无效")
+			}
+		}
+		if p.CollectionIDs != nil || len(p.AddCollectionIDs) == 0 {
+			return fmt.Errorf("保留分组需要指定新增收藏集")
+		}
+		for _, collectionID := range p.AddCollectionIDs {
+			for _, removedID := range p.RemoveCollectionIDs {
+				if collectionID == removedID {
+					return fmt.Errorf("不能同时添加和移除同一收藏集")
+				}
+			}
+		}
+	}
 	return nil
 }
 
-func (l *Library) patch(ctx context.Context, p assetPatch) error {
+func (l *Library) patch(ctx context.Context, p assetPatch, scope string) error {
 	if err := p.validate(); err != nil {
 		return err
 	}
@@ -112,6 +134,11 @@ func (l *Library) patch(ctx context.Context, p assetPatch) error {
 		return err
 	}
 	defer tx.Rollback()
+	// Capture before membership removal can cascade through the source group links.
+	groups, err := selectedCollectionGroups(tx, p, scope)
+	if err != nil {
+		return err
+	}
 	for _, hash := range p.IDs {
 		var pending bool
 		if err = tx.QueryRow("SELECT purge_pending FROM assets WHERE id=?", hash).Scan(&pending); err != nil {
@@ -161,6 +188,9 @@ func (l *Library) patch(ctx context.Context, p assetPatch) error {
 		if err = patchScreenshot(tx, hash, p, captureTimes[hash]); err != nil {
 			return err
 		}
+	}
+	if err = preserveCollectionGroups(tx, p, groups); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -217,7 +247,7 @@ func (l *Library) batchUpdate(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &p) {
 		return
 	}
-	if err := l.patch(r.Context(), p); err != nil {
+	if err := l.patch(r.Context(), p, requestScope(r.URL.Query())); err != nil {
 		fail(w, 400, err)
 		return
 	}
@@ -230,7 +260,7 @@ func (l *Library) updateAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.IDs = []string{chi.URLParam(r, "id")}
-	if err := l.patch(r.Context(), p); err != nil {
+	if err := l.patch(r.Context(), p, requestScope(r.URL.Query())); err != nil {
 		fail(w, 400, err)
 		return
 	}

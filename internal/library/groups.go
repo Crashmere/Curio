@@ -18,6 +18,117 @@ type mediaGroup struct {
 	CoverURL     string   `json:"coverUrl"`
 }
 
+type collectionGroupSelection struct {
+	CollectionID string   `json:"collectionId"`
+	GroupIDs     []string `json:"groupIds"`
+}
+
+func selectedCollectionGroups(tx *sql.Tx, p assetPatch, scope string) ([]mediaGroup, error) {
+	selection := p.PreserveCollectionGroups
+	if selection == nil {
+		return nil, nil
+	}
+	args := []any{selection.CollectionID}
+	for _, groupID := range selection.GroupIDs {
+		args = append(args, groupID)
+	}
+	for _, hash := range p.IDs {
+		args = append(args, hash)
+	}
+	placeholders := func(count int) string { return strings.TrimSuffix(strings.Repeat("?,", count), ",") }
+	rows, err := tx.Query(`SELECT g.id,g.name,j.asset_id,COALESCE(s.value,'') FROM collection_group_assets j
+ JOIN collection_groups g ON g.id=j.group_id JOIN assets a ON a.id=j.asset_id
+ LEFT JOIN catalog_settings s ON s.key='group_cover:'||g.id
+ WHERE j.collection_id=? AND g.id IN (`+placeholders(len(selection.GroupIDs))+`) AND a.id IN (`+placeholders(len(p.IDs))+`)
+ AND a.purge_pending=0 AND a.trashed_at='' AND `+scopeSQL(scope)+` ORDER BY g.id,a.id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	groups := []mediaGroup{}
+	indices := map[string]int{}
+	for rows.Next() {
+		var groupID, name, hash, coverID string
+		if err = rows.Scan(&groupID, &name, &hash, &coverID); err != nil {
+			return nil, err
+		}
+		index, exists := indices[groupID]
+		if !exists {
+			index = len(groups)
+			indices[groupID] = index
+			groups = append(groups, mediaGroup{ID: groupID, Name: name, CoverAssetID: coverID})
+		}
+		groups[index].AssetIDs = append(groups[index].AssetIDs, hash)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, groupID := range selection.GroupIDs {
+		if _, exists := indices[groupID]; !exists {
+			return nil, fmt.Errorf("所选分组已变化或不在当前模式中，请刷新后重试")
+		}
+	}
+	return groups, nil
+}
+
+func preserveCollectionGroups(tx *sql.Tx, p assetPatch, groups []mediaGroup) error {
+	if len(groups) == 0 {
+		return nil
+	}
+	seen := map[string]bool{p.PreserveCollectionGroups.CollectionID: true}
+	for _, collectionID := range p.AddCollectionIDs {
+		if seen[collectionID] {
+			continue
+		}
+		seen[collectionID] = true
+		for _, group := range groups {
+			targetID, existing := "", 0
+			for _, hash := range group.AssetIDs {
+				var groupID string
+				err := tx.QueryRow("SELECT group_id FROM collection_group_assets WHERE collection_id=? AND asset_id=?", collectionID, hash).Scan(&groupID)
+				if err == sql.ErrNoRows {
+					continue
+				}
+				if err != nil {
+					return err
+				}
+				if targetID != "" && targetID != groupID {
+					return fmt.Errorf("目标收藏集已有不同的分组，请先调整目标分组后重试")
+				}
+				targetID = groupID
+				existing++
+			}
+			created := targetID == ""
+			if created {
+				targetID = id()
+				if _, err := tx.Exec("INSERT INTO collection_groups(id,collection_id,name,created_at) VALUES(?,?,?,?)", targetID, collectionID, group.Name, now()); err != nil {
+					return err
+				}
+			} else {
+				var total int
+				if err := tx.QueryRow("SELECT count(*) FROM collection_group_assets WHERE group_id=?", targetID).Scan(&total); err != nil {
+					return err
+				}
+				// Reuse a compatible group without merging in unrelated target members.
+				if total != existing {
+					return fmt.Errorf("目标收藏集的分组包含其他素材，请先调整目标分组后重试")
+				}
+			}
+			for _, hash := range group.AssetIDs {
+				if _, err := tx.Exec("INSERT OR IGNORE INTO collection_group_assets(group_id,collection_id,asset_id) VALUES(?,?,?)", targetID, collectionID, hash); err != nil {
+					return err
+				}
+				if created && hash == group.CoverAssetID {
+					if _, err := tx.Exec("INSERT INTO catalog_settings(key,value) VALUES(?,?)", containerCoverKey("group", targetID), hash); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func ensureGroupNames(db *sql.DB) error {
 	var exists bool
 	if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM pragma_table_info('collection_groups') WHERE name='name')").Scan(&exists); err != nil {
