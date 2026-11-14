@@ -378,7 +378,11 @@ func (l *Library) containingFrame(parent context.Context, hash string, at float6
 	defer release()
 	target := probe.Start + at
 	seek := strconv.FormatFloat(math.Floor(target*1e6)/1e6, 'f', 6, 64)
-	cmd := mediaCommand(ctx, "ffprobe", "-v", "error", "-protocol_whitelist", "file,pipe", "-threads", "2", "-select_streams", "v:0", "-read_intervals", seek+"%", "-show_entries", "frame=best_effort_timestamp", "-of", "csv=p=0", l.Object(hash))
+	path, err := l.sourcePath(hash)
+	if err != nil {
+		return 0, err
+	}
+	cmd := mediaCommand(ctx, "ffprobe", "-v", "error", "-protocol_whitelist", "file,pipe", "-threads", "2", "-select_streams", "v:0", "-read_intervals", seek+"%", "-show_entries", "frame=best_effort_timestamp", "-of", "csv=p=0", path)
 	stderr := &boundedBuffer{maximum: 4096}
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()

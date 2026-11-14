@@ -81,6 +81,7 @@ func (l *Library) cpuCommand(ctx context.Context, name string, args ...string) (
 
 func (l *Library) Worker(ctx context.Context) {
 	_, _ = l.DB.Exec("UPDATE assets SET status='queued',stage='queued',progress=0 WHERE status='processing' AND purge_pending=0")
+	_, _ = l.DB.Exec("UPDATE assets SET status='queued',stage='queued',progress=0 WHERE purge_pending=0 AND id IN (SELECT asset_id FROM asset_storage WHERE state='publishing')")
 	entries, _ := os.ReadDir(filepath.Join(l.Root, "work"))
 	for _, entry := range entries {
 		name := entry.Name()
@@ -103,7 +104,7 @@ func (l *Library) Worker(ctx context.Context) {
 			ticker := time.NewTicker(2 * time.Second)
 			defer ticker.Stop()
 			for ctx.Err() == nil {
-				if l.nextUploadDiscard() || l.nextPurge(ctx) || l.nextJob(ctx) {
+				if l.nextUploadDiscard() || l.nextPurge(ctx) || l.nextNormalizedCleanup() || l.nextJob(ctx) {
 					continue
 				}
 				select {
@@ -220,7 +221,21 @@ func (l *Library) finishPurge(ctx context.Context, hash string) error {
 	if !a.purgePending {
 		return nil
 	}
-	for _, path := range []string{l.Object(hash), l.Incoming(hash)} {
+	l.storageMu.Lock()
+	defer l.storageMu.Unlock()
+	var target string
+	err = l.DB.QueryRow("SELECT hash FROM asset_storage WHERE asset_id=?", hash).Scan(&target)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	for _, digest := range []string{hash, target} {
+		if digest != "" {
+			if err = l.removeUnreferencedObject(digest, hash); err != nil {
+				return err
+			}
+		}
+	}
+	for _, path := range []string{l.Incoming(hash)} {
 		if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
@@ -283,6 +298,16 @@ func metaNumber(data map[string]any, names ...string) float64 {
 }
 
 func (l *Library) process(ctx context.Context, a Asset) error {
+	if a.Kind == "video" {
+		if _, err := l.normalizeVideo(ctx, a.ID); err != nil {
+			return err
+		}
+		var err error
+		a, err = l.asset(a.ID)
+		if err != nil {
+			return err
+		}
+	}
 	originalKind := a.Kind
 	work, err := os.MkdirTemp(filepath.Join(l.Root, "work"), a.ID+"-")
 	if err != nil {
@@ -290,7 +315,7 @@ func (l *Library) process(ctx context.Context, a Asset) error {
 	}
 	defer os.RemoveAll(work)
 	input := filepath.Join(work, "source."+a.Format)
-	if err = os.Link(l.Object(a.ID), input); err != nil {
+	if err = os.Link(l.storedObject(a), input); err != nil {
 		return err
 	}
 	metadata := map[string]any{}

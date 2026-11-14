@@ -4,11 +4,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"sort"
 )
+
+var errNativeMP4Ordinary = errors.New("MP4 does not need layout normalization")
 
 const (
 	nativeMP4MetadataLimit = 16 << 20
@@ -46,6 +49,7 @@ type nativeMP4 struct {
 	movieTimescale uint32
 	tracks         []nativeMP4Track
 	mdats          []nativeMP4Span
+	moovOffset     int64
 }
 
 type nativeMP4Result struct {
@@ -160,7 +164,7 @@ func nativeMP4CheckBoxesAt(data []byte, parent string, depth int) error {
 		case "meta":
 			allowed = nativeMP4KindAllowed(box.kind, "hdlr", "keys", "ilst", "free", "skip")
 		case "avc1", "avc3":
-			allowed = nativeMP4KindAllowed(box.kind, "avcC", "pasp", "colr", "clap", "btrt", "fiel", "mdcv", "clli", "free")
+			allowed = nativeMP4KindAllowed(box.kind, "avcC", "pasp", "colr", "gama", "clap", "btrt", "fiel", "mdcv", "clli", "free")
 		case "mp4a":
 			allowed = nativeMP4KindAllowed(box.kind, "esds", "chan", "btrt", "free")
 		case "stbl":
@@ -260,6 +264,7 @@ func readNativeMP4WithMinimum(path string, minimumMDATs int) (*nativeMP4, error)
 					return nil, fmt.Errorf("duplicate MP4 moov")
 				}
 				result.moov = data
+				result.moovOffset = offset
 			}
 		case "free", "skip", "wide":
 		default:
@@ -270,8 +275,8 @@ func readNativeMP4WithMinimum(path string, minimumMDATs int) (*nativeMP4, error)
 	if result.ftyp == nil || result.moov == nil || len(result.mdats) == 0 {
 		return nil, fmt.Errorf("missing MP4 media or metadata")
 	}
-	if len(result.mdats) < minimumMDATs {
-		return nil, fmt.Errorf("MP4 does not need chunk normalization")
+	if minimumMDATs == 0 && !result.needsNormalization() || minimumMDATs > 0 && len(result.mdats) < minimumMDATs {
+		return nil, errNativeMP4Ordinary
 	}
 	moov, err := nativeMP4Child(result.moov, "moov")
 	if err != nil {
@@ -333,6 +338,10 @@ func readNativeMP4WithMinimum(path string, minimumMDATs int) (*nativeMP4, error)
 		}
 	}
 	return result, nil
+}
+
+func (mp4 *nativeMP4) needsNormalization() bool {
+	return len(mp4.mdats) >= nativeMP4MinimumMDATs || len(mp4.mdats) > 0 && mp4.moovOffset > mp4.mdats[0].start
 }
 
 func readNativeMP4Track(trak nativeMP4Box, mdats []nativeMP4Span) (nativeMP4Track, error) {

@@ -24,7 +24,7 @@
       "id": "originals",
       "name": "媒体原件",
       "path": "/opt/curio/data/assets",
-      "purpose": "按 SHA-256 寻址的图片、动图、图标和视频原件，保持上传字节；仅明确确认永久删除所选回收站项目时清理，不影响 Aura 或已有备份。",
+      "purpose": "按实际 SHA-256 寻址的媒体文件；图片、动图及未整理视频保留上传字节，符合条件的 MP4 上传或所选存量视频可无损整理封装，校验并提交新文件映射后删除旧源容器；条目 ID、上传去重指纹、画面和音轨保持不变。普通移除仍可恢复，不影响 Aura 或已有备份。",
       "kind": "media",
       "browse": true,
       "cleanup": false
@@ -33,7 +33,7 @@
       "id": "derived",
       "name": "预览缓存",
       "path": "/opt/curio/data/derived",
-      "purpose": "可再生静态缩略图、保留透明通道的图片预览和安全 SVG 栅格预览，以及独立视频封面和候选帧图集；低效封装的兼容 MP4 可保存经过编码样本校验的无损原生播放版本，保留原件与原始时间轴，约额外占一份原件空间；其他兼容播放在内存盘按需转码短片段，不预转整片。nas 手工全量备份收录已存派生文件。",
+      "purpose": "可再生静态缩略图、透明图片预览、安全 SVG 栅格预览、视频封面和候选帧图集；无损 MP4 整理在此准备并校验，转为正式媒体文件后清理中间版本。旧条目按播放请求生成的独立修复仍可保留源文件；其他兼容播放在内存盘按需转码短片段，不预转整片。nas 手工全量备份收录已存派生文件。",
       "kind": "cache",
       "browse": false,
       "cleanup": false
@@ -131,7 +131,7 @@
     {"method": "GET", "path": "/api/uploads/{id}", "description": "查询上传的服务端持久偏移和完成状态"},
     {"method": "PUT", "path": "/api/uploads/{id}", "description": "接收最多 128 MiB 原始分段，落盘后确认偏移"},
     {"method": "DELETE", "path": "/api/uploads/{id}", "description": "明确确认丢弃所选未完成上传，持久化清理意图；保留已入库原件及修复元数据"},
-    {"method": "POST", "path": "/api/uploads/{id}/complete", "description": "校验完整大小和服务端 SHA-256，提交不可变原件并排队预览"},
+    {"method": "POST", "path": "/api/uploads/{id}/complete", "description": "校验完整大小和服务端 SHA-256，保存源文件并排队处理；符合条件的 MP4 先无损整理封装再生成预览"},
     {"method": "GET", "path": "/api/download", "description": "流式打包所选媒体原件，不创建服务器压缩暂存"},
     {"method": "POST", "path": "/api/download", "description": "通过 JSON 或表单流式打包所选原件，避免大量媒体 ID 超出 URL 限制"},
     {"method": "GET", "path": "/media/{id}/{kind}", "description": "读取静态缩略图、图片预览、原件或无损原生播放版本，支持 Range；视频 preview 别名转到 HLS，SVG 原件只作为下载"},

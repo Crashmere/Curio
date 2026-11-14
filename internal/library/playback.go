@@ -11,6 +11,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -97,14 +98,16 @@ var errPlaybackIntegrity = errors.New("原件大小或类型异常，请检查�
 var errPlaybackAlpha = errors.New("此透明视频无法生成保留透明通道的兼容播放，请下载原件查看")
 
 func (l *Library) playbackAllowed(hash string) error {
-	a, err := l.asset(hash)
+	var kind string
+	var pending bool
+	err := l.DB.QueryRow("SELECT kind,purge_pending FROM assets WHERE id=?", hash).Scan(&kind, &pending)
 	if err != nil {
 		return err
 	}
-	if a.purgePending {
+	if pending {
 		return errPlaybackDeleted
 	}
-	if a.Kind != "video" {
+	if kind != "video" {
 		return sql.ErrNoRows
 	}
 	return nil
@@ -122,7 +125,7 @@ func (l *Library) playbackOriginal(hash string) (Asset, os.FileInfo, error) {
 	if err != nil {
 		return Asset{}, nil, err
 	}
-	stat, err := os.Lstat(l.Object(hash))
+	stat, err := os.Lstat(l.storedObject(f))
 	if err != nil {
 		return Asset{}, nil, err
 	}
@@ -178,13 +181,17 @@ func (l *Library) probePlayback(ctx context.Context, hash, stamp string) (*playb
 	if err != nil {
 		return nil, err
 	}
+	return l.probePlaybackSource(ctx, hash, stamp, original, originalStat)
+}
+
+func (l *Library) probePlaybackSource(ctx context.Context, hash, stamp string, original Asset, originalStat os.FileInfo) (*playbackSpec, error) {
 	release, err := l.acquirePlaybackCPU(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
 	output := &boundedBuffer{maximum: 256 << 10}
-	err = commandOutput(ctx, "ffprobe", output, "-v", "error", "-protocol_whitelist", "file,pipe", "-show_entries", "format=format_name,duration,start_time:stream=codec_type,codec_name,codec_tag_string,profile,width,height,pix_fmt,duration,start_time,time_base,avg_frame_rate,color_transfer,color_primaries,color_space:stream_tags=alpha_mode:stream_side_data=rotation", "-of", "json", l.Object(hash))
+	err = commandOutput(ctx, "ffprobe", output, "-v", "error", "-protocol_whitelist", "file,pipe", "-show_entries", "format=format_name,duration,start_time:stream=codec_type,codec_name,codec_tag_string,profile,width,height,pix_fmt,duration,start_time,time_base,avg_frame_rate,color_transfer,color_primaries,color_space:stream_tags=alpha_mode:stream_side_data=rotation", "-of", "json", l.storedObject(original))
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +225,7 @@ func (l *Library) probePlayback(ctx context.Context, hash, stamp string) (*playb
 	if err = json.Unmarshal(output.Bytes(), &raw); err != nil {
 		return nil, err
 	}
-	spec := &playbackSpec{hash: hash, stamp: stamp, path: l.Object(hash), originalSize: originalStat.Size(), originalModified: originalStat.ModTime().UnixNano()}
+	spec := &playbackSpec{hash: hash, stamp: stamp, path: l.storedObject(original), originalSize: originalStat.Size(), originalModified: originalStat.ModTime().UnixNano()}
 	spec.frameStart, _ = strconv.ParseFloat(raw.Format.Start, 64)
 	video, audio, audioCompatible, audioAAC := false, false, true, false
 	videoCodec, audioCodec := "", ""
@@ -390,7 +397,11 @@ func (l *Library) playbackInfo(w http.ResponseWriter, r *http.Request) {
 			result.Source = &playbackSource{URL: "/curio/media/" + spec.hash + "/native?revision=" + record.Digest, Mime: spec.sourceMime, Codecs: spec.sourceCodecs, Audio: spec.sourceAudio}
 		}
 	} else if spec.sourceCodecs != "" {
-		result.Source = &playbackSource{URL: "/curio/media/" + spec.hash + "/source", Mime: spec.sourceMime, Codecs: spec.sourceCodecs, Audio: spec.sourceAudio}
+		url := "/curio/media/" + spec.hash + "/source"
+		if digest := filepath.Base(spec.path); digest != spec.hash {
+			url += "?revision=" + digest
+		}
+		result.Source = &playbackSource{URL: url, Mime: spec.sourceMime, Codecs: spec.sourceCodecs, Audio: spec.sourceAudio}
 	}
 	if err = l.playbackAllowed(spec.hash); err != nil {
 		playbackFailure(w, err)

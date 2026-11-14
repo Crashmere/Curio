@@ -15,6 +15,8 @@ export type Asset = {
   author: string;
   sourceUrl: string;
   size: number;
+  contentHash: string;
+  normalized: boolean;
   mime: string;
   format: string;
   kind: "image" | "animation" | "video";

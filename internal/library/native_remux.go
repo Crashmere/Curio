@@ -60,8 +60,8 @@ func (spec *playbackSpec) admitNativeRemux(original Asset, stat os.FileInfo, aud
 	if spec.sourceAudio != nil && math.Abs(spec.sourceAudio.Start) > .001 {
 		return
 	}
-	parsed, err := readNativeMP4WithMinimum(spec.path, nativeMP4MinimumMDATs)
-	if err != nil || len(parsed.mdats) < nativeMP4MinimumMDATs || parsed.movieTimescale > math.MaxInt32 {
+	parsed, err := readNativeMP4WithMinimum(spec.path, 0)
+	if err != nil || parsed.movieTimescale > math.MaxInt32 {
 		return
 	}
 	for _, track := range parsed.tracks {
@@ -288,6 +288,11 @@ func nativeRemuxScratchSpace(path string, outputLimit int64) error {
 }
 
 func (l *Library) generateNativeRemux(ctx context.Context, hash, stamp string) (*nativeRemuxRecord, error) {
+	releaseRemux, err := acquireMediaSlot(ctx, l.remuxSlot)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseRemux()
 	a, stat, err := l.playbackOriginal(hash)
 	if err != nil {
 		return nil, err
@@ -295,11 +300,7 @@ func (l *Library) generateNativeRemux(ctx context.Context, hash, stamp string) (
 	if playbackStamp(hash, stat) != stamp {
 		return nil, errPlaybackIntegrity
 	}
-	p, err := l.playbackManager()
-	if err != nil {
-		return nil, err
-	}
-	spec, err := p.specification(ctx, l, a, stat)
+	spec, err := l.probePlayback(ctx, a.ID, stamp)
 	if err != nil {
 		return nil, err
 	}

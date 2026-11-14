@@ -132,11 +132,15 @@ func (l *Library) readScreenshotCaptureTime(ctx context.Context, hash string, na
 func (l *Library) embeddedScreenshotCaptureTime(ctx context.Context, hash string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
+	path, err := l.sourcePath(hash)
+	if err != nil {
+		return "", err
+	}
 	raw, err := l.cpuCommand(ctx, "exiftool", "-j", "-n", "-a", "-G1", "-api", "LargeFileSupport=1",
 		"-DateTimeOriginal", "-CreateDate", "-CreationDate", "-CreationTime",
 		"-DateCreated", "-MediaCreateDate", "-TrackCreateDate",
 		"-ModifyDate", "-ModificationDate", "-ModificationTime", "-DateModified",
-		"-MediaModifyDate", "-TrackModifyDate", l.Object(hash))
+		"-MediaModifyDate", "-TrackModifyDate", path)
 	if err != nil {
 		return "", err
 	}

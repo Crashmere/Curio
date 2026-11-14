@@ -84,7 +84,7 @@ func syncDir(path string) error {
 }
 
 func (l *Library) originalPresent(a Asset) (bool, error) {
-	stat, err := os.Lstat(l.Object(a.ID))
+	stat, err := os.Lstat(l.storedObject(a))
 	if os.IsNotExist(err) {
 		return false, nil
 	}
@@ -183,6 +183,8 @@ func (l *Library) discardUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (l *Library) discardUploadLocked(hash string) error {
+	l.storageMu.Lock()
+	defer l.storageMu.Unlock()
 	h, state, _, _, err := l.uploadState(hash)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && state != "discarding") {
 		return nil
@@ -200,7 +202,11 @@ func (l *Library) discardUploadLocked(hash string) error {
 	if err = l.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM assets WHERE id=?)", hash).Scan(&cataloged); err != nil {
 		return err
 	}
-	if !cataloged {
+	used, err := l.objectReferenced(hash, "")
+	if err != nil {
+		return err
+	}
+	if !cataloged && !used {
 		// Publication can precede a failed catalog transaction. Never unlink a cataloged original.
 		path := l.Object(hash)
 		stat, err := os.Lstat(path)
@@ -284,11 +290,16 @@ func uploadResult(h UploadHints, offset int64, complete bool) map[string]any {
 }
 
 func (l *Library) completedUploadResult(h UploadHints, duplicate bool) (map[string]any, error) {
+	a, _, err := l.uploadAsset(h.Hash)
+	if err != nil {
+		return nil, err
+	}
 	var manualHidden, currentHidden, trashed bool
-	if err := l.DB.QueryRow("SELECT a.hidden,"+effectiveHidden+",a.trashed_at!='' FROM assets a WHERE a.id=?", h.Hash).Scan(&manualHidden, &currentHidden, &trashed); err != nil {
+	if err := l.DB.QueryRow("SELECT a.hidden,"+effectiveHidden+",a.trashed_at!='' FROM assets a WHERE a.id=?", a.ID).Scan(&manualHidden, &currentHidden, &trashed); err != nil {
 		return nil, err
 	}
 	out := uploadResult(h, h.Size, true)
+	out["assetId"] = a.ID
 	out["effectiveHidden"] = currentHidden
 	out["trashed"] = trashed
 	if duplicate {
@@ -342,13 +353,15 @@ func (l *Library) prepareUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	unlock := l.lock(h.Hash)
 	defer unlock()
-	a, assetErr := l.asset(h.Hash)
+	l.storageMu.Lock()
+	defer l.storageMu.Unlock()
+	a, expectedSize, assetErr := l.uploadAsset(h.Hash)
 	if assetErr == nil {
 		if a.purgePending {
 			fail(w, 409, "该媒体正在永久删除")
 			return
 		}
-		if a.Size != h.Size {
+		if expectedSize != h.Size {
 			fail(w, 409, "文件长度与已有原件不一致")
 			return
 		}
@@ -414,7 +427,9 @@ func (l *Library) uploadStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	unlock := l.lock(hash)
 	defer unlock()
-	if a, err := l.asset(hash); err == nil {
+	l.storageMu.Lock()
+	defer l.storageMu.Unlock()
+	if a, expectedSize, err := l.uploadAsset(hash); err == nil {
 		if a.purgePending {
 			fail(w, 409, "该媒体正在永久删除")
 			return
@@ -425,7 +440,7 @@ func (l *Library) uploadStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if present {
-			out, err := l.completedUploadResult(UploadHints{Hash: hash, Size: a.Size}, true)
+			out, err := l.completedUploadResult(UploadHints{Hash: hash, Size: expectedSize}, true)
 			if err != nil {
 				fail(w, 500, err)
 				return
@@ -487,7 +502,7 @@ func (l *Library) uploadChunk(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, "上传不存在或已完成")
 		return
 	}
-	if a, e := l.asset(hash); e == nil && a.purgePending {
+	if a, _, e := l.uploadAsset(hash); e == nil && a.purgePending {
 		fail(w, 409, "该媒体正在永久删除")
 		return
 	}
@@ -589,9 +604,13 @@ func (l *Library) completeUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	unlock := l.lock(hash)
 	defer unlock()
-	existing, assetErr := l.asset(hash)
+	l.storageMu.Lock()
+	defer l.storageMu.Unlock()
+	existing, expectedSize, assetErr := l.uploadAsset(hash)
+	assetID := hash
 	repair := assetErr == nil
 	if repair {
+		assetID = existing.ID
 		if existing.purgePending {
 			fail(w, 409, "该媒体正在永久删除")
 			return
@@ -602,7 +621,7 @@ func (l *Library) completeUpload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if present {
-			out, err := l.completedUploadResult(UploadHints{Hash: hash, Size: existing.Size}, true)
+			out, err := l.completedUploadResult(UploadHints{Hash: hash, Size: expectedSize}, true)
 			if err != nil {
 				fail(w, 500, err)
 				return
@@ -625,6 +644,10 @@ func (l *Library) completeUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	if state != "uploading" || offset != h.Size {
 		fail(w, 409, "文件尚未传完")
+		return
+	}
+	if repair && expectedSize != h.Size {
+		fail(w, 409, "修复文件长度与上传指纹不一致")
 		return
 	}
 	path := l.Incoming(hash)
@@ -674,7 +697,14 @@ func (l *Library) completeUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 	if repair {
-		_, err = tx.Exec("UPDATE assets SET status='queued',stage='queued',error='',updated_at=? WHERE id=? AND purge_pending=0", now(), hash)
+		if hash == existing.ID && existing.Normalized {
+			// A missing canonical blob can be repaired by reuploading its source.
+			// Commit the switch only after the original fingerprint was verified.
+			_, err = tx.Exec("DELETE FROM asset_storage WHERE asset_id=?", assetID)
+		}
+		if err == nil {
+			_, err = tx.Exec("UPDATE assets SET status='queued',stage='queued',error='',updated_at=? WHERE id=? AND purge_pending=0", now(), assetID)
+		}
 	} else {
 		format := strings.ToLower(strings.TrimPrefix(filepath.Ext(h.Name), "."))
 		contentType := mime.TypeByExtension("." + format)
@@ -689,16 +719,16 @@ func (l *Library) completeUpload(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec("INSERT INTO assets(id,name,size,format,mime,kind,hidden,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)", hash, h.Name, h.Size, format, contentType, allowedFormats[format], h.Scope == "hidden", created, created)
 	}
 	if err == nil {
-		_, err = tx.Exec("INSERT OR IGNORE INTO sources(id,asset_id,name,created_at) VALUES(?,?,?,?)", id(), hash, h.Name, now())
+		_, err = tx.Exec("INSERT OR IGNORE INTO sources(id,asset_id,name,created_at) VALUES(?,?,?,?)", id(), assetID, h.Name, now())
 	}
 	if err == nil {
-		err = changeMemberships(tx, hash, "tags", nil, h.TagIDs, nil)
+		err = changeMemberships(tx, assetID, "tags", nil, h.TagIDs, nil)
 	}
 	if err == nil {
-		err = changeMemberships(tx, hash, "collections", nil, h.CollectionIDs, nil)
+		err = changeMemberships(tx, assetID, "collections", nil, h.CollectionIDs, nil)
 	}
 	if err == nil {
-		err = recordScreenshot(tx, hash, h, captured)
+		err = recordScreenshot(tx, assetID, h, captured)
 	}
 	if err == nil {
 		_, err = tx.Exec("UPDATE uploads SET state='complete' WHERE id=?", hash)

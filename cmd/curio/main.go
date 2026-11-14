@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,7 +27,7 @@ func main() {
 }
 func run() error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("usage: curio init|serve|check|recalculate-screenshot-times [--data PATH]")
+		return fmt.Errorf("usage: curio init|serve|check|normalize-videos|recalculate-screenshot-times [--data PATH]")
 	}
 	name := os.Args[1]
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
@@ -36,6 +37,11 @@ func run() error {
 	gpu := flags.Int("gpu-slots", 1, "simultaneous GPU operations")
 	full := flags.Bool("full", false, "verify original SHA-256 checksums")
 	var apply, assigned, missingOnly *bool
+	var normalizeIDs *string
+	if name == "normalize-videos" {
+		apply = flags.Bool("apply", false, "publish lossless normalized objects and permanently remove obsolete source containers for the selected IDs")
+		normalizeIDs = flags.String("ids", "", "comma-separated asset IDs from a prior read-only audit; required with --apply")
+	}
 	if name == "recalculate-screenshot-times" {
 		apply = flags.Bool("apply", false, "replace capture times for selected live game media in both visibility scopes; default is read-only preview")
 		assigned = flags.Bool("assigned", false, "select media already in game folders instead of unassigned game media")
@@ -48,6 +54,23 @@ func run() error {
 	defer stop()
 	if name == "check" {
 		return library.CheckData(ctx, *data, *full)
+	}
+	if name == "normalize-videos" {
+		if !*apply {
+			report, err := library.AuditVideoNormalization(ctx, *data)
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(os.Stdout).Encode(report)
+		}
+		if *normalizeIDs == "" {
+			return fmt.Errorf("--apply requires explicit --ids from a prior audit")
+		}
+		ids, err := library.NormalizeSelectedVideos(ctx, *data, strings.Split(*normalizeIDs, ","))
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"applied": ids})
 	}
 	if name == "recalculate-screenshot-times" {
 		result, err := library.RecalculateScreenshotTimes(ctx, *data, *apply, *assigned, *missingOnly)

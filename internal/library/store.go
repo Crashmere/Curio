@@ -43,6 +43,8 @@ type Library struct {
 	nativeMu      sync.Mutex
 	nativeActive  map[string]*activeJob
 	nativeWake    chan struct{}
+	remuxSlot     chan struct{}
+	storageMu     sync.Mutex
 	gpuOnce       sync.Once
 	gpuAvailable  bool
 	imageMu       sync.Mutex
@@ -85,6 +87,8 @@ type Asset struct {
 	Format           string          `json:"format"`
 	MIME             string          `json:"mime"`
 	Size             int64           `json:"size"`
+	ContentHash      string          `json:"contentHash"`
+	Normalized       bool            `json:"normalized"`
 	Width            int             `json:"width"`
 	Height           int             `json:"height"`
 	Duration         float64         `json:"duration"`
@@ -116,6 +120,7 @@ type Asset struct {
 	thumbnailExt     string
 	previewExt       string
 	purgePending     bool
+	uploadSize       int64
 }
 
 const schema = `
@@ -166,6 +171,12 @@ CREATE TABLE IF NOT EXISTS asset_covers (
  asset_id TEXT PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
  time REAL NOT NULL, revision TEXT NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL, format TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS asset_storage (
+ asset_id TEXT PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
+ hash TEXT NOT NULL, size INTEGER NOT NULL, recipe TEXT NOT NULL,
+ state TEXT NOT NULL, cleanup_pending INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS asset_storage_hash ON asset_storage(hash);
 CREATE INDEX IF NOT EXISTS asset_tags_tag ON asset_tags(tag_id,asset_id);
 CREATE INDEX IF NOT EXISTS asset_collections_collection ON asset_collections(collection_id,asset_id);
 CREATE INDEX IF NOT EXISTS assets_time ON assets(trashed_at,created_at DESC,id);
@@ -224,7 +235,7 @@ func open(root string) (*Library, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Library{DB: db, Root: root, Wake: make(chan struct{}, 1), Workers: 2, GPU: make(chan struct{}, 1), CPU: make(chan struct{}, 2), backgroundCPU: make(chan struct{}, 1), backgroundGPU: make(chan struct{}, 1), locks: map[string]*objectLock{}, active: map[string]*activeJob{}, nativeActive: map[string]*activeJob{}, nativeWake: make(chan struct{}, 1)}, nil
+	return &Library{DB: db, Root: root, Wake: make(chan struct{}, 1), Workers: 2, GPU: make(chan struct{}, 1), CPU: make(chan struct{}, 2), backgroundCPU: make(chan struct{}, 1), backgroundGPU: make(chan struct{}, 1), locks: map[string]*objectLock{}, active: map[string]*activeJob{}, nativeActive: map[string]*activeJob{}, nativeWake: make(chan struct{}, 1), remuxSlot: make(chan struct{}, 1)}, nil
 }
 
 func (l *Library) Configure(workers, gpuSlots int) error {
@@ -299,14 +310,17 @@ const screenshotSQL = `EXISTS(SELECT 1 FROM screenshots s WHERE s.asset_id=a.id 
 
 const organizedSQL = `(EXISTS(SELECT 1 FROM asset_tags j WHERE j.asset_id=a.id) OR EXISTS(SELECT 1 FROM asset_collections j WHERE j.asset_id=a.id) OR ` + screenshotSQL + `)`
 
-const assetColumns = `a.id,a.name,a.title,a.notes,a.source_url,a.author,a.kind,a.format,a.mime,a.size,a.width,a.height,a.duration,a.has_alpha,a.hidden,` + organizedSQL + `,a.starred,a.trashed_at,a.created_at,a.updated_at,a.status,a.stage,a.error,a.engine,a.progress,a.thumbnail_ext,a.preview_ext,a.purge_pending,COALESCE((SELECT json_object('time',c.time,'revision',c.revision,'width',c.width,'height',c.height,'format',c.format) FROM asset_covers c WHERE c.asset_id=a.id),'null')`
+const storedSizeSQL = `COALESCE((SELECT size FROM asset_storage WHERE asset_id=a.id AND state='ready'),a.size)`
+const storedHashSQL = `COALESCE((SELECT hash FROM asset_storage WHERE asset_id=a.id AND state='ready'),a.id)`
+const assetColumns = `a.id,a.name,a.title,a.notes,a.source_url,a.author,a.kind,a.format,a.mime,` + storedSizeSQL + `,a.width,a.height,a.duration,a.has_alpha,a.hidden,` + organizedSQL + `,a.starred,a.trashed_at,a.created_at,a.updated_at,a.status,a.stage,a.error,a.engine,a.progress,a.thumbnail_ext,a.preview_ext,a.purge_pending,COALESCE((SELECT json_object('time',c.time,'revision',c.revision,'width',c.width,'height',c.height,'format',c.format) FROM asset_covers c WHERE c.asset_id=a.id),'null'),a.size,` + storedHashSQL
 
 type scanner interface{ Scan(...any) error }
 
 func scanAsset(row scanner) (Asset, error) {
 	var a Asset
 	var cover string
-	err := row.Scan(&a.ID, &a.Name, &a.Title, &a.Notes, &a.SourceURL, &a.Author, &a.Kind, &a.Format, &a.MIME, &a.Size, &a.Width, &a.Height, &a.Duration, &a.HasAlpha, &a.Hidden, &a.Organized, &a.Starred, &a.TrashedAt, &a.CreatedAt, &a.UpdatedAt, &a.Status, &a.Stage, &a.Error, &a.Engine, &a.Progress, &a.thumbnailExt, &a.previewExt, &a.purgePending, &cover)
+	err := row.Scan(&a.ID, &a.Name, &a.Title, &a.Notes, &a.SourceURL, &a.Author, &a.Kind, &a.Format, &a.MIME, &a.Size, &a.Width, &a.Height, &a.Duration, &a.HasAlpha, &a.Hidden, &a.Organized, &a.Starred, &a.TrashedAt, &a.CreatedAt, &a.UpdatedAt, &a.Status, &a.Stage, &a.Error, &a.Engine, &a.Progress, &a.thumbnailExt, &a.previewExt, &a.purgePending, &cover, &a.uploadSize, &a.ContentHash)
+	a.Normalized = a.ContentHash != a.ID
 	if err == nil {
 		err = json.Unmarshal([]byte(cover), &a.Cover)
 	}
@@ -425,21 +439,30 @@ func (l *Library) Check(ctx context.Context, full bool) error {
 	if result != "ok" {
 		return fmt.Errorf("SQLite integrity: %s", result)
 	}
-	rows, err := l.DB.QueryContext(ctx, "SELECT id,size FROM assets WHERE purge_pending=0")
+	// Read-only checks also accept catalogs predating canonical video storage.
+	var storageTable bool
+	if err := l.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='asset_storage')").Scan(&storageTable); err != nil {
+		return err
+	}
+	columns := "a.id,a.size,a.id"
+	if storageTable {
+		columns = "a.id," + storedSizeSQL + "," + storedHashSQL
+	}
+	rows, err := l.DB.QueryContext(ctx, "SELECT "+columns+" FROM assets a WHERE a.purge_pending=0")
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var hash string
+		var hash, contentHash string
 		var size int64
-		if err = rows.Scan(&hash, &size); err != nil {
+		if err = rows.Scan(&hash, &size, &contentHash); err != nil {
 			return err
 		}
-		if !validHash.MatchString(hash) {
+		if !validHash.MatchString(hash) || !validHash.MatchString(contentHash) {
 			return fmt.Errorf("invalid original identifier")
 		}
-		stat, e := os.Lstat(l.Object(hash))
+		stat, e := os.Lstat(l.Object(contentHash))
 		if e != nil {
 			return fmt.Errorf("missing original %s: %w", hash, e)
 		}
@@ -447,11 +470,11 @@ func (l *Library) Check(ctx context.Context, full bool) error {
 			return fmt.Errorf("original integrity mismatch: %s", hash)
 		}
 		if full {
-			_, actual, e := hashFile(l.Object(hash))
+			_, actual, e := hashFile(l.Object(contentHash))
 			if e != nil {
 				return e
 			}
-			if actual != hash {
+			if actual != contentHash {
 				return fmt.Errorf("original checksum mismatch: %s", hash)
 			}
 		}

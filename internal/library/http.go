@@ -236,7 +236,7 @@ func (l *Library) info(w http.ResponseWriter, r *http.Request) {
 		out[key] = n
 	}
 	var size int64
-	if err := l.DB.QueryRow("SELECT COALESCE(sum(a.size),0)" + base).Scan(&size); err != nil {
+	if err := l.DB.QueryRow("SELECT COALESCE(sum(" + storedSizeSQL + "),0)" + base).Scan(&size); err != nil {
 		fail(w, 500, err)
 		return
 	}
@@ -355,7 +355,7 @@ func assetOrder(q url.Values) (string, error) {
 	case "name":
 		return "COALESCE(NULLIF(a.title,''),a.name) COLLATE NOCASE,a.id", nil
 	case "size":
-		return "a.size DESC,a.id DESC", nil
+		return storedSizeSQL + " DESC,a.id DESC", nil
 	case "newest", "":
 		return "a.created_at DESC,a.id DESC", nil
 	default:
@@ -516,13 +516,18 @@ func (l *Library) media(w http.ResponseWriter, r *http.Request) {
 			playbackFailure(w, err)
 			return
 		}
-		path, contentType = l.Object(hash), spec.sourceMime
+		path, contentType = spec.path, spec.sourceMime
+		a.ContentHash, a.Size = filepath.Base(spec.path), spec.originalSize
+		if revision := r.URL.Query().Get("revision"); revision != "" && revision != a.ContentHash {
+			http.NotFound(w, r)
+			return
+		}
 		if contentType == "" {
 			contentType = a.MIME
 		}
 		w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": a.Name}))
 	case "original":
-		path = l.Object(hash)
+		path = l.storedObject(a)
 		contentType = a.MIME
 		if a.Format == "svg" {
 			w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": a.Name}))
@@ -566,7 +571,12 @@ func (l *Library) media(w http.ResponseWriter, r *http.Request) {
 			playbackFailure(w, errPlaybackIntegrity)
 			return
 		}
-		w.Header().Set("ETag", `"`+hash+`"`)
+		if a.ContentHash != a.ID {
+			w.Header().Set("X-Curio-Playback-Engine", nativeRemuxRecipe)
+		}
+	}
+	if kind == "source" || kind == "original" {
+		w.Header().Set("ETag", `"`+a.ContentHash+`"`)
 	}
 	if contentType != "" {
 		w.Header().Set("Content-Type", contentType)
@@ -592,7 +602,8 @@ func (l *Library) downloadAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": a.Name}))
 	w.Header().Set("Content-Type", "application/octet-stream")
-	http.ServeFile(w, r, l.Object(hash))
+	w.Header().Set("ETag", `"`+a.ContentHash+`"`)
+	http.ServeFile(w, r, l.storedObject(a))
 }
 
 func parseIDs(raw []string) error {
@@ -647,7 +658,7 @@ func (l *Library) downloadZip(w http.ResponseWriter, r *http.Request) {
 			fail(w, 404, "部分媒体已不存在")
 			return
 		}
-		if _, err = os.Stat(l.Object(hash)); err != nil {
+		if _, err = os.Stat(l.storedObject(a)); err != nil {
 			fail(w, 409, "部分原件不可用")
 			return
 		}
@@ -677,7 +688,7 @@ func (l *Library) downloadZip(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
-		file, err := os.Open(l.Object(a.ID))
+		file, err := os.Open(l.storedObject(a))
 		if err != nil {
 			return
 		}
