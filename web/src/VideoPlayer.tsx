@@ -186,7 +186,7 @@ export function FrameTimelineStrip({
 
 
 let savedVolume = 1;
-let savedMuted = false;
+let savedMuted = true;
 
 type WebkitFullscreenVideo = HTMLVideoElement & {
   webkitEnterFullscreen?: () => void;
