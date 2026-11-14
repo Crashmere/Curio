@@ -24,9 +24,7 @@ import (
 const (
 	nativeRemuxRecipe        = "native-mp4-v1"
 	nativeRemuxIntentPrefix  = "native-remux:"
-	nativeRemuxOriginalLimit = int64(2 << 30)
 	nativeRemuxOutputPadding = int64(32 << 20)
-	nativeRemuxDurationLimit = 2 * 60 * 60
 	nativeRemuxDeadline      = 10 * time.Minute
 )
 
@@ -54,7 +52,7 @@ func playbackStamp(hash string, stat os.FileInfo) string {
 }
 
 func (spec *playbackSpec) admitNativeRemux(original Asset, stat os.FileInfo, audio, audioAAC bool) {
-	if original.Format != "mp4" || stat.Size() <= 0 || stat.Size() > nativeRemuxOriginalLimit || spec.duration > nativeRemuxDurationLimit || spec.videoCodec != "h264" || spec.sourceCodecs == "" || spec.sourceMime != "video/mp4" || spec.hdr || spec.hasAlpha || audio && !audioAAC {
+	if original.Format != "mp4" || stat.Size() <= 0 || spec.videoCodec != "h264" || spec.sourceCodecs == "" || spec.sourceMime != "video/mp4" || spec.hdr || spec.hasAlpha || audio && !audioAAC {
 		return
 	}
 	if spec.sourceAudio != nil && math.Abs(spec.sourceAudio.Start) > .001 {

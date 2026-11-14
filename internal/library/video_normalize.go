@@ -81,8 +81,6 @@ func AuditVideoNormalization(ctx context.Context, root string) (*VideoNormalizat
 		case a.ContentHash != a.ID:
 			item.Category = "normalized"
 		case a.Format != "mp4":
-		case a.Size > nativeRemuxOriginalLimit || a.Duration > nativeRemuxDurationLimit:
-			item.Category = "outside-bounds"
 		default:
 			path := l.storedObject(a)
 			parsed, e := readNativeMP4WithMinimum(path, 0)

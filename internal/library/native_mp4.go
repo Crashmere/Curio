@@ -637,6 +637,20 @@ func nativeMP4TrackDigest(ctx context.Context, file *os.File, track nativeMP4Tra
 	return fmt.Sprintf("%x", digest.Sum(nil)), nil
 }
 
+func nativeMP4MDATHeader(payloadBytes int64) []byte {
+	if payloadBytes <= int64(^uint32(0))-8 {
+		header := make([]byte, 8)
+		binary.BigEndian.PutUint32(header, uint32(payloadBytes+8))
+		copy(header[4:], "mdat")
+		return header
+	}
+	header := make([]byte, 16)
+	binary.BigEndian.PutUint32(header, 1)
+	copy(header[4:], "mdat")
+	binary.BigEndian.PutUint64(header[8:], uint64(payloadBytes)+16)
+	return header
+}
+
 // FFmpeg orders unchanged samples, but rebuilds edit lists and timing headers.
 // Reuse the original moov and change only its physical chunk mapping.
 func repackNativeMP4(ctx context.Context, originalPath, muxedPath, outputPath string) (*nativeMP4Result, error) {
@@ -690,13 +704,11 @@ func repackNativeMP4(ctx context.Context, originalPath, muxedPath, outputPath st
 	if err != nil {
 		return nil, err
 	}
-	start := int64(len(original.ftyp) + len(moov) + 8)
+	header := nativeMP4MDATHeader(payloadBytes)
+	start := int64(len(original.ftyp) + len(moov) + len(header))
 	moov, err = nativeMP4MappedMoov(original, muxed, start)
 	if err != nil {
 		return nil, err
-	}
-	if payloadBytes+8 > int64(^uint32(0)) {
-		return nil, fmt.Errorf("normalized MP4 exceeds its media bound")
 	}
 	output, err := os.OpenFile(outputPath, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
 	if err != nil {
@@ -711,10 +723,7 @@ func repackNativeMP4(ctx context.Context, originalPath, muxedPath, outputPath st
 	}()
 	digest := sha256.New()
 	writer := io.MultiWriter(output, digest)
-	var header [8]byte
-	binary.BigEndian.PutUint32(header[:4], uint32(payloadBytes+8))
-	copy(header[4:], "mdat")
-	for _, data := range [][]byte{original.ftyp, moov, header[:]} {
+	for _, data := range [][]byte{original.ftyp, moov, header} {
 		if _, err = writer.Write(data); err != nil {
 			return nil, err
 		}
