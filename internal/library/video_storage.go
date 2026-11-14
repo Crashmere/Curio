@@ -23,6 +23,15 @@ func (l *Library) sourcePath(hash string) (string, error) {
 	err := l.DB.QueryRow("SELECT hash FROM asset_storage WHERE asset_id=? AND state='ready'", hash).Scan(&current)
 	if errors.Is(err, sql.ErrNoRows) {
 		current, err = hash, nil
+	} else if err != nil {
+		// Standalone read-only metadata commands can open a pre-migration catalog.
+		var exists bool
+		if checkErr := l.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='asset_storage' AND type='table')").Scan(&exists); checkErr != nil {
+			return "", checkErr
+		}
+		if !exists {
+			current, err = hash, nil
+		}
 	}
 	if err != nil {
 		return "", err
