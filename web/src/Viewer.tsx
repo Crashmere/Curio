@@ -108,7 +108,9 @@ export function Viewer({ asset, scope, tags, collections, games, close, previous
   useEffect(() => { if (!gameMedia) setScreenshotEdit(false); }, [gameMedia]);
   useEffect(() => { if (compact) setDetails(false); }, [compact]);
   const keyboard = useEffectEvent((event: KeyboardEvent) => {
-    if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey || isTextInput(event.target) || edit || tank || screenshotEdit) return;
+    const playerSlider = asset.kind === "video" && event.target instanceof HTMLInputElement
+      && event.target.type === "range" && !!stage.current?.contains(event.target);
+    if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey || (isTextInput(event.target) && !playerSlider) || edit || tank || screenshotEdit) return;
     if (event.key === "Escape") {
       if (savingCover) return;
       if (more) setMore(false);
@@ -123,12 +125,16 @@ export function Viewer({ asset, scope, tags, collections, games, close, previous
       const video = stage.current?.querySelector("video");
       const key = event.key.toLowerCase();
       const shortcut = key === " " ? "[data-player-toggle]" : key === "m" ? "[data-player-mute]" : key === "f" ? "[data-player-fullscreen]" : key === "," ? "[data-player-previous-frame]" : key === "." ? "[data-player-next-frame]" : undefined;
-      if (shortcut) { event.preventDefault(); stage.current?.querySelector<HTMLButtonElement>(shortcut)?.click(); return; }
+      if (shortcut) {
+        event.preventDefault();
+        if (!event.repeat || key === "," || key === ".") stage.current?.querySelector<HTMLButtonElement>(shortcut)?.click();
+        return;
+      }
       if (video && (key === "j" || key === "l")) {
         event.preventDefault(); video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + (key === "j" ? -1 : 1) * PLAYER_SKIP_SECONDS)); return;
       }
     }
-    if (coverPicker) return;
+    if (coverPicker || (playerSlider && (event.key === "ArrowLeft" || event.key === "ArrowRight"))) return;
     if (event.key === "ArrowLeft" || event.key.toLowerCase() === "a") { event.preventDefault(); previous?.(); }
     if (event.key === "ArrowRight" || event.key.toLowerCase() === "d") { event.preventDefault(); next?.(); }
   });
