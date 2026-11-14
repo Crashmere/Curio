@@ -158,6 +158,7 @@ CREATE TABLE IF NOT EXISTS screenshots (
 );
 CREATE INDEX IF NOT EXISTS screenshots_game_time ON screenshots(game_id,enabled,captured_at,asset_id);
 CREATE TABLE IF NOT EXISTS catalog_features (name TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS catalog_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS asset_covers (
  asset_id TEXT PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
  time REAL NOT NULL, revision TEXT NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL, format TEXT NOT NULL

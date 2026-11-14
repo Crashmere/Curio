@@ -85,9 +85,29 @@ Tag names are globally case-insensitive unique. Creating an existing same-visibi
 
 Collections additionally accept optional boolean `pinned` in POST and PATCH and return it in container responses and asset memberships. POST defaults to false; omitting it from PATCH preserves the existing value. `PATCH /api/collections/{id}` with `{"pinned":true}` pins the sidebar shortcut, and false removes that shortcut without deleting the collection. Pinning is shared across devices and scopes and does not change names, hidden flags, counts, media or memberships. Collection lists include both pinned and unpinned items; the browser filters only individual sidebar shortcuts. Tags return `pinned:false` and reject pin input.
 
+Collection creation additionally accepts optional `groupId` to place the new collection into an existing collection-index group. Group validation, collection creation, membership, appended global order and the layout revision commit together. A deleted target returns HTTP 409 with `code: "collection_group_missing"` without creating a collection. The new collection's default hidden flag still follows the request scope, independently of the group's presentation scope. Tags and container PATCH requests reject `groupId`; move existing collections through the layout API.
+
 `POST /api/assets/retry` takes `{"ids":["<asset-sha256>"]}` and requeues derived processing without changing originals. `POST /api/assets/purge` takes the same selection plus `confirm:true`, accepts only trash assets and returns HTTP 202 after persisting the selected cleanup intent. Cleanup resumes after interruption; it does not affect unrelated originals or existing backups.
 
-### Collection Groups
+### Collection Index Groups
+
+Collection-index groups organize collection cards, separately from the media groups inside individual collections. Their layout is shared across devices and both visibility scopes:
+
+```json
+{
+  "revision": 1,
+  "groups": [{"id": "<group-id>", "name": "Wallpapers", "scope": "normal", "collectionIds": ["<collection-id>"]}],
+  "collectionOrder": ["<every-live-collection-id>"]
+}
+```
+
+`GET /api/collection-groups` returns this global layout without filtering out hidden collections. The browser projects membership and order against its scoped collection list, preserving the complete backing configuration on writes. A group appears when its creation `scope` matches the active scope or it contains an available collection. Group scope does not hide collections or media. With no saved layout, GET returns revision zero, empty groups and alphabetical collection order without writing settings.
+
+`PUT /api/collection-groups` requires `baseRevision` and the complete `groups` array. Optional `collectionOrder` must contain every live collection ID exactly once, including hidden, grouped and ungrouped collections; omission preserves the current effective order. Group IDs are 32 lowercase hexadecimal characters. Names are trimmed, case-sensitive unique, limited to 80 Unicode characters and cannot be empty or use the reserved name `未分组`. At most 200 groups are allowed. Every group declares `scope: "normal" | "hidden"`; each collection can belong to only one group. Group-array order controls section order, and `collectionOrder` controls card order within each section.
+
+Membership, order and the incremented revision commit atomically as JSON under the `collection_groups` key in `catalog_settings`. A stale revision returns HTTP 409 with `code: "collection_groups_changed"` and the current `revision`; invalid membership or order returns HTTP 400 without changing the layout. Removing a group only ungroups its collections. Collection creation appends to a saved order; collection deletion removes its layout membership and order entry. Both changes advance an existing layout's revision in the same collection transaction. Readers omit IDs deleted by an older program and append previously unknown collection IDs alphabetically without writing.
+
+### Collection Media Groups
 
 Groups have optional names and are local to one collection. Each media item can belong to one group in that collection, independently of its grouping in other collections.
 

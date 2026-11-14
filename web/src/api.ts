@@ -58,6 +58,8 @@ export type Info = {
 };
 export type AssetPage = { items: Asset[]; total: number; nextOffset: number | null };
 export type MediaGroup = { id: string; name: string; assetIds: string[] };
+export type CollectionIndexGroup = { id: string; name: string; scope: Scope; collectionIds: string[] };
+export type CollectionGroupState = { revision: number; groups: CollectionIndexGroup[]; collectionOrder: string[] };
 export type Patch = {
   title?: string; notes?: string; author?: string; sourceUrl?: string;
   screenshot?: boolean; gameId?: string; capturedAt?: string;

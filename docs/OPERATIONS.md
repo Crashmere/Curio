@@ -11,7 +11,7 @@ The runtime identity is `curio`; restricted local releases use `curio-deploy`. S
 | `/opt/curio/bin/curio` | Locally built Go program with embedded frontend and image worker |
 | `/opt/curio/bin/deploy-{ssh,release}.sh` | Root-maintained restricted publication entry points |
 | `/opt/curio/config/` | Curio systemd unit, Nginx location, Portal declaration and source receipt |
-| `/opt/curio/data/curio.sqlite` | Catalog, tags, collections, optionally named collection groups, games, screenshot metadata, memberships, source observations, upload hints, selected video cover metadata, jobs and deletion intent |
+| `/opt/curio/data/curio.sqlite` | Catalog, tags, collections, collection-index groups and order, optionally named media groups within collections, games, screenshot metadata, memberships, source observations, upload hints, selected video cover metadata, jobs and deletion intent |
 | `/opt/curio/data/assets/` | Immutable SHA-256 originals until confirmed permanent deletion |
 | `/opt/curio/data/derived/` | Rebuildable still thumbnails, transparent image previews, safe SVG raster previews, selected video cover images and candidate-frame atlases |
 | `/run/curio/playback/` | Bounded tmpfs scratch and CUDA kernel cache; no stored whole-video playback copies or recovery coverage |
@@ -55,6 +55,8 @@ Only exact anonymous GET/HEAD requests for `favicon.svg` and `apple-touch-icon.p
 Normal and hidden modes use the same data and recovery rules. New page loads default to normal; the current mode is not persisted. Hidden flags are catalog metadata, not a password or encryption boundary.
 
 Group naming adds `collection_groups.name TEXT NOT NULL DEFAULT ''` on first open of an older catalog. This additive migration requires authorization before its first release on `nas` and isolated validation of existing groups and memberships. It does not rewrite existing metadata or originals and needs no temporary deletion/overwrite backup selection. Older programs ignore the added column and can still create unnamed groups; program rollback preserves stored names but does not display them.
+
+Collection-index grouping adds the empty `catalog_settings(key,value)` table on first open of an older catalog. Authorize this additive migration before its first release on `nas`; it preserves existing collections, media, memberships and internal media groups, so no temporary deletion/overwrite database backup is selected. Group configuration, complete collection order and revision are stored in one JSON value under `collection_groups` and remain in the existing whole-catalog recovery scope. Older programs ignore this layout and show a flat index; subsequent reads reconcile collections they create or delete. No new runtime, file, data root or unit is required. Collapse state is browser-local, not shared recovery data.
 
 Collection pinning adds `collections.pinned INTEGER NOT NULL DEFAULT 0` on first open of an older catalog. Authorize this additive migration before its first release on `nas` and validate preservation of existing collection fields, memberships, groups and originals on isolated data. It does not delete or overwrite existing values and needs no temporary database backup selection. Existing and new collections start unpinned. Older programs ignore the column, preserve saved pins during metadata edits and create unpinned collections; their sidebar does not filter by pin state. Pin metadata remains in the existing catalog and recovery scope, with no new runtime or data directory.
 

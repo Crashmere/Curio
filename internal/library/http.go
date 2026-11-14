@@ -81,6 +81,8 @@ func (l *Library) Handler(frontend fs.FS) http.Handler {
 		writeJSON(w, 200, map[string]string{"status": "ok", "service": "Curio"})
 	})
 	r.Get("/api/info", l.info)
+	r.Get("/api/collection-groups", l.getCollectionLayout)
+	r.Put("/api/collection-groups", l.saveCollectionLayout)
 	r.Get("/api/games", l.listGames)
 	r.Post("/api/games", l.saveGame)
 	r.Patch("/api/games/{id}", l.saveGame)

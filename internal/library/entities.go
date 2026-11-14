@@ -322,14 +322,18 @@ func (l *Library) listContainers(w http.ResponseWriter, r *http.Request, kind st
 }
 
 type containerPatch struct {
-	Name   *string `json:"name"`
-	Hidden *bool   `json:"hidden"`
-	Pinned *bool   `json:"pinned"`
+	Name    *string `json:"name"`
+	Hidden  *bool   `json:"hidden"`
+	Pinned  *bool   `json:"pinned"`
+	GroupID *string `json:"groupId"`
 }
 
 func (p containerPatch) validate() error {
 	if p.Name != nil && (strings.TrimSpace(*p.Name) == "" || len(*p.Name) > 512) {
 		return fmt.Errorf("请输入 1-512 字节的名称")
+	}
+	if p.GroupID != nil && !validID.MatchString(*p.GroupID) {
+		return fmt.Errorf("分组编号无效")
 	}
 	return nil
 }
@@ -351,6 +355,10 @@ func (l *Library) createContainer(w http.ResponseWriter, r *http.Request, kind s
 		fail(w, 400, "只有收藏集支持固定")
 		return
 	}
+	if p.GroupID != nil && kind != "collections" {
+		fail(w, 400, "只有收藏集支持分组")
+		return
+	}
 	name := strings.TrimSpace(*p.Name)
 	hidden := requestScope(r.URL.Query()) == "hidden"
 	if p.Hidden != nil {
@@ -367,8 +375,17 @@ func (l *Library) createContainer(w http.ResponseWriter, r *http.Request, kind s
 		values += ",?"
 		args = append(args, pinned)
 	}
-	_, err := l.DB.Exec("INSERT INTO "+kind+"("+columns+") VALUES("+values+")", args...)
+	var err error
+	if kind == "collections" {
+		err = l.createCollectionWithLayout(r.Context(), entityID, p.GroupID, columns, values, args)
+	} else {
+		_, err = l.DB.Exec("INSERT INTO "+kind+"("+columns+") VALUES("+values+")", args...)
+	}
 	if err != nil {
+		if errors.Is(err, errCollectionGroupMissing) {
+			writeJSON(w, 409, map[string]string{"error": err.Error(), "code": "collection_group_missing"})
+			return
+		}
 		if kind == "tags" {
 			var existingID string
 			if e := l.DB.QueryRow("SELECT id FROM tags WHERE name=? COLLATE NOCASE", name).Scan(&existingID); e == nil {
@@ -392,6 +409,10 @@ func (l *Library) createContainer(w http.ResponseWriter, r *http.Request, kind s
 func (l *Library) updateContainer(w http.ResponseWriter, r *http.Request, kind string) {
 	var p containerPatch
 	if !decode(w, r, &p) {
+		return
+	}
+	if p.GroupID != nil {
+		fail(w, 400, "分组目标仅用于新建收藏集，请通过收藏集分组调整已有项目")
 		return
 	}
 	if err := p.validate(); err != nil {
@@ -448,12 +469,21 @@ func (l *Library) deleteContainer(w http.ResponseWriter, r *http.Request, kind s
 		fail(w, 404, "分类不存在")
 		return
 	}
-	result, err := l.DB.Exec("DELETE FROM "+kind+" WHERE id=?", entityID)
+	var n int64
+	var err error
+	if kind == "collections" {
+		n, err = l.deleteCollectionWithLayout(r.Context(), entityID)
+	} else {
+		var result sql.Result
+		result, err = l.DB.Exec("DELETE FROM "+kind+" WHERE id=?", entityID)
+		if err == nil {
+			n, err = result.RowsAffected()
+		}
+	}
 	if err != nil {
 		fail(w, 500, err)
 		return
 	}
-	n, _ := result.RowsAffected()
 	if n == 0 {
 		fail(w, 404, "分类不存在")
 		return

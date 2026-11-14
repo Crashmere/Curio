@@ -1,7 +1,7 @@
 import { CSSProperties, StrictMode, useDeferredValue, useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { ArrowDownWideNarrow, Check, CircleAlert, Download, Eye, EyeOff, Folder, Gamepad2, Grid2X2, Group, Image, Inbox, Layers3, Menu, MoreHorizontal, Pin, Plus, RefreshCw, RotateCw, Search, SlidersHorizontal, Star, Tag, Trash2, Ungroup, Unlink, Upload, X } from "lucide-react";
-import { api, ApiError, Asset, AssetPage, base, bytes, Entity, Game, gameLabel, Info, Job, JobFilter, JobPage, MediaGroup, Patch, Scope, scoped, supportsGameMedia, UploadSession, View } from "./api";
+import { api, ApiError, Asset, AssetPage, base, bytes, CollectionGroupState, CollectionIndexGroup, Entity, Game, gameLabel, Info, Job, JobFilter, JobPage, MediaGroup, Patch, Scope, scoped, supportsGameMedia, UploadSession, View } from "./api";
 import { GameEditor, GamesGrid, RemoveGame, ScreenshotEditor } from "./Games";
 import { Dialog, Empty, isTextInput, stateNames } from "./components";
 import { Brand } from "./Brand";
@@ -13,6 +13,8 @@ import { GroupEditor } from "./GroupEditor";
 import { loadAssetIds, prepareGroupMedia } from "./groupMedia";
 import { EntityPicker } from "./EntityPicker";
 import { EntityGrid } from "./EntityGrid";
+import { CollectionIndex } from "./CollectionIndex";
+import { CollectionIndexGroupEditor, RemoveCollectionIndexGroup } from "./CollectionIndexDialogs";
 import { navigationPath, readNavigation } from "./navigation";
 import { UploadPanel } from "./UploadPanel";
 import { Viewer } from "./Viewer";
@@ -21,13 +23,15 @@ import "./style.css";
 
 type Filter = { kind: string; format: string; aspect: string; minWidth: string; minHeight: string; maxWidth: string; maxHeight: string; minDuration: string; maxDuration: string; minSize: string; maxSize: string };
 const emptyFilter: Filter = { kind: "", format: "", aspect: "", minWidth: "", minHeight: "", maxWidth: "", maxHeight: "", minDuration: "", maxDuration: "", minSize: "", maxSize: "" };
-type Modal = { type: "upload" } | { type: "group"; group?: MediaGroup; ids?: string[] } | { type: "game"; game?: Game } | { type: "remove-game"; game: Game } | { type: "screenshots"; ids: string[] } | { type: "entity"; kind: "tags" | "collections"; entity?: Entity; renameOnly?: boolean } | { type: "organize"; ids: string[] } | { type: "purge"; ids: string[] } | { type: "remove-entity"; kind: "tags" | "collections"; entity: Entity };
+type Modal = { type: "upload" } | { type: "group"; group?: MediaGroup; ids?: string[] } | { type: "collection-group"; group?: CollectionIndexGroup; collection?: Entity } | { type: "remove-collection-group"; group: CollectionIndexGroup } | { type: "game"; game?: Game } | { type: "remove-game"; game: Game } | { type: "screenshots"; ids: string[] } | { type: "entity"; kind: "tags" | "collections"; entity?: Entity; renameOnly?: boolean; groupId?: string } | { type: "organize"; ids: string[] } | { type: "purge"; ids: string[] } | { type: "remove-entity"; kind: "tags" | "collections"; entity: Entity };
 const viewLabels: Record<View, string> = { all: "全部素材", inbox: "未整理", starred: "星标", collections: "收藏集", tags: "标签", trash: "回收站", jobs: "任务中心", games: "游戏截图", screenshots: "全部游戏截图" };
 type Toast = { message: string; undo?: () => Promise<void> };
 type UploadTarget = { scope: Scope; displayScope?: Scope; tagIds: string[]; collectionIds: string[]; gameId: string; screenshot: boolean; expectedHash?: string };
 
 function App() {
   const [scope, setScope] = useState<Scope>("normal");
+  const currentScope = useRef(scope);
+  currentScope.current = scope;
   const [navigation, setNavigation] = useState(() => readNavigation(window.location.pathname, base));
   const { view, tagId, collectionId, gameId } = navigation;
   const [query, setQuery] = useState("");
@@ -45,6 +49,10 @@ function App() {
   const [info, setInfo] = useState<Info>();
   const [tags, setTags] = useState<Entity[]>([]);
   const [collections, setCollections] = useState<Entity[]>([]);
+  const [collectionLayout, setCollectionLayout] = useState<CollectionGroupState>({ revision: 0, groups: [], collectionOrder: [] });
+  const collectionLayoutRef = useRef(collectionLayout);
+  const collectionLayoutEpoch = useRef(0);
+  const collectionLayoutSaving = useRef(false);
   const pinnedCollections = collections.filter(collection => collection.pinned);
   const [games, setGames] = useState<Game[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -99,6 +107,11 @@ function App() {
   const uploadLabel = uploadState.paused ? "收集已暂停" : uploads.some(item => ["waiting", "reading", "uploading", "verifying"].includes(item.state)) ? "正在收集素材" : uploads.some(item => item.state === "error") ? "收集需要处理" : "收集已暂停";
   const notify = (message: string, undo?: () => Promise<void>) => setToast({ message, undo });
   const changed = () => setRefresh(value => value + 1);
+  function adoptCollectionLayout(value: CollectionGroupState) {
+    if (value.revision < collectionLayoutRef.current.revision) return;
+    collectionLayoutRef.current = value;
+    setCollectionLayout(value);
+  }
   const assetView = !["tags", "collections", "jobs", "games"].includes(view);
   const remoteSearch = assetView ? search : "";
   const hasMore = nextOffset !== null && nextOffset !== undefined && nextOffset < total;
@@ -186,7 +199,7 @@ function App() {
   const switchScopeEvent = useEffectEvent(switchScope);
   const selectionKeyEvent = useEffectEvent((event: KeyboardEvent) => {
     if (event.repeat || event.altKey || modal || viewer) return;
-    if (event.key === "Escape" && document.querySelector(".tag-drag-ghost, .tag-action-menu, .group-action-menu, .collection-action-menu, .group-name-input")) return;
+    if (event.key === "Escape" && document.querySelector(".tag-drag-ghost, .tag-action-menu, .group-action-menu, .collection-action-menu, .collection-index-action-menu, .collection-drag-preview, .group-name-input")) return;
     if (event.ctrlKey || event.metaKey) {
       if (event.key.toLowerCase() === "a" && !event.shiftKey && assetView && !isTextInput(event.target)) {
         event.preventDefault();
@@ -391,6 +404,7 @@ function App() {
   }
   useEffect(() => {
     const controller = new AbortController();
+    const layoutEpoch = collectionLayoutEpoch.current;
     loadMoreRequest.current?.abort(); loadMoreRequest.current = null;
     if (galleryRequest.current) {
       galleryRequest.current.abort(); galleryRequest.current = null; setBusy(false);
@@ -402,19 +416,22 @@ function App() {
     setLoading(true); setLoadingMore(false); setLoadMoreFailed(false); setError("");
     const load = async () => {
       try {
-        const [information, tagList, collectionList, assetContent, jobContent, groupList, gameList] = await Promise.all([
+        const [information, tagList, collectionList, assetContent, jobContent, groupList, gameList, layout] = await Promise.all([
           api<Info>(scoped("info", scope), undefined, undefined, controller.signal),
           api<{ items: Entity[] }>(scoped("tags", scope), undefined, undefined, controller.signal),
           api<{ items: Entity[] }>(scoped("collections", scope), undefined, undefined, controller.signal),
           assetView ? loadPages(controller.signal) : Promise.resolve(null),
           view === "jobs" ? loadJobPages(controller.signal) : Promise.resolve(null),
           collectionId ? api<{ items: MediaGroup[] }>(groupsPath(), undefined, undefined, controller.signal) : Promise.resolve({ items: [] }),
-          api<{ items: Game[] }>(scoped("games", scope), undefined, undefined, controller.signal)
+          api<{ items: Game[] }>(scoped("games", scope), undefined, undefined, controller.signal),
+          view === "collections" ? api<CollectionGroupState>("collection-groups", undefined, undefined, controller.signal) : Promise.resolve(null)
         ]);
         const prepared = assetContent ? await prepareGroupMedia(assetContent.items, groupList.items, assetPath(), controller.signal) : {};
         if (controller.signal.aborted) return;
         setLoadedKey(contentKey);
-        setInfo(information); setTags(tagList.items || []); setCollections(collectionList.items || []);
+        setInfo(information); setTags(tagList.items || []);
+        if (layoutEpoch === collectionLayoutEpoch.current) setCollections(collectionList.items || []);
+        if (layout && layoutEpoch === collectionLayoutEpoch.current && !collectionLayoutSaving.current) adoptCollectionLayout(layout);
         setGames(gameList.items);
         setGroups(groupList.items);
         setGroupPages(prepared);
@@ -435,14 +452,15 @@ function App() {
     return () => { controller.abort(); selectionRequest.current?.abort(); galleryRequest.current?.abort(); loadMoreRequest.current?.abort(); };
   }, [scope, view, tagId, collectionId, gameId, remoteSearch, filters, sort, jobFilter, refresh]);
   const poll = useEffectEvent(async () => {
-    if (polling.current || galleryRequest.current || (view === "jobs" && loadingMore)) return;
+    if (polling.current || galleryRequest.current || collectionLayoutSaving.current || (view === "jobs" && loadingMore)) return;
     polling.current = true;
     const token = pageToken.current;
     const nameRevision = groupNameRevision.current;
+    const layoutEpoch = collectionLayoutEpoch.current;
     const polledIds = [...new Set([...assets, ...Object.values(groupPages).flatMap(page => page.items)].map(asset => asset.id))].slice(0, 2000);
     const signal = AbortSignal.timeout(15000);
     try {
-      const [information, tagList, collectionList, assetContent, jobContent, currentViewer, groupList, gameList] = await Promise.all([
+      const [information, tagList, collectionList, assetContent, jobContent, currentViewer, groupList, gameList, layout] = await Promise.all([
         api<Info>(scoped("info", scope), undefined, undefined, signal),
         api<{ items: Entity[] }>(scoped("tags", scope), undefined, undefined, signal),
         api<{ items: Entity[] }>(scoped("collections", scope), undefined, undefined, signal),
@@ -450,11 +468,13 @@ function App() {
         view === "jobs" ? loadJobPages(signal) : Promise.resolve(null),
         viewer ? api<Asset>(scoped(`assets/${viewer.id}`, scope), undefined, undefined, signal).catch(() => null) : Promise.resolve(null),
         collectionId ? api<{ items: MediaGroup[] }>(groupsPath(), undefined, undefined, signal) : Promise.resolve({ items: [] }),
-        api<{ items: Game[] }>(scoped("games", scope), undefined, undefined, signal)
+        api<{ items: Game[] }>(scoped("games", scope), undefined, undefined, signal),
+        view === "collections" ? api<CollectionGroupState>("collection-groups", undefined, undefined, signal) : Promise.resolve(null)
       ]);
       const prepared = await prepareGroupMedia(assetContent || [...assets, ...Object.values(groupPages).flatMap(page => page.items)], groupList.items, assetPath(), signal);
-      if (token !== pageToken.current || nameRevision !== groupNameRevision.current) return;
+      if (token !== pageToken.current || nameRevision !== groupNameRevision.current || layoutEpoch !== collectionLayoutEpoch.current) return;
       setInfo(information); setTags(tagList.items || []); setCollections(collectionList.items || []);
+      if (layout && !collectionLayoutSaving.current) adoptCollectionLayout(layout);
       setGames(gameList.items);
       setGroups(groupList.items);
       setGroupPages(prepared);
@@ -694,6 +714,83 @@ function App() {
     } catch (error) { if (!controller.signal.aborted) notify(error instanceof Error ? error.message : String(error)); }
     finally { if (galleryRequest.current === controller) { galleryRequest.current = null; setBusy(false); } }
   }
+  async function saveCollectionGroups(next: CollectionGroupState) {
+    if (busy || loading || collectionLayoutSaving.current) throw new Error("正在同步收藏集，请稍后重试");
+    const previous = collectionLayoutRef.current;
+    const token = pageToken.current;
+    if (next.revision !== previous.revision) throw new Error("分组列表已变化，请重试");
+    collectionLayoutEpoch.current++;
+    collectionLayoutSaving.current = true;
+    setBusy(true);
+    adoptCollectionLayout(next);
+    try {
+      const saved = await api<CollectionGroupState>("collection-groups", { baseRevision: previous.revision, groups: next.groups, collectionOrder: next.collectionOrder }, "PUT", AbortSignal.timeout(15000));
+      adoptCollectionLayout(saved);
+      notify("收藏集分组已保存");
+    } catch (error) {
+      adoptCollectionLayout(previous);
+      let message = error instanceof Error ? error.message : String(error);
+      if (error instanceof ApiError && error.status === 409) {
+        try {
+          const [latest, list] = await Promise.all([
+            api<CollectionGroupState>("collection-groups", undefined, undefined, AbortSignal.timeout(15000)),
+            api<{ items: Entity[] }>(scoped("collections", scope), undefined, undefined, AbortSignal.timeout(15000))
+          ]);
+          adoptCollectionLayout(latest);
+          if (token === pageToken.current && scope === currentScope.current) setCollections(list.items);
+          message = "分组已在其他页面更改，已同步列表，请重试";
+        } catch { message = "分组已在其他页面更改，请点击刷新后重试"; }
+      } else if (!(error instanceof ApiError)) {
+        message = "未能确认分组保存结果，请点击刷新后重试";
+      }
+      notify(message);
+      throw new Error(message);
+    } finally {
+      collectionLayoutEpoch.current++;
+      collectionLayoutSaving.current = false;
+      setBusy(false);
+    }
+  }
+  async function saveCollectionGroupName(group: CollectionIndexGroup | undefined, collection: Entity | undefined, name: string) {
+    const current = collectionLayoutRef.current;
+    let next: CollectionGroupState;
+    if (group) {
+      if (!current.groups.some(item => item.id === group.id)) throw new Error("分组已不存在，请关闭后重试");
+      next = { ...current, groups: current.groups.map(item => item.id === group.id ? { ...item, name } : item) };
+    } else {
+      const created: CollectionIndexGroup = { id: crypto.randomUUID().replaceAll("-", ""), name, scope, collectionIds: collection ? [collection.id] : [] };
+      next = { ...current, groups: [...current.groups.map(item => collection ? { ...item, collectionIds: item.collectionIds.filter(id => id !== collection.id) } : item), created] };
+    }
+    await saveCollectionGroups(next);
+    setModal(current => current === modal ? null : current);
+  }
+  async function entitySaved(kind: "tags" | "collections", previous: Entity | undefined, renameOnly: boolean | undefined, updated: Entity) {
+    if (scope !== currentScope.current) return;
+    if (kind === "tags") {
+      setModal(current => current === modal ? null : current);
+      changed(); notify("已保存");
+      return;
+    }
+    let synced = true;
+    let refreshed: Entity[] | undefined;
+    collectionLayoutEpoch.current++;
+    if (view === "collections") {
+      try {
+        const [layout, list] = await Promise.all([
+          api<CollectionGroupState>("collection-groups", undefined, undefined, AbortSignal.timeout(15000)),
+          api<{ items: Entity[] }>(scoped("collections", scope), undefined, undefined, AbortSignal.timeout(15000))
+        ]);
+        adoptCollectionLayout(layout);
+        refreshed = list.items;
+      } catch { synced = false; changed(); }
+    }
+    if (scope !== currentScope.current) return;
+    const visible = scope === "normal" ? !updated.hidden : updated.hidden || updated.count > 0 || !!previous;
+    setCollections(items => refreshed ?? [...items.filter(item => item.id !== updated.id), ...(visible ? [updated] : [])]);
+    setModal(current => current === modal ? null : current);
+    if ((view !== kind) || (previous && !renameOnly)) changed();
+    notify(synced ? "已保存" : "收藏集已保存，列表同步失败，请点击刷新");
+  }
   async function retry(ids: string[]) {
     try { await api("assets/retry", { ids }); changed(); notify("已重新加入处理队列"); }
     catch (error) { notify(error instanceof Error ? error.message : String(error)); }
@@ -716,6 +813,7 @@ function App() {
   const gallery = collectionId ? <CollectionGallery entries={entries} expanded={expandedGroups} formation={groupFormation} selected={selected} selecting={selecting || !!selected.size} busy={busy || loading || selectingAll} render={renderMedia} toggle={toggleGroup} selectGroup={selectGroup} add={group => void editGroup(group, "add")} rename={group => setModal({ type: "group", group })} saveName={saveGroupName} dissolve={group => void editGroup(group, "dissolve")} /> : <div className={`gallery ${view === "screenshots" ? "screenshot-gallery" : ""} ${selecting ? "selecting" : ""}`}>{assets.map(asset => renderMedia(asset))}</div>;
   const indexSearch = search.trim().toLocaleLowerCase();
   const indexEntities = (view === "collections" ? collections : tags).filter(entity => entity.name.toLocaleLowerCase().includes(indexSearch));
+  const entityIndex = view === "collections" && !contentReady ? <div className="skeleton-gallery" aria-label="正在读取收藏集">{Array.from({ length: 6 }, (_, index) => <div key={index} style={{ aspectRatio: 1.45 }} />)}</div> : view === "collections" ? <CollectionIndex key={scope} items={collections} query={indexSearch} scope={scope} state={collectionLayout} searching={!!indexSearch} busy={busy || loading || !contentReady || !!error} save={saveCollectionGroups} open={entity => navigate("all", "", entity.id)} edit={entity => setModal({ type: "entity", kind: "collections", entity })} rename={entity => setModal({ type: "entity", kind: "collections", entity, renameOnly: true })} pin={entity => void toggleCollectionPin(entity)} remove={entity => setModal({ type: "remove-entity", kind: "collections", entity })} create={groupId => setModal({ type: "entity", kind: "collections", groupId })} createGroup={collection => setModal({ type: "collection-group", collection })} renameGroup={group => setModal({ type: "collection-group", group })} removeGroup={group => setModal({ type: "remove-collection-group", group })} /> : <EntityGrid key={`${scope}:tags`} items={indexEntities} searching={!!indexSearch} busy={busy || loading || !contentReady || !!error} rename={entity => setModal({ type: "entity", kind: "tags", entity, renameOnly: true })} pin={() => {}} kind="tags" open={entity => navigate("all", entity.id)} edit={entity => setModal({ type: "entity", kind: "tags", entity })} remove={entity => setModal({ type: "remove-entity", kind: "tags", entity })} create={() => setModal({ type: "entity", kind: "tags" })} />;
   return <div className={`app ${scope === "hidden" ? "hidden-mode" : ""} ${assetView && (selecting || selected.size) ? "has-selection" : ""}`}>
     <input className="file-input" ref={picker} type="file" multiple accept="image/*,video/*,.svg,.ico,.apng,.mkv,.webm" onChange={event => {
       const files = Array.from(event.target.files || []);
@@ -765,7 +863,7 @@ function App() {
           {collectionId && !groups.length && <p className="group-help"><Layers3 size={13} />选中多个素材，即可组成一组，也可以添加分组名称。</p>}
           <div className="gallery-results" aria-busy={loading} inert={loading || !!error} style={{ "--tile-width": `${density}px` } as CSSProperties}>{gallery}</div>
           {hasMore && <div className="load-more" ref={loadMoreTarget}><button className="button" onClick={() => void loadMore()} disabled={loading || !!error || loadingMore || selectingAll || busy}>{loadingMore && <RotateCw size={15} className="spin" />}{loadingMore ? "正在加载…" : loadMoreFailed ? "重试加载" : "加载更多"} {!collectionId && <span>{assets.length} / {total}</span>}</button></div>}
-        </> : <Empty icon={view === "trash" ? <Trash2 size={30} /> : search || activeFilters.length ? <Search size={30} /> : view === "screenshots" ? <Gamepad2 size={32} /> : view === "inbox" ? <Inbox size={30} /> : view === "starred" ? <Star size={30} /> : <Image size={32} strokeWidth={1.3} />} title={search || activeFilters.length ? "没有找到匹配的素材" : view === "trash" ? "回收站是空的" : view === "screenshots" ? "这里还没有游戏截图" : view === "inbox" ? "没有待整理的素材" : view === "starred" ? "还没有星标素材" : scope === "hidden" ? "隐藏模式暂无素材" : activeEntity ? "这里还没有素材" : "开始你的视觉收藏"} description={search || activeFilters.length ? "试试其他关键词，或减少筛选条件。" : view === "screenshots" ? "在这里上传图片或录像；Steam 文件名自动分组，其他来源进入未指定游戏。" : view === "trash" ? "移除的素材会先保留在这里，可以随时恢复。" : view === "starred" ? "给常用或喜欢的素材添加星标，方便再次找到。" : view === "inbox" ? "没有标签、收藏集且未归入游戏截图的素材会显示在这里，可通过整理功能归类。" : "图标、头像、壁纸、梗图、截图和录像，都可以收集到这里。"}>{!["trash", "starred"].includes(view) && !search && !activeFilters.length && <button className="button primary" onClick={() => setModal({ type: "upload" })}><Plus size={17} />收集素材</button>}</Empty> : view === "games" ? <GamesGrid games={games} query={search} open={game => navigate("screenshots", "", "", "push", game.id)} edit={game => setModal({ type: "game", game })} remove={game => setModal({ type: "remove-game", game })} create={() => setModal({ type: "game" })} /> : view === "collections" || view === "tags" ? <EntityGrid key={`${scope}:${view}`} items={indexEntities} searching={!!indexSearch} busy={busy || loading || !contentReady} rename={entity => setModal({ type: "entity", kind: view, entity, renameOnly: true })} pin={entity => void toggleCollectionPin(entity)} kind={view} open={entity => navigate("all", view === "tags" ? entity.id : "", view === "collections" ? entity.id : "")} edit={entity => setModal({ type: "entity", kind: view, entity })} remove={entity => setModal({ type: "remove-entity", kind: view, entity })} create={() => setModal({ type: "entity", kind: view })} /> : <Jobs items={contentReady ? jobs : []} filter={jobFilter} changeFilter={setJobFilter} total={jobTotal} nextOffset={jobNextOffset} loading={loading} loadingMore={loadingMore} loadMore={() => void loadMoreJobs()} retry={retry} open={async id => { try { openViewer(await api<Asset>(scoped(`assets/${id}`, scope))); } catch (error) { notify(error instanceof Error ? error.message : String(error)); } }} />}
+        </> : <Empty icon={view === "trash" ? <Trash2 size={30} /> : search || activeFilters.length ? <Search size={30} /> : view === "screenshots" ? <Gamepad2 size={32} /> : view === "inbox" ? <Inbox size={30} /> : view === "starred" ? <Star size={30} /> : <Image size={32} strokeWidth={1.3} />} title={search || activeFilters.length ? "没有找到匹配的素材" : view === "trash" ? "回收站是空的" : view === "screenshots" ? "这里还没有游戏截图" : view === "inbox" ? "没有待整理的素材" : view === "starred" ? "还没有星标素材" : scope === "hidden" ? "隐藏模式暂无素材" : activeEntity ? "这里还没有素材" : "开始你的视觉收藏"} description={search || activeFilters.length ? "试试其他关键词，或减少筛选条件。" : view === "screenshots" ? "在这里上传图片或录像；Steam 文件名自动分组，其他来源进入未指定游戏。" : view === "trash" ? "移除的素材会先保留在这里，可以随时恢复。" : view === "starred" ? "给常用或喜欢的素材添加星标，方便再次找到。" : view === "inbox" ? "没有标签、收藏集且未归入游戏截图的素材会显示在这里，可通过整理功能归类。" : "图标、头像、壁纸、梗图、截图和录像，都可以收集到这里。"}>{!["trash", "starred"].includes(view) && !search && !activeFilters.length && <button className="button primary" onClick={() => setModal({ type: "upload" })}><Plus size={17} />收集素材</button>}</Empty> : view === "games" ? <GamesGrid games={games} query={search} open={game => navigate("screenshots", "", "", "push", game.id)} edit={game => setModal({ type: "game", game })} remove={game => setModal({ type: "remove-game", game })} create={() => setModal({ type: "game" })} /> : view === "collections" || view === "tags" ? entityIndex : <Jobs items={contentReady ? jobs : []} filter={jobFilter} changeFilter={setJobFilter} total={jobTotal} nextOffset={jobNextOffset} loading={loading} loadingMore={loadingMore} loadMore={() => void loadMoreJobs()} retry={retry} open={async id => { try { openViewer(await api<Asset>(scoped(`assets/${id}`, scope))); } catch (error) { notify(error instanceof Error ? error.message : String(error)); } }} />}
       </div>
     </main>
     {assetView && (selecting || !!selected.size) && <div className="selection-bar" ref={selectionBar} inert={loading || !!error || !contentReady}>
@@ -783,7 +881,14 @@ function App() {
     {modal?.type === "game" && <GameEditor game={modal.game} scope={scope} close={() => setModal(null)} saved={() => { setModal(null); changed(); notify("游戏名称已保存"); }} />}
     {modal?.type === "remove-game" && <RemoveGame game={modal.game} close={() => setModal(null)} confirm={async () => { await api(scoped(`games/${modal.game.id}`, scope), { confirm: true }, "DELETE"); setGames(previous => previous.filter(game => game.id !== modal.game.id)); setModal(null); if (gameId === modal.game.id) navigate("games", "", "", "replace"); changed(); notify("游戏夹已删除，素材保留在未指定游戏中"); }} />}
     {modal?.type === "screenshots" && <ScreenshotEditor count={modal.ids.length} games={games} scope={scope} close={() => setModal(null)} save={async patch => { await api(scoped("assets", scope), { ids: modal.ids, ...patch }, "PATCH"); setModal(null); exitSelection(); changed(); notify("游戏截图归类已保存"); }} />}
-    {modal?.type === "entity" && <EntityEditor kind={modal.kind} entity={modal.entity} renameOnly={modal.renameOnly} scope={scope} close={() => setModal(null)} saved={() => { changed(); setModal(null); notify("已保存"); }} remove={!modal.renameOnly && modal.entity && modal.kind === "collections" ? () => setModal({ type: "remove-entity", kind: modal.kind, entity: modal.entity! }) : undefined} />}
+    {modal?.type === "entity" && <EntityEditor kind={modal.kind} entity={modal.entity} renameOnly={modal.renameOnly} groupId={modal.groupId} scope={scope} close={() => setModal(null)} saved={updated => entitySaved(modal.kind, modal.entity, modal.renameOnly, updated)} remove={!modal.renameOnly && modal.entity && modal.kind === "collections" ? () => setModal({ type: "remove-entity", kind: modal.kind, entity: modal.entity! }) : undefined} />}
+    {modal?.type === "collection-group" && <CollectionIndexGroupEditor group={modal.group} collection={modal.collection} groups={collectionLayout.groups} close={() => setModal(null)} save={name => saveCollectionGroupName(modal.group, modal.collection, name)} />}
+    {modal?.type === "remove-collection-group" && <RemoveCollectionIndexGroup group={modal.group} close={() => setModal(null)} confirm={async () => {
+      const current = collectionLayoutRef.current;
+      await saveCollectionGroups({ ...current, groups: current.groups.filter(group => group.id !== modal.group.id) });
+      setModal(current => current === modal ? null : current);
+      notify("分组已删除，收藏集和素材全部保留");
+    }} />}
     {modal?.type === "organize" && <Organize ids={modal.ids} scope={scope} tags={tags} collections={collections} created={(kind, entity) => { const update = (items: Entity[]) => [...items.filter(item => item.id !== entity.id), entity]; if (kind === "tags") setTags(update); else setCollections(update); }} assignGame={selectedSupportGames ? () => setModal({ type: "screenshots", ids: modal.ids }) : undefined} close={() => setModal(null)} save={async value => { await api(scoped("assets", scope), { ids: modal.ids, ...value }, "PATCH"); setModal(null); setSelected(new Set()); changed(); notify("标签与收藏集已更新"); }} />}
     {modal?.type === "purge" && <Purge count={modal.ids.length} close={() => setModal(null)} confirm={async () => { await api("assets/purge", { ids: modal.ids, confirm: true }); setModal(null); setSelected(new Set()); changed(); notify("永久删除已提交"); }} />}
     {modal?.type === "remove-entity" && <RemoveEntity kind={modal.kind} entity={modal.entity} close={() => setModal(null)} confirm={async () => { await api(`${modal.kind}/${modal.entity.id}`, undefined, "DELETE"); setModal(null); if (tagId === modal.entity.id || collectionId === modal.entity.id) navigate("all"); changed(); notify("已移除，不影响原件"); }} />}
@@ -803,7 +908,7 @@ function FilterPanel({ value, change, clear }: { value: Filter; change: (next: F
   const number = (key: keyof Filter, label: string, placeholder: string) => <label>{label}<input type="number" min="0" value={value[key]} placeholder={placeholder} onChange={event => change({ ...value, [key]: event.target.value })} /></label>;
   return <section className="filter-panel"><div className="filter-grid"><label>格式<select value={value.format} onChange={event => change({ ...value, format: event.target.value })}><option value="">全部格式</option>{["jpg", "jpeg", "png", "webp", "gif", "apng", "svg", "ico", "avif", "mp4", "mov", "mkv", "webm"].map(format => <option key={format} value={format}>{format.toUpperCase()}</option>)}</select></label><label>画面比例<select value={value.aspect} onChange={event => change({ ...value, aspect: event.target.value })}><option value="">全部比例</option><option value="square">正方形</option><option value="landscape">横向</option><option value="portrait">竖向</option></select></label>{number("minWidth", "最小宽度", "像素")}{number("minHeight", "最小高度", "像素")}{number("maxWidth", "最大宽度", "像素")}{number("maxHeight", "最大高度", "像素")}{number("minDuration", "最短时长", "秒")}{number("maxDuration", "最长时长", "秒")}{number("minSize", "最小文件", "MB")}{number("maxSize", "最大文件", "MB")}</div><button className="button subtle" onClick={clear}>重置筛选</button></section>;
 }
-function EntityEditor({ kind, entity, renameOnly = false, scope, close, saved, remove }: { kind: "tags" | "collections"; entity?: Entity; renameOnly?: boolean; scope: Scope; close: () => void; saved: () => void; remove?: () => void }) {
+function EntityEditor({ kind, entity, renameOnly = false, groupId, scope, close, saved, remove }: { kind: "tags" | "collections"; entity?: Entity; renameOnly?: boolean; groupId?: string; scope: Scope; close: () => void; saved: (entity: Entity) => Promise<void> | void; remove?: () => void }) {
   const [name, setName] = useState(entity?.name || "");
   const [hidden, setHidden] = useState(entity?.hidden ?? scope === "hidden");
   const [busy, setBusy] = useState(false);
@@ -813,7 +918,10 @@ function EntityEditor({ kind, entity, renameOnly = false, scope, close, saved, r
   async function save() {
     if (!name.trim() || busy) return;
     setBusy(true); setError("");
-    try { await api(entity ? `${kind}/${entity.id}` : kind, { name: name.trim(), ...(renameOnly ? {} : { hidden }) }, entity ? "PATCH" : "POST"); saved(); }
+    try {
+      const updated = await api<Entity>(scoped(entity ? `${kind}/${entity.id}` : kind, scope), { name: name.trim(), ...(renameOnly ? {} : { hidden }), ...(!entity && groupId ? { groupId } : {}) }, entity ? "PATCH" : "POST");
+      await saved(updated);
+    }
     catch (error) { setError(error instanceof Error ? error.message : String(error)); }
     finally { setBusy(false); }
   }
