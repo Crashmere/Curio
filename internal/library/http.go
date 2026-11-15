@@ -357,6 +357,8 @@ func assetOrder(q url.Values) (string, error) {
 		return "a.created_at ASC,a.id ASC", nil
 	case "name":
 		return "COALESCE(NULLIF(a.title,''),a.name) COLLATE NOCASE,a.id", nil
+	case "filename":
+		return "a.name COLLATE NOCASE,a.id", nil
 	case "size":
 		return storedSizeSQL + " DESC,a.id DESC", nil
 	case "newest", "":

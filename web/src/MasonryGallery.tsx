@@ -56,17 +56,24 @@ export function MasonryGallery({ children, formation, className = "collection-ga
         tile.style.top = `${bottoms[column]}px`;
         bottoms[column] += heights[index] + gap;
       };
+      const row: number[] = [];
+      const placeRow = () => {
+        for (const index of row) place(index, nextColumn());
+        row.length = 0;
+      };
       for (let index = 0; index < tiles.length; index++) {
         const tile = tiles[index];
         if (tile.dataset.span !== "full") {
-          place(index, nextColumn());
+          row.push(index);
+          if (row.length === columns) placeRow();
           continue;
         }
-        // An expanded group owns a full row; its inner gallery packs the members.
+        // Expand before the unfinished row; its displaced peers are packed below.
         bottoms.fill(Math.max(...bottoms));
         place(index, 0);
         bottoms.fill(bottoms[0]);
       }
+      placeRow();
       gallery.style.height = `${Math.max(0, ...bottoms) - (tiles.length ? gap : 0)}px`;
       const previous = snapshots.current;
       const next = new Map<HTMLElement, TileSnapshot>();
