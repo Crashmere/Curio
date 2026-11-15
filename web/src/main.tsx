@@ -39,7 +39,7 @@ function App() {
   const [query, setQuery] = useState("");
   const search = useDeferredValue(query);
   const [filters, setFilters] = useState<Filter>(emptyFilter);
-  const [sort, setSort] = useState(() => navigation.view === "screenshots" ? "capturedNewest" : "");
+  const [sort, setSort] = useState(() => navigation.view === "screenshots" ? "capturedNewest" : "newest");
   const [density, setDensity] = useState(225);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [groups, setGroups] = useState<MediaGroup[]>([]);
@@ -162,7 +162,7 @@ function App() {
     cancelSelectAll();
     if (collectionId !== collection) setExpandedGroups(new Set());
     if (next === "screenshots" && view !== "screenshots") { setSort("capturedNewest"); setFilters(previous => ({ ...previous, kind: "" })); }
-    else if (next !== "screenshots" && view === "screenshots") setSort("");
+    else if (next !== "screenshots" && view === "screenshots") setSort("newest");
     setNavigation(target); setSelected(new Set()); setSelecting(false); setSidebarOpen(false); setViewer(null);
   }
   const restoreNavigationEvent = useEffectEvent(() => {
@@ -372,11 +372,7 @@ function App() {
     for (const [key, value] of Object.entries(filters)) if (value) params.set(key, key === "minSize" || key === "maxSize" ? String(Number(value) * 1024 * 1024) : value);
     return `assets?${params}`;
   }
-  function groupsPath() {
-    const params = new URLSearchParams(assetPath().split("?")[1]);
-    if (!sort) params.set("sort", "filename");
-    return `collections/${collectionId}/groups?${params}`;
-  }
+  function groupsPath() { return assetPath().replace("assets?", `collections/${collectionId}/groups?`); }
   function jobsPath(offset = 0, limit = 120) {
     const params = new URLSearchParams({ scope, offset: String(offset), limit: String(limit) });
     if (jobFilter !== "all") params.set("status", jobFilter);
@@ -870,7 +866,6 @@ function App() {
           <div className="kind-tabs motion-tabs" ref={kindIndicator.ref} style={kindIndicator.style}>{(view === "screenshots" ? [["", "全部"], ["image", "图片"], ["video", "录像"]] : [["", "全部"], ["image", "图片"], ["animation", "动图"], ["video", "视频"]]).map(([kind, label]) => <button key={kind} className={filters.kind === kind ? "active" : ""} aria-pressed={filters.kind === kind} onClick={() => setFilters({ ...filters, kind })}>{label}</button>)}</div>
           <div className="toolbar-right"><label className="sort"><ArrowDownWideNarrow size={15} />
             <select value={sort} aria-label="排序" onChange={event => setSort(event.target.value)}>
-              <option value="">{collectionId ? "默认（组内文件名）" : "默认（最近收集）"}</option>
               <option value="capturedNewest">截图：新到旧</option><option value="capturedOldest">截图：旧到新</option>
               <option value="newest">最近收集</option><option value="oldest">最早收集</option><option value="name">名称</option><option value="filename">文件名</option><option value="size">文件大小</option>
             </select></label>

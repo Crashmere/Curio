@@ -346,6 +346,9 @@ func pageNumber(q url.Values, key string, defaultValue, minValue, maxValue int) 
 }
 
 func assetOrder(q url.Values) (string, error) {
+	if q.Get("group") != "" {
+		return groupMemberOrder, nil
+	}
 	switch q.Get("sort") {
 	case "capturedNewest", "capturedOldest":
 		direction := "DESC"

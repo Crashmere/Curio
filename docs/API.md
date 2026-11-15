@@ -53,7 +53,7 @@ Asset list filters are parallel query parameters:
 | `minWidth`, `maxWidth`, `minHeight`, `maxHeight` | Pixels |
 | `minDuration`, `maxDuration` | Seconds |
 | `minSize`, `maxSize` | Bytes |
-| `sort` | `newest` (default), `oldest`, `name`, `filename`, `size`, `capturedNewest`, `capturedOldest`; `name` uses the title when present, `filename` uses the original name, and capture sorts place unknown times last |
+| `sort` | `newest` (default), `oldest`, `name`, `filename`, `size`, `capturedNewest`, `capturedOldest`; `name` uses the title when present, `filename` uses the original name, and capture sorts place unknown times last; requests with `group` use fixed natural filename order instead |
 | `limit`, `offset` | Default limit 120, maximum 240 (2000 with `ids`); next request uses `nextOffset` |
 
 With `grouped=1`, `total` remains the number of matching media, while `limit`, `offset` and `nextOffset` count gallery entries. Group anchors precede ungrouped media across all pages; both subsets follow the selected sort order. Each group's anchor is its first matching media in that order. Requests selecting every media item must omit `grouped`.
@@ -122,7 +122,7 @@ Groups have optional names and are local to one collection. Each media item can 
 
 | Method and path | Behavior |
 | --- | --- |
-| `GET /api/collections/{id}/groups` | `items` containing group `id`, `name` and ordered `assetIds`; applies the media list's scope, search, filters and sorting before forming groups, without pagination |
+| `GET /api/collections/{id}/groups` | `items` containing group `id`, `name` and ordered `assetIds`; applies the media list's scope, search and filters, orders groups by the requested sort and members by fixed natural filename order, without pagination |
 | `POST /api/collections/{id}/groups` | Create with `{"ids":["<asset-sha256>","<asset-sha256>"],"name":"optional name"}`; ignores media already grouped in this collection, requires at least two remaining distinct media and returns `{"id":"<group-id>"}` |
 | `PATCH /api/collections/{id}/groups/{group}` | Edit `name` and/or incrementally change members using `addIds` and `removeIds` |
 | `PATCH /api/collections/{id}/groups` | Remove selected media from any groups in this collection using `removeIds` |
@@ -132,7 +132,7 @@ Group edits accept up to 2000 media per request and validate live membership in 
 
 Names are trimmed and limited to 80 Unicode characters. An omitted creation name defaults to empty; an omitted patch name preserves the existing name, while an empty name clears it. Name-only edits preserve members and do not clean up other groups. A group's name is shared across its scoped subsets and does not change member search or visibility.
 
-Fetch a group's media through `GET /api/assets?collection=<id>&group=<group-id>` with the same scope and filters. Group membership survives trash and restore, but removing a collection membership removes its group link. Replacing `collectionIds` retains group links for collections that remain present.
+Fetch a group's media through `GET /api/assets?collection=<id>&group=<group-id>` with the same scope and filters. Both this paginated list and each group's `assetIds` use fixed natural ascending order of original filenames, independently of `sort`: text compares case-insensitively, consecutive ASCII digits compare numerically, and ties use the complete original filename then asset ID. For example, `123_p2.png` precedes `123_p10-username.png`. Group membership survives trash and restore, but removing a collection membership removes its group link. Replacing `collectionIds` retains group links for collections that remain present.
 
 ### Selected Container Covers
 
@@ -142,7 +142,7 @@ The media viewer's `设为封面` menu offers `分组封面` and `收藏集封�
 
 `PATCH /api/assets/{id}/container-cover?scope=normal|hidden` accepts `{"kind":"group|collection","targetId":"<target-id>"}`. It validates live scoped media and membership and saves the reference atomically; an invalid or removed target returns HTTP 400. Images, animations and videos use the same contract. A video reference resolves to its current selected frame, or its default thumbnail when no frame is selected, with the current cover revision in the URL.
 
-Collection responses prefer the saved member when it has a thumbnail and is live in the requested scope, otherwise retain the newest available thumbnail. Media group responses add `coverAssetId` and `coverUrl`, selecting the saved member when it matches the current scope and filters, otherwise the first matching member in the requested sort order. This does not reorder `assetIds` or alter gallery anchors. Moving a selected member to trash or another scope temporarily uses the fallback; restoring it makes its selection eligible again. Removing its membership, moving it to another group, dissolving its group or deleting its container clears that reference. Other memberships, media and originals are preserved.
+Collection responses prefer the saved member when it has a thumbnail and is live in the requested scope, otherwise retain the newest available thumbnail. Media group responses add `coverAssetId` and `coverUrl`, selecting the saved member when it matches the current scope and filters, otherwise the first matching member in natural filename order. This does not reorder `assetIds` or alter gallery anchors. Moving a selected member to trash or another scope temporarily uses the fallback; restoring it makes its selection eligible again. Removing its membership, moving it to another group, dissolving its group or deleting its container clears that reference. Other memberships, media and originals are preserved.
 
 ### Game Screenshots
 

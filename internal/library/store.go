@@ -14,8 +14,6 @@ import (
 	"regexp"
 	"sync"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
 
 const ChunkSize int64 = 128 << 20

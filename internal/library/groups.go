@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -192,7 +193,7 @@ func (l *Library) listGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	args = append([]any{collectionID}, args...)
-	rows, err := l.DB.Query("SELECT g.group_id,cg.name,a.id,COALESCE(s.value,'') FROM assets a JOIN collection_group_assets g ON g.asset_id=a.id AND g.collection_id=? JOIN collection_groups cg ON cg.id=g.group_id LEFT JOIN catalog_settings s ON s.key='group_cover:'||cg.id"+where+" ORDER BY "+order, args...)
+	rows, err := l.DB.Query("SELECT g.group_id,cg.name,a.id,a.name,COALESCE(s.value,'') FROM assets a JOIN collection_group_assets g ON g.asset_id=a.id AND g.collection_id=? JOIN collection_groups cg ON cg.id=g.group_id LEFT JOIN catalog_settings s ON s.key='group_cover:'||cg.id"+where+" ORDER BY "+order, args...)
 	if err != nil {
 		fail(w, 500, err)
 		return
@@ -200,12 +201,14 @@ func (l *Library) listGroups(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	items := []mediaGroup{}
 	indices := map[string]int{}
+	filenames := map[string]string{}
 	for rows.Next() {
-		var groupID, name, assetID, coverID string
-		if err = rows.Scan(&groupID, &name, &assetID, &coverID); err != nil {
+		var groupID, name, assetID, filename, coverID string
+		if err = rows.Scan(&groupID, &name, &assetID, &filename, &coverID); err != nil {
 			fail(w, 500, err)
 			return
 		}
+		filenames[assetID] = filename
 		index, exists := indices[groupID]
 		if !exists {
 			index = len(items)
@@ -221,6 +224,12 @@ func (l *Library) listGroups(w http.ResponseWriter, r *http.Request) {
 	rows.Close()
 	for i := range items {
 		group := &items[i]
+		slices.SortFunc(group.AssetIDs, func(left, right string) int {
+			if order := compareNaturalFilenames(filenames[left], filenames[right]); order != 0 {
+				return order
+			}
+			return strings.Compare(left, right)
+		})
 		matched := false
 		for _, hash := range group.AssetIDs {
 			if hash == group.CoverAssetID {
