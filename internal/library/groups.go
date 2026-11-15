@@ -23,6 +23,38 @@ type collectionGroupSelection struct {
 	GroupIDs     []string `json:"groupIds"`
 }
 
+func groupAddedCollections(tx *sql.Tx, p assetPatch) error {
+	collections := map[string]bool{}
+	for _, collectionID := range p.AddCollectionIDs {
+		if collections[collectionID] {
+			continue
+		}
+		collections[collectionID] = true
+		groupID := id()
+		if _, err := tx.Exec("INSERT INTO collection_groups(id,collection_id,created_at) VALUES(?,?,?)", groupID, collectionID, now()); err != nil {
+			return err
+		}
+		members := map[string]bool{}
+		for _, hash := range p.IDs {
+			if members[hash] {
+				continue
+			}
+			members[hash] = true
+			var grouped bool
+			if err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM collection_group_assets WHERE collection_id=? AND asset_id=?)", collectionID, hash).Scan(&grouped); err != nil {
+				return err
+			}
+			if grouped {
+				return fmt.Errorf("部分素材已在目标收藏集中分组，请关闭自动合并或刷新后重试")
+			}
+			if _, err := tx.Exec("INSERT INTO collection_group_assets(group_id,collection_id,asset_id) VALUES(?,?,?)", groupID, collectionID, hash); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func selectedCollectionGroups(tx *sql.Tx, p assetPatch, scope string) ([]mediaGroup, error) {
 	selection := p.PreserveCollectionGroups
 	if selection == nil {

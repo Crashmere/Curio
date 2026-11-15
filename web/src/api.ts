@@ -68,6 +68,7 @@ export type Patch = {
   hidden?: boolean; starred?: boolean; trash?: boolean;
   addTagIds?: string[]; removeTagIds?: string[];
   addCollectionIds?: string[]; removeCollectionIds?: string[];
+  groupAddedCollections?: boolean;
   preserveCollectionGroups?: { collectionId: string; groupIds: string[] };
 };
 export type Job = { id: string; assetId: string; name: string; status: string; stage: string; error?: string; updatedAt?: string; createdAt?: string; engine?: string; progress: number; thumbnailUrl?: string };

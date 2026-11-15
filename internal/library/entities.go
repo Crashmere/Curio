@@ -31,6 +31,7 @@ type assetPatch struct {
 	RemoveTagIDs             []string                  `json:"removeTagIds"`
 	AddCollectionIDs         []string                  `json:"addCollectionIds"`
 	RemoveCollectionIDs      []string                  `json:"removeCollectionIds"`
+	GroupAddedCollections    bool                      `json:"groupAddedCollections"`
 	PreserveCollectionGroups *collectionGroupSelection `json:"preserveCollectionGroups"`
 }
 
@@ -87,6 +88,18 @@ func (p *assetPatch) validate() error {
 			return err
 		}
 	}
+	if p.GroupAddedCollections {
+		unique := map[string]bool{}
+		for _, hash := range p.IDs {
+			unique[hash] = true
+		}
+		if len(unique) < 2 {
+			return fmt.Errorf("至少选择两个素材才能自动合并成一组")
+		}
+		if p.PreserveCollectionGroups != nil {
+			return fmt.Errorf("不能同时自动合并和保留来源分组")
+		}
+	}
 	if p.PreserveCollectionGroups != nil {
 		selection := p.PreserveCollectionGroups
 		if !validID.MatchString(selection.CollectionID) || len(selection.GroupIDs) == 0 || len(selection.GroupIDs) > len(p.IDs) {
@@ -97,8 +110,10 @@ func (p *assetPatch) validate() error {
 				return fmt.Errorf("分组编号无效")
 			}
 		}
+	}
+	if p.PreserveCollectionGroups != nil || p.GroupAddedCollections {
 		if p.CollectionIDs != nil || len(p.AddCollectionIDs) == 0 {
-			return fmt.Errorf("保留分组需要指定新增收藏集")
+			return fmt.Errorf("分组操作需要指定新增收藏集")
 		}
 		for _, collectionID := range p.AddCollectionIDs {
 			for _, removedID := range p.RemoveCollectionIDs {
@@ -138,6 +153,18 @@ func (l *Library) patch(ctx context.Context, p assetPatch, scope string) error {
 	groups, err := selectedCollectionGroups(tx, p, scope)
 	if err != nil {
 		return err
+	}
+	if p.GroupAddedCollections {
+		// Validate the opening scope before new memberships can change effective hiding.
+		for _, hash := range p.IDs {
+			var available bool
+			if err = tx.QueryRow("SELECT EXISTS(SELECT 1 FROM assets a WHERE a.id=? AND a.purge_pending=0 AND a.trashed_at='' AND "+scopeSQL(scope)+")", hash).Scan(&available); err != nil {
+				return err
+			}
+			if !available {
+				return fmt.Errorf("部分素材已不在当前模式中或已移入回收站，请刷新后重试")
+			}
+		}
 	}
 	for _, hash := range p.IDs {
 		var pending bool
@@ -191,6 +218,11 @@ func (l *Library) patch(ctx context.Context, p assetPatch, scope string) error {
 	}
 	if err = preserveCollectionGroups(tx, p, groups); err != nil {
 		return err
+	}
+	if p.GroupAddedCollections {
+		if err = groupAddedCollections(tx, p); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

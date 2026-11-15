@@ -913,7 +913,7 @@ function App() {
       setModal(current => current === modal ? null : current);
       notify("分组已删除，收藏集和素材全部保留");
     }} />}
-    {modal?.type === "memberships" && <MembershipEditor key={modal.kind} kind={modal.kind} count={modal.ids.length} assets={selectedAssets} scope={scope} items={modal.kind === "tags" ? tags : collections} collectionLayout={collectionLayout} preserveCollectionGroups={modal.preserveCollectionGroups} created={entity => { const update = (items: Entity[]) => [...items.filter(item => item.id !== entity.id), entity]; if (modal.kind === "tags") setTags(update); else setCollections(update); }} close={() => setModal(null)} save={async value => { await api(scoped("assets", scope), { ids: modal.ids, ...value }, "PATCH"); setModal(null); setSelected(new Set()); changed(); notify(modal.kind === "tags" ? "标签已更新" : "收藏集已更新"); }} />}
+    {modal?.type === "memberships" && <MembershipEditor key={modal.kind} kind={modal.kind} count={modal.ids.length} assets={selectedAssets} scope={scope} items={modal.kind === "tags" ? tags : collections} collectionLayout={collectionLayout} preserveCollectionGroups={modal.preserveCollectionGroups} allowAutoGroup={view === "inbox" && modal.kind === "collections"} created={entity => { const update = (items: Entity[]) => [...items.filter(item => item.id !== entity.id), entity]; if (modal.kind === "tags") setTags(update); else setCollections(update); }} close={() => setModal(null)} save={async value => { await api(scoped("assets", scope), { ids: modal.ids, ...value }, "PATCH"); setModal(null); setSelected(new Set()); changed(); notify(value.groupAddedCollections ? "已添加到收藏集并合并成无命名分组" : modal.kind === "tags" ? "标签已更新" : "收藏集已更新"); }} />}
     {modal?.type === "purge" && <Purge count={modal.ids.length} close={() => setModal(null)} confirm={async () => { await api("assets/purge", { ids: modal.ids, confirm: true }); setModal(null); setSelected(new Set()); changed(); notify("永久删除已提交"); }} />}
     {modal?.type === "remove-entity" && <RemoveEntity kind={modal.kind} entity={modal.entity} close={() => setModal(null)} confirm={async () => { await api(`${modal.kind}/${modal.entity.id}`, undefined, "DELETE"); setModal(null); if (tagId === modal.entity.id || collectionId === modal.entity.id) navigate("all"); changed(); notify("已移除，不影响原件"); }} />}
     </MotionPresence>
@@ -952,7 +952,7 @@ function EntityEditor({ kind, entity, renameOnly = false, groupId, scope, close,
   }
   return <Dialog title={`${renameOnly ? "重命名" : entity ? "编辑" : "新建"}${label}`} close={close} dirty={dirty} busy={busy}><form className="metadata-form" onSubmit={event => { event.preventDefault(); void save(); }}><label>名称<input value={name} disabled={busy} onChange={event => setName(event.target.value)} maxLength={200} placeholder={kind === "collections" ? "例如：桌面壁纸、某款游戏" : "例如：头像、梗图"} autoFocus={renameOnly} onFocus={event => { if (renameOnly) event.currentTarget.select(); }} /></label>{!renameOnly && <><div className="form-switches"><label><input type="checkbox" checked={hidden} disabled={busy} onChange={event => setHidden(event.target.checked)} />隐藏此{label}</label></div><p className="form-help">隐藏后，关联的全部素材都会进入隐藏模式，即使它们同时属于其他普通{label}。</p></>}{error && <div className="inline-error">{error}</div>}<footer className="dialog-footer">{remove && <button type="button" className="button danger entity-delete" disabled={busy} onClick={() => { if (dirty) setError("请先保存或取消当前修改，再删除收藏集"); else remove(); }}><Trash2 size={15} />删除收藏集</button>}<button type="button" className="button" data-dialog-close disabled={busy}>取消</button><button className="button primary" type="submit" disabled={!name.trim() || busy}>{busy ? <RotateCw size={15} className="spin" /> : <Check size={15} />}保存</button></footer></form></Dialog>;
 }
-function MembershipEditor({ kind, count, assets, scope, items, collectionLayout, preserveCollectionGroups, created, close, save }: { kind: "tags" | "collections"; count: number; assets: Asset[]; scope: Scope; items: Entity[]; collectionLayout: CollectionGroupState; preserveCollectionGroups?: Patch["preserveCollectionGroups"]; created: (entity: Entity) => void; close: () => void; save: (value: Patch) => Promise<void> }) {
+function MembershipEditor({ kind, count, assets, scope, items, collectionLayout, preserveCollectionGroups, allowAutoGroup = false, created, close, save }: { kind: "tags" | "collections"; count: number; assets: Asset[]; scope: Scope; items: Entity[]; collectionLayout: CollectionGroupState; preserveCollectionGroups?: Patch["preserveCollectionGroups"]; allowAutoGroup?: boolean; created: (entity: Entity) => void; close: () => void; save: (value: Patch) => Promise<void> }) {
   const label = kind === "tags" ? "标签" : "收藏集";
   // Keep the opening baseline stable while library polling refreshes the props.
   const [initialIds] = useState(() => {
@@ -960,6 +960,7 @@ function MembershipEditor({ kind, count, assets, scope, items, collectionLayout,
     return [...(memberships[0] ?? [])].filter(id => memberships.every(ids => ids.has(id)));
   });
   const [selectedIds, setSelectedIds] = useState(initialIds);
+  const [autoGroup, setAutoGroup] = useState(false);
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
@@ -968,13 +969,15 @@ function MembershipEditor({ kind, count, assets, scope, items, collectionLayout,
   const selected = new Set(selectedIds);
   const addIds = selectedIds.filter(id => !initial.has(id));
   const removeIds = initialIds.filter(id => !selected.has(id));
-  const dirty = !!addIds.length || !!removeIds.length;
+  const membershipChanged = !!addIds.length || !!removeIds.length;
+  const dirty = membershipChanged || autoGroup;
+  const canSubmit = membershipChanged && (!autoGroup || !!addIds.length);
   async function submit() {
-    if (working || !dirty) return;
+    if (working || !canSubmit) return;
     setBusy(true); setError("");
     const value: Patch = kind === "tags"
       ? { addTagIds: addIds, removeTagIds: removeIds }
-      : { addCollectionIds: addIds, removeCollectionIds: removeIds, preserveCollectionGroups: addIds.length ? preserveCollectionGroups : undefined };
+      : { addCollectionIds: addIds, removeCollectionIds: removeIds, preserveCollectionGroups: addIds.length ? preserveCollectionGroups : undefined, groupAddedCollections: autoGroup || undefined };
     try { await save(value); } catch (error) { setError(error instanceof Error ? error.message : String(error)); } finally { setBusy(false); }
   }
   return <Dialog title={`管理${label} · ${count} 个素材`} close={close} wide dirty={dirty} busy={working}>
@@ -982,9 +985,10 @@ function MembershipEditor({ kind, count, assets, scope, items, collectionLayout,
       <p className="form-help">已勾选所有所选素材共同所在的{label}。取消勾选即移除，新增勾选即添加，点击应用后保存；未改动的关联保持原样。</p>
       {preserveCollectionGroups && <p className="form-help">已完整选中 {preserveCollectionGroups.groupIds.length} 个分组，新增收藏集时将保留分组及名称。</p>}
       <EntityPicker kind={kind} scope={scope} items={items} selected={selectedIds} change={setSelectedIds} disabled={busy} onBusyChange={setCreating} onCreated={created} collectionLayout={collectionLayout} />
+      {allowAutoGroup && <><div className="form-switches"><label><input type="checkbox" checked={autoGroup} disabled={working || count < 2} onChange={event => setAutoGroup(event.target.checked)} />自动合并成一组</label></div><p className="form-help">{count < 2 ? "至少选择两个素材才能自动合并成一组。" : "添加到收藏集的同时，将所选素材合并为无命名分组；选择多个收藏集时，每个收藏集分别创建一组。"}</p></>}
       <p className="form-help">有标签、收藏集或归入游戏截图的素材算作已整理；全部移除后回到未整理。</p>
       {error && <div className="inline-error">{error}</div>}
-      <footer className="dialog-footer"><button className="button" data-dialog-close disabled={working}>取消</button><button className="button primary" onClick={() => void submit()} disabled={working || !dirty}>{busy ? <RotateCw size={15} className="spin" /> : <Check size={15} />}应用</button></footer>
+      <footer className="dialog-footer"><button className="button" data-dialog-close disabled={working}>取消</button><button className="button primary" onClick={() => void submit()} disabled={working || !canSubmit}>{busy ? <RotateCw size={15} className="spin" /> : <Check size={15} />}应用</button></footer>
     </div>
   </Dialog>;
 }
