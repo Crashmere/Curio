@@ -24,9 +24,9 @@ export function collectionEntries(assets: Asset[], groups: MediaGroup[], pages: 
   return [...groupEntries, ...entries];
 }
 
-export function CollectionGallery({ entries, expanded, formation, selected, selecting, busy, render, toggle, selectGroup, add, rename, saveName, dissolve }: {
+export function CollectionGallery({ entries, expanded, formation, selected, busy, render, toggle, selectGroup, add, rename, saveName, dissolve }: {
   entries: GalleryEntry[]; expanded: Set<string>; formation?: GroupFormation;
-  selected: Set<string>; selecting: boolean; busy: boolean; render: (asset: Asset, groupOpen?: boolean) => ReactNode;
+  selected: Set<string>; busy: boolean; render: (asset: Asset, groupOpen?: boolean) => ReactNode;
   toggle: (group: MediaGroup) => void; selectGroup: (group: MediaGroup) => void;
   add: (group: MediaGroup) => void; rename: (group: MediaGroup) => void; dissolve: (group: MediaGroup) => void;
   saveName: (group: MediaGroup, name: string) => Promise<boolean>;
@@ -94,7 +94,7 @@ export function CollectionGallery({ entries, expanded, formation, selected, sele
           <Layers3 size={16} /><span className="group-heading-copy"><strong title={label}>{label}</strong><small>{count} 个素材{selectedCount > 0 && ` · 已选 ${selectedCount}`}</small></span><ChevronDown size={14} className="group-chevron" />
         </button>
         <div className="group-actions">
-          {selecting && <button className={`icon-button group-select ${selectedCount === count ? "is-active" : ""}`} title={selectedCount === count ? "取消选择这组" : "选择这组"} aria-label={selectedCount === count ? "取消选择这组" : "选择这组"} aria-pressed={selectedCount === count} disabled={busy} onClick={() => selectGroup(group)}><Check size={16} /></button>}
+          <button className={`icon-button group-select ${selectedCount === count ? "is-active" : ""}`} title={selectedCount === count ? "取消选择这组" : "选择这组"} aria-label={selectedCount === count ? "取消选择这组" : "选择这组"} aria-pressed={selectedCount === count} disabled={busy} onClick={() => selectGroup(group)}><Check size={16} /></button>
           <button className="icon-button group-menu-toggle" title="分组设置" aria-label={`分组设置：${label}`} aria-haspopup="menu" aria-expanded={menu?.id === group.id} disabled={busy} onClick={event => {
             if (menu?.id === group.id) { setMenu(undefined); return; }
             menuSource.current = event.currentTarget;
