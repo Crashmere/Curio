@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Check, ChevronLeft, ChevronRight, Copy, RotateCw } from "lucide-react";
+import { Ban, Check, ChevronLeft, ChevronRight, Copy, RotateCw } from "lucide-react";
 import { api, bytes, type Asset, type Entity, type Scope, scoped } from "./api";
 import { Dialog, Empty, kindNames } from "./components";
 import { useIsPresent } from "./motion";
@@ -20,6 +20,7 @@ export function CollectionSimilarity({ collection, scope, close, changed }: { co
   const [choice, setChoice] = useState<{ pair: SimilarityPair; keep: SimilarityAsset; discard: SimilarityAsset }>();
   const [page, setPage] = useState(0);
   const [removed, setRemoved] = useState(0);
+  const [excluded, setExcluded] = useState(0);
   const [notice, setNotice] = useState("");
 
   useLayoutEffect(() => {
@@ -27,7 +28,7 @@ export function CollectionSimilarity({ collection, scope, close, changed }: { co
     if (!present) {
       worker.current?.terminate(); worker.current = null;
       setResult(undefined); setChoice(undefined); setError(""); setNotice("");
-      setProgress({ stage: "loading", completed: 0, total: 0 }); setPage(0); setRemoved(0);
+      setProgress({ stage: "loading", completed: 0, total: 0 }); setPage(0); setRemoved(0); setExcluded(0);
     }
     return () => { mounted.current = false; worker.current?.terminate(); worker.current = null; };
   }, [present]);
@@ -84,6 +85,13 @@ export function CollectionSimilarity({ collection, scope, close, changed }: { co
     }
   }
 
+  function excludePair(pair: SimilarityPair) {
+    if (saving.current) return;
+    setResult(previous => previous && { ...previous, pairs: previous.pairs.filter(item => item !== pair) });
+    setChoice(previous => previous?.pair === pair ? undefined : previous);
+    setExcluded(value => value + 1);
+  }
+
   const pages = Math.max(1, Math.ceil((result?.pairs.length ?? 0) / pageSize));
   const currentPage = Math.min(page, pages - 1);
   const stageNames = { loading: "读取收藏集", hashing: "计算像素指纹", comparing: "对比相似项" };
@@ -93,20 +101,26 @@ export function CollectionSimilarity({ collection, scope, close, changed }: { co
       {!result && !error && <div className="similarity-progress" role="status"><RotateCw size={20} className="spin" /><strong>{stageNames[progress.stage]}</strong><span>{progress.completed.toLocaleString()} / {progress.total ? progress.total.toLocaleString() : "…"}</span><progress max={Math.max(1, progress.total)} value={progress.completed} /></div>}
       {error && <div className="inline-error" role="alert">{error}</div>}
       {result && <>
-        <div className="similarity-summary"><strong>{result.pairs.length.toLocaleString()} 对待处理</strong><span>共 {result.total.toLocaleString()} 项 · 已计算 {result.checked.toLocaleString()} 项{removed > 0 ? ` · 已移入回收站 ${removed} 项` : ""}</span></div>
+        <div className="similarity-summary"><strong>{result.pairs.length.toLocaleString()} 对待处理</strong><span>共 {result.total.toLocaleString()} 项 · 已计算 {result.checked.toLocaleString()} 项{removed > 0 ? ` · 已移入回收站 ${removed} 项` : ""}{excluded > 0 ? ` · 本次已排除 ${excluded} 对` : ""}</span></div>
         {!!result.skipped.length && <details className="similarity-skipped"><summary>{result.skipped.length} 项未参与比较</summary><ul>{result.skipped.map((item, index) => <li key={index}><strong>{item.name}</strong>：{item.reason}</li>)}</ul></details>}
         {notice && <p className="similarity-notice" role="status"><Check size={15} />{notice}</p>}
-        <p className="similarity-trash-note">选择保留项后，另一项将从所有收藏集中移入回收站，可在回收站恢复。不会永久删除原件。</p>
-        {!result.pairs.length ? !result.lowContrast.length && <Empty icon={<Copy size={28} />} title={removed ? "本次相似项已处理完" : "未找到高相似度的项"} description={result.skipped.length ? "未参与比较的项不代表没有相似项，可处理完成后重新打开计算。" : undefined} /> : <div className="similarity-pairs">
+        <p className="similarity-trash-note">点击“保留这项”后，再点击原地出现的“确认”，另一项才会移入回收站，可恢复。点击“排除”表示这两项不同，仅本次不再列出。</p>
+        {!result.pairs.length ? !result.lowContrast.length && <Empty icon={<Copy size={28} />} title={removed || excluded ? "本次相似项已处理完" : "未找到高相似度的项"} description={result.skipped.length ? "未参与比较的项不代表没有相似项，可处理完成后重新打开计算。" : undefined} /> : <div className="similarity-pairs">
           {result.pairs.slice(currentPage * pageSize, (currentPage + 1) * pageSize).map(pair => {
             const left = result.assets[pair.left], right = result.assets[pair.right];
             const selecting = choice?.pair === pair;
             return <article className="similarity-pair" key={`${pair.left}:${pair.right}`}>
-              <header><strong>dHash 相似度 {((1 - pair.distance / 64) * 100).toFixed(1)}%</strong><span>差异 {pair.distance} / 64 位</span></header>
-              <div className="similarity-pair-items">{[left, right].map((asset, index) => <SimilarityItem asset={asset} selected={selecting && choice.keep.id === asset.id} key={asset.id}>
-                <button className={`button ${selecting && choice.keep.id === asset.id ? "primary" : ""}`} disabled={busy} aria-pressed={selecting && choice.keep.id === asset.id} onClick={() => { setError(""); setChoice({ pair, keep: asset, discard: index === 0 ? right : left }); }}><Check size={15} />保留这项</button>
-              </SimilarityItem>)}</div>
-              {selecting && <div className="similarity-confirm"><p>将“{choice.discard.title || choice.discard.name}”移入回收站，保留另一项。点击右下角“确认”执行。</p></div>}
+              <header><strong>dHash 相似度 {((1 - pair.distance / 64) * 100).toFixed(1)}%</strong><div className="similarity-pair-tools"><span>差异 {pair.distance} / 64 位</span><button className="button subtle similarity-exclude" disabled={busy} title="确认这两项不同，仅本次排除" onClick={() => excludePair(pair)}><Ban size={14} />排除</button></div></header>
+              <div className="similarity-pair-items">{[left, right].map((asset, index) => {
+                const armed = selecting && choice.keep.id === asset.id;
+                return <SimilarityItem asset={asset} selected={armed} key={asset.id}>
+                  <button className={`button ${armed ? "primary" : ""}`} disabled={busy} aria-pressed={armed} onClick={() => {
+                    if (saving.current) return;
+                    if (armed) void confirmChoice();
+                    else { setError(""); setChoice({ pair, keep: asset, discard: index === 0 ? right : left }); }
+                  }}>{busy && armed ? <RotateCw size={15} className="spin" /> : <Check size={15} />}{armed ? "确认" : "保留这项"}</button>
+                </SimilarityItem>;
+              })}</div>
             </article>;
           })}
         </div>}
@@ -114,7 +128,6 @@ export function CollectionSimilarity({ collection, scope, close, changed }: { co
         {!!result.lowContrast.length && <section className="similarity-low-contrast" aria-label="低对比度素材"><h3>低对比度素材 <span>{result.lowContrast.length} 项</span></h3><p className="similarity-trash-note">以下素材直接列出供查看，未进行相似配对，不代表它们彼此相似。</p><div className="similarity-low-contrast-items">{result.lowContrast.map(id => <SimilarityItem asset={result.assets[id]} key={id} />)}</div></section>}
       </>}
     </div>
-    <footer className="dialog-footer">{choice ? <><button className="button" disabled={busy} onClick={() => setChoice(undefined)}>取消</button><button className="button primary" disabled={busy} onClick={() => void confirmChoice()}>{busy ? <RotateCw size={15} className="spin" /> : <Check size={15} />}确认</button></> : <button className="button" disabled={busy} data-dialog-close>{!result && !error ? "取消计算并关闭" : "关闭并清除计算数据"}</button>}</footer>
   </Dialog>;
 }
 
