@@ -1,6 +1,6 @@
 import { CSSProperties, StrictMode, useDeferredValue, useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowDownWideNarrow, Check, CircleAlert, Download, Eye, EyeOff, Folder, Gamepad2, Grid2X2, Group, Image, Inbox, Layers3, Menu, MoreHorizontal, Pin, Plus, RefreshCw, RotateCw, Search, SlidersHorizontal, Star, Tag, Trash2, Ungroup, Unlink, Upload, X } from "lucide-react";
+import { ArrowDownWideNarrow, Check, CircleAlert, Copy, Download, Eye, EyeOff, Folder, Gamepad2, Grid2X2, Group, Image, Inbox, Layers3, Menu, MoreHorizontal, Pin, Plus, RefreshCw, RotateCw, Search, SlidersHorizontal, Star, Tag, Trash2, Ungroup, Unlink, Upload, X } from "lucide-react";
 import { api, ApiError, Asset, AssetPage, base, bytes, CollectionGroupState, CollectionIndexGroup, Entity, Game, gameLabel, Info, Job, JobFilter, JobPage, MediaGroup, Patch, Scope, scoped, supportsGameMedia, UploadSession, View } from "./api";
 import { GameEditor, GamesGrid, RemoveGame, ScreenshotEditor } from "./Games";
 import { Dialog, Empty, isTextInput, stateNames } from "./components";
@@ -8,6 +8,7 @@ import { Brand } from "./Brand";
 import { MediaCard } from "./MediaCard";
 import { TagChip } from "./TagChip";
 import { CollectionGallery, collectionEntries } from "./CollectionGallery";
+import { CollectionSimilarity } from "./CollectionSimilarity";
 import { GroupFormation } from "./MasonryGallery";
 import { GroupEditor } from "./GroupEditor";
 import { loadAssetIds, prepareGroupMedia } from "./groupMedia";
@@ -25,7 +26,7 @@ import "./motion.css";
 
 type Filter = { kind: string; format: string; aspect: string; minWidth: string; minHeight: string; maxWidth: string; maxHeight: string; minDuration: string; maxDuration: string; minSize: string; maxSize: string };
 const emptyFilter: Filter = { kind: "", format: "", aspect: "", minWidth: "", minHeight: "", maxWidth: "", maxHeight: "", minDuration: "", maxDuration: "", minSize: "", maxSize: "" };
-type Modal = { type: "upload" } | { type: "group"; group?: MediaGroup; ids?: string[] } | { type: "collection-group"; group?: CollectionIndexGroup; collection?: Entity } | { type: "remove-collection-group"; group: CollectionIndexGroup } | { type: "game"; game?: Game } | { type: "remove-game"; game: Game } | { type: "screenshots"; ids: string[] } | { type: "entity"; kind: "tags" | "collections"; entity?: Entity; renameOnly?: boolean; groupId?: string } | { type: "memberships"; kind: "tags" | "collections"; ids: string[]; preserveCollectionGroups?: Patch["preserveCollectionGroups"] } | { type: "purge"; ids: string[] } | { type: "remove-entity"; kind: "tags" | "collections"; entity: Entity };
+type Modal = { type: "upload" } | { type: "similarity"; collection: Entity } | { type: "group"; group?: MediaGroup; ids?: string[] } | { type: "collection-group"; group?: CollectionIndexGroup; collection?: Entity } | { type: "remove-collection-group"; group: CollectionIndexGroup } | { type: "game"; game?: Game } | { type: "remove-game"; game: Game } | { type: "screenshots"; ids: string[] } | { type: "entity"; kind: "tags" | "collections"; entity?: Entity; renameOnly?: boolean; groupId?: string } | { type: "memberships"; kind: "tags" | "collections"; ids: string[]; preserveCollectionGroups?: Patch["preserveCollectionGroups"] } | { type: "purge"; ids: string[] } | { type: "remove-entity"; kind: "tags" | "collections"; entity: Entity };
 const viewLabels: Record<View, string> = { all: "全部素材", inbox: "未整理", starred: "星标", collections: "收藏集", tags: "标签", trash: "回收站", jobs: "任务中心", games: "游戏截图", screenshots: "全部游戏截图" };
 type Toast = { message: string; undo?: () => Promise<void> };
 type UploadTarget = { scope: Scope; displayScope?: Scope; tagIds: string[]; collectionIds: string[]; gameId: string; screenshot: boolean; expectedHash?: string };
@@ -864,7 +865,9 @@ function App() {
         {(view === "games" || view === "screenshots") && <div className="game-context"><button className="button subtle" onClick={() => navigate("games")}><Gamepad2 size={14} />按游戏浏览</button><button className="button subtle" onClick={() => navigate("screenshots")}>全部截图</button><button className="button subtle" onClick={() => navigate("screenshots", "", "", "push", "unassigned")}>未指定游戏</button>{activeGame?.steamAppId && <span>Steam App ID：{activeGame.steamAppId}</span>}<span>Steam 文件名自动识别 · 未知时间排在最后</span></div>}
         {assetView && <><div className="library-toolbar">
           <div className="kind-tabs motion-tabs" ref={kindIndicator.ref} style={kindIndicator.style}>{(view === "screenshots" ? [["", "全部"], ["image", "图片"], ["video", "录像"]] : [["", "全部"], ["image", "图片"], ["animation", "动图"], ["video", "视频"]]).map(([kind, label]) => <button key={kind} className={filters.kind === kind ? "active" : ""} aria-pressed={filters.kind === kind} onClick={() => setFilters({ ...filters, kind })}>{label}</button>)}</div>
-          <div className="toolbar-right"><label className="sort"><ArrowDownWideNarrow size={15} />
+          <div className="toolbar-right">
+            {collectionId && activeEntity && <button className="button" disabled={busy || !contentReady} onClick={() => setModal({ type: "similarity", collection: activeEntity })}><Copy size={15} />查找相似项</button>}
+            <label className="sort"><ArrowDownWideNarrow size={15} />
             <select value={sort} aria-label="排序" onChange={event => setSort(event.target.value)}>
               <option value="capturedNewest">截图：新到旧</option><option value="capturedOldest">截图：旧到新</option>
               <option value="newest">最近收集</option><option value="oldest">最早收集</option><option value="name">名称</option><option value="filename">文件名</option><option value="size">文件大小</option>
@@ -900,6 +903,7 @@ function App() {
     </div>}</MotionPresence>
     <MotionPresence key={`viewer:${scope}`} present={!!viewer}>{viewer && <Viewer asset={viewer} scope={scope} tags={tags} collections={collections} games={games} direction={viewerDirection} close={closeViewer} previous={viewerIndex > 0 ? () => { setViewerDirection(-1); setViewer(galleryAssets[viewerIndex - 1]); } : undefined} next={viewerIndex >= 0 && viewerIndex < galleryAssets.length - 1 ? () => { setViewerDirection(1); setViewer(galleryAssets[viewerIndex + 1]); } : undefined} changed={changed} notify={notify} tagDragKey={tagDragKey} tagBusy={tagBusy} changeTag={(id, tag, remove) => void changeTag(id, tag, remove)} />}</MotionPresence>
     <MotionPresence key={`modal:${scope}`} present={!!modal}>
+    {modal?.type === "similarity" && <CollectionSimilarity collection={modal.collection} scope={scope} close={() => setModal(null)} changed={changed} />}
     {modal?.type === "upload" && <UploadPanel scope={scope} targetLabel={uploadTargetLabel || activeEntity?.name} tags={tags} collections={collections} games={games} openAsset={(id, hidden, trashed) => void openImportedAsset(id, hidden, trashed)} close={() => setModal(null)} pick={pickUpload} folder={() => folderPicker.current?.click()} />}
     {modal?.type === "group" && <GroupEditor group={modal.group} count={modal.ids?.length ?? modal.group?.assetIds.length ?? 0} close={() => setModal(null)} save={name => modal.group ? renameGroup(modal.group, name) : editGroup(null, "create", name, modal.ids)} />}
     {modal?.type === "game" && <GameEditor game={modal.game} scope={scope} close={() => setModal(null)} saved={() => { setModal(null); changed(); notify("游戏名称已保存"); }} />}
