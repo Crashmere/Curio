@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Ban, Check, ChevronLeft, ChevronRight, Copy, RotateCw } from "lucide-react";
-import { api, bytes, type Asset, type Entity, type Scope, scoped } from "./api";
+import { api, bytes, type Entity, type Scope, scoped } from "./api";
 import { Dialog, Empty, kindNames } from "./components";
 import { useIsPresent } from "./motion";
 import type { SimilarityAsset, SimilarityMessage, SimilarityPair, SimilarityProgress, SimilarityResult } from "./collection-similarity";
@@ -64,10 +64,7 @@ export function CollectionSimilarity({ collection, scope, close, changed }: { co
     saving.current = true; setBusy(true); setError("");
     const { keep, discard } = choice;
     try {
-      const current = await Promise.all([keep, discard].map(asset => api<Asset>(scoped(`assets/${asset.id}`, scope), undefined, undefined, AbortSignal.timeout(15000))));
-      if (!mounted.current) return;
-      if (current.some(asset => asset.trashedAt || !asset.collections.some(item => item.id === collection.id))) throw new Error("这对素材已被移出收藏集或移入回收站，请关闭后重新计算");
-      await api(scoped(`assets/${discard.id}`, scope), { trash: true }, "PATCH");
+      await api(scoped(`collections/${collection.id}/similarity/resolve`, scope), { keepId: keep.id, discardId: discard.id });
       changed();
       if (!mounted.current) return;
       setResult(previous => {
@@ -104,7 +101,7 @@ export function CollectionSimilarity({ collection, scope, close, changed }: { co
         <div className="similarity-summary"><strong>{result.pairs.length.toLocaleString()} 对待处理</strong><span>共 {result.total.toLocaleString()} 项 · 已计算 {result.checked.toLocaleString()} 项{removed > 0 ? ` · 已移入回收站 ${removed} 项` : ""}{excluded > 0 ? ` · 本次已排除 ${excluded} 对` : ""}</span></div>
         {!!result.skipped.length && <details className="similarity-skipped"><summary>{result.skipped.length} 项未参与比较</summary><ul>{result.skipped.map((item, index) => <li key={index}><strong>{item.name}</strong>：{item.reason}</li>)}</ul></details>}
         {notice && <p className="similarity-notice" role="status"><Check size={15} />{notice}</p>}
-        <p className="similarity-trash-note">点击“保留这项”后，再点击原地出现的“确认”，另一项才会移入回收站，可恢复。点击“排除”表示这两项不同，仅本次不再列出。</p>
+        <p className="similarity-trash-note">点击“保留这项”后，再点击原地出现的“确认”，另一项才会移入回收站，可恢复。保留项未分组时，会继承另一项在当前收藏集中的分组。点击“排除”表示这两项不同，仅本次不再列出。</p>
         {!result.pairs.length ? !result.lowContrast.length && <Empty icon={<Copy size={28} />} title={removed || excluded ? "本次相似项已处理完" : "未找到高相似度的项"} description={result.skipped.length ? "未参与比较的项不代表没有相似项，可处理完成后重新打开计算。" : undefined} /> : <div className="similarity-pairs">
           {result.pairs.slice(currentPage * pageSize, (currentPage + 1) * pageSize).map(pair => {
             const left = result.assets[pair.left], right = result.assets[pair.right];

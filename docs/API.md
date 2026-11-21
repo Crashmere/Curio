@@ -134,6 +134,10 @@ Names are trimmed and limited to 80 Unicode characters. An omitted creation name
 
 Fetch a group's media through `GET /api/assets?collection=<id>&group=<group-id>` with the same scope and filters. Both this paginated list and each group's `assetIds` use fixed natural ascending order of original filenames, independently of `sort`: text compares case-insensitively, consecutive ASCII digits compare numerically, and ties use the complete original filename then asset ID. For example, `123_p2.png` precedes `123_p10-username.png`. Group membership survives trash and restore, but removing a collection membership removes its group link. Replacing `collectionIds` retains group links for collections that remain present.
 
+### Collection Similarity
+
+`POST /api/collections/{id}/similarity/resolve?scope=normal|hidden` accepts `{"keepId":"<asset-sha256>","discardId":"<other-asset-sha256>"}` and returns `{"ok":true}`. Both distinct assets must still be live, not pending permanent deletion, and members of this collection in the request scope. In one transaction, an ungrouped keeper inherits the discarded item's media group in this collection, then only the discarded item moves to trash. An already grouped keeper retains its own group, including when the two items belong to different groups; unrelated groups and other collections are unchanged. The discarded item's memberships, group links and saved cover references remain available for restore. Validation or write failures leave both items unchanged. Similarity calculation and exclusions remain browser-only and are not sent to this endpoint.
+
 ### Selected Container Covers
 
 The media viewer's `设为封面` menu offers `分组封面` and `收藏集封面`. A category is disabled when the live media has no corresponding membership. One target saves immediately; multiple targets open a compact target list. Groups are the media groups within collections, and their choices include the owning collection name.

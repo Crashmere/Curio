@@ -104,6 +104,7 @@ func (l *Library) Handler(frontend fs.FS) http.Handler {
 	r.Patch("/api/collections/{id}/groups", l.updateGroup)
 	r.Patch("/api/collections/{id}/groups/{group}", l.updateGroup)
 	r.Delete("/api/collections/{id}/groups/{group}", l.deleteGroup)
+	r.Post("/api/collections/{id}/similarity/resolve", l.resolveCollectionSimilarity)
 	r.Get("/api/assets/{id}/download", l.downloadAsset)
 	for _, kind := range []string{"tags", "collections"} {
 		kind := kind
