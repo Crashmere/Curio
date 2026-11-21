@@ -1,5 +1,6 @@
-.dialog.wide:has(> .collection-similarity) { width: 820px; }
-.collection-similarity { display: grid; gap: 16px; }
+.dialog.wide:has(> .collection-similarity) { width: 820px; display: flex; flex-direction: column; overflow: hidden; }
+.dialog:has(> .collection-similarity) > :is(.dialog-heading, .dialog-footer) { flex-shrink: 0; }
+.collection-similarity { display: grid; gap: 16px; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
 .similarity-intro { display: grid; gap: 7px; color: var(--muted); font-size: 12px; line-height: 1.75; }
 .similarity-intro > strong { color: var(--ink); font-size: 14px; font-weight: 500; }
 .similarity-progress { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; padding: 38px 12px; color: var(--accent-dark); }
@@ -29,7 +30,10 @@
 .similarity-item small { color: var(--muted); font-size: 11px; }
 .similarity-item .button { justify-content: center; margin-top: 5px; }
 .similarity-confirm { display: grid; gap: 10px; padding: 14px 16px; border-top: 1px solid var(--line); background: var(--paper); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
-.similarity-confirm > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.similarity-low-contrast { display: grid; gap: 10px; padding-top: 16px; border-top: 1px solid var(--line); }
+.similarity-low-contrast h3 { font-size: 14px; font-weight: 500; color: var(--accent-dark); }
+.similarity-low-contrast h3 span { margin-left: 8px; font-size: 12px; color: var(--muted); }
+.similarity-low-contrast-items { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .similarity-pagination { display: flex; justify-content: center; align-items: center; gap: 14px; font-size: 12px; }
 @media (max-width: 640px) {
   .similarity-pair-items { gap: 4px; padding: 8px; }

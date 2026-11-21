@@ -21,6 +21,7 @@ async function scan(collectionId: string, scope: Scope) {
   const items = [...assets.values()];
   const fingerprints: (SimilarityFingerprint | undefined)[] = new Array(items.length);
   const skipped: SimilarityResult["skipped"] = [];
+  const lowContrast = new Set<string>();
   let next = 0;
   let completed = 0;
   async function hashItems() {
@@ -41,8 +42,8 @@ async function scan(collectionId: string, scope: Scope) {
           context.imageSmoothingQuality = "high";
           context.drawImage(bitmap, 0, 0, 9, 8);
           const hash = differenceHash(context.getImageData(0, 0, 9, 8).data);
-          if (hash === null) throw new Error("缩略图对比度过低，无法可靠判定");
-          fingerprints[index] = { id: asset.id, ratio: asset.width / asset.height, hash };
+          if (hash === null) lowContrast.add(asset.id);
+          else fingerprints[index] = { id: asset.id, ratio: asset.width / asset.height, hash };
         } finally { bitmap.close(); }
       } catch (error) {
         skipped.push({ name: asset.title || asset.name, reason: error instanceof Error ? error.message : String(error) });
@@ -61,9 +62,9 @@ async function scan(collectionId: string, scope: Scope) {
     if (i % 100 === 0 || i === ready.length - 1) send({ type: "progress", progress: { stage: "comparing", completed: i + 1, total: ready.length } });
   }
   pairs.sort((left, right) => left.distance - right.distance);
-  const matched = new Set(pairs.flatMap(pair => [pair.left, pair.right]));
+  const matched = new Set([...lowContrast, ...pairs.flatMap(pair => [pair.left, pair.right])]);
   const cards = Object.fromEntries(items.filter(asset => matched.has(asset.id)).map(({ status: _status, ...asset }) => [asset.id, asset]));
-  send({ type: "done", result: { assets: cards, pairs, total: items.length, checked: ready.length, skipped } });
+  send({ type: "done", result: { assets: cards, pairs, total: items.length, checked: ready.length, lowContrast: items.filter(asset => lowContrast.has(asset.id)).map(asset => asset.id), skipped } });
 }
 
 self.onmessage = (event: MessageEvent<{ collectionId: string; scope: Scope }>) => {

@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, Copy, RotateCw, Trash2 } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Check, ChevronLeft, ChevronRight, Copy, RotateCw } from "lucide-react";
 import { api, bytes, type Asset, type Entity, type Scope, scoped } from "./api";
 import { Dialog, Empty, kindNames } from "./components";
 import { useIsPresent } from "./motion";
@@ -97,26 +97,33 @@ export function CollectionSimilarity({ collection, scope, close, changed }: { co
         {!!result.skipped.length && <details className="similarity-skipped"><summary>{result.skipped.length} 项未参与比较</summary><ul>{result.skipped.map((item, index) => <li key={index}><strong>{item.name}</strong>：{item.reason}</li>)}</ul></details>}
         {notice && <p className="similarity-notice" role="status"><Check size={15} />{notice}</p>}
         <p className="similarity-trash-note">选择保留项后，另一项将从所有收藏集中移入回收站，可在回收站恢复。不会永久删除原件。</p>
-        {!result.pairs.length ? <Empty icon={<Copy size={28} />} title={removed ? "本次相似项已处理完" : "未找到高相似度的项"} description={result.skipped.length ? "未参与比较的项不代表没有相似项，可处理完成后重新打开计算。" : undefined} /> : <div className="similarity-pairs">
+        {!result.pairs.length ? !result.lowContrast.length && <Empty icon={<Copy size={28} />} title={removed ? "本次相似项已处理完" : "未找到高相似度的项"} description={result.skipped.length ? "未参与比较的项不代表没有相似项，可处理完成后重新打开计算。" : undefined} /> : <div className="similarity-pairs">
           {result.pairs.slice(currentPage * pageSize, (currentPage + 1) * pageSize).map(pair => {
             const left = result.assets[pair.left], right = result.assets[pair.right];
             const selecting = choice?.pair === pair;
             return <article className="similarity-pair" key={`${pair.left}:${pair.right}`}>
               <header><strong>dHash 相似度 {((1 - pair.distance / 64) * 100).toFixed(1)}%</strong><span>差异 {pair.distance} / 64 位</span></header>
-              <div className="similarity-pair-items">{[left, right].map((asset, index) => <div className={`similarity-item ${selecting && choice.keep.id === asset.id ? "is-kept" : ""}`} key={asset.id}>
-                <div className="similarity-thumbnail"><img src={asset.thumbnailUrl} alt={asset.title || asset.name} loading="lazy" /><span>{kindNames[asset.kind]}</span></div>
-                <strong className="similarity-name" title={asset.title || asset.name}>{asset.title || asset.name}</strong>
-                <span className="similarity-dimensions">{asset.width.toLocaleString()} × {asset.height.toLocaleString()} px</span>
-                <small>{(asset.width * asset.height / 1e6).toFixed(2)} MP · {bytes(asset.size)}</small>
+              <div className="similarity-pair-items">{[left, right].map((asset, index) => <SimilarityItem asset={asset} selected={selecting && choice.keep.id === asset.id} key={asset.id}>
                 <button className={`button ${selecting && choice.keep.id === asset.id ? "primary" : ""}`} disabled={busy} aria-pressed={selecting && choice.keep.id === asset.id} onClick={() => { setError(""); setChoice({ pair, keep: asset, discard: index === 0 ? right : left }); }}><Check size={15} />保留这项</button>
-              </div>)}</div>
-              {selecting && <div className="similarity-confirm"><p>将“{choice.discard.title || choice.discard.name}”移入回收站，保留另一项。</p><div><button className="button" disabled={busy} onClick={() => setChoice(undefined)}>取消</button><button className="button danger" disabled={busy} onClick={() => void confirmChoice()}>{busy ? <RotateCw size={15} className="spin" /> : <Trash2 size={15} />}确认移入回收站</button></div></div>}
+              </SimilarityItem>)}</div>
+              {selecting && <div className="similarity-confirm"><p>将“{choice.discard.title || choice.discard.name}”移入回收站，保留另一项。点击右下角“确认”执行。</p></div>}
             </article>;
           })}
         </div>}
         {pages > 1 && <nav className="similarity-pagination" aria-label="相似项分页"><button className="button" aria-label="上一页" disabled={!currentPage || busy} onClick={() => { setChoice(undefined); setPage(currentPage - 1); }}><ChevronLeft size={16} />上一页</button><span>{currentPage + 1} / {pages}</span><button className="button" aria-label="下一页" disabled={currentPage >= pages - 1 || busy} onClick={() => { setChoice(undefined); setPage(currentPage + 1); }}>下一页<ChevronRight size={16} /></button></nav>}
+        {!!result.lowContrast.length && <section className="similarity-low-contrast" aria-label="低对比度素材"><h3>低对比度素材 <span>{result.lowContrast.length} 项</span></h3><p className="similarity-trash-note">以下素材直接列出供查看，未进行相似配对，不代表它们彼此相似。</p><div className="similarity-low-contrast-items">{result.lowContrast.map(id => <SimilarityItem asset={result.assets[id]} key={id} />)}</div></section>}
       </>}
     </div>
-    <footer className="dialog-footer"><button className="button" disabled={busy} data-dialog-close>{!result && !error ? "取消计算并关闭" : "关闭并清除计算数据"}</button></footer>
+    <footer className="dialog-footer">{choice ? <><button className="button" disabled={busy} onClick={() => setChoice(undefined)}>取消</button><button className="button primary" disabled={busy} onClick={() => void confirmChoice()}>{busy ? <RotateCw size={15} className="spin" /> : <Check size={15} />}确认</button></> : <button className="button" disabled={busy} data-dialog-close>{!result && !error ? "取消计算并关闭" : "关闭并清除计算数据"}</button>}</footer>
   </Dialog>;
+}
+
+function SimilarityItem({ asset, selected = false, children }: { asset: SimilarityAsset; selected?: boolean; children?: ReactNode }) {
+  return <div className={`similarity-item ${selected ? "is-kept" : ""}`}>
+    <div className="similarity-thumbnail"><img src={asset.thumbnailUrl} alt={asset.title || asset.name} loading="lazy" /><span>{kindNames[asset.kind]}</span></div>
+    <strong className="similarity-name" title={asset.title || asset.name}>{asset.title || asset.name}</strong>
+    <span className="similarity-dimensions">{asset.width.toLocaleString()} × {asset.height.toLocaleString()} px</span>
+    <small>{(asset.width * asset.height / 1e6).toFixed(2)} MP · {bytes(asset.size)}</small>
+    {children}
+  </div>;
 }

@@ -8,6 +8,7 @@ export type SimilarityResult = {
   pairs: SimilarityPair[];
   total: number;
   checked: number;
+  lowContrast: string[];
   skipped: { name: string; reason: string }[];
 };
 export type SimilarityMessage = { type: "progress"; progress: SimilarityProgress } | { type: "done"; result: SimilarityResult } | { type: "error"; error: string };
