@@ -113,7 +113,8 @@ export function CollectionSimilarity({ collection, scope, close, changed }: { co
               <header><strong>dHash 相似度 {((1 - pair.distance / 64) * 100).toFixed(1)}%</strong><div className="similarity-pair-tools"><span>差异 {pair.distance} / 64 位</span><button className="button subtle similarity-exclude" disabled={busy} title="确认这两项不同，仅本次排除" onClick={() => excludePair(pair)}><Ban size={14} />排除</button></div></header>
               <div className="similarity-pair-items">{[left, right].map((asset, index) => {
                 const armed = selecting && choice.keep.id === asset.id;
-                return <SimilarityItem asset={asset} selected={armed} key={asset.id}>
+                const other = index === 0 ? right : left;
+                return <SimilarityItem asset={asset} selected={armed} largerPixels={asset.width * asset.height > other.width * other.height} largerFile={asset.size > other.size} key={asset.id}>
                   <button className={`button ${armed ? "primary" : ""}`} disabled={busy} aria-pressed={armed} onClick={() => {
                     if (saving.current) return;
                     if (armed) void confirmChoice();
@@ -131,12 +132,12 @@ export function CollectionSimilarity({ collection, scope, close, changed }: { co
   </Dialog>;
 }
 
-function SimilarityItem({ asset, selected = false, children }: { asset: SimilarityAsset; selected?: boolean; children?: ReactNode }) {
+function SimilarityItem({ asset, selected = false, largerPixels = false, largerFile = false, children }: { asset: SimilarityAsset; selected?: boolean; largerPixels?: boolean; largerFile?: boolean; children?: ReactNode }) {
   return <div className={`similarity-item ${selected ? "is-kept" : ""}`}>
     <div className="similarity-thumbnail"><img src={asset.thumbnailUrl} alt={asset.title || asset.name} loading="lazy" /><span>{kindNames[asset.kind]}</span></div>
     <strong className="similarity-name" title={asset.title || asset.name}>{asset.title || asset.name}</strong>
-    <span className="similarity-dimensions">{asset.width.toLocaleString()} × {asset.height.toLocaleString()} px</span>
-    <small>{(asset.width * asset.height / 1e6).toFixed(2)} MP · {bytes(asset.size)}</small>
+    <span className={`similarity-dimensions ${largerPixels ? "similarity-value-larger" : ""}`}>{asset.width.toLocaleString()} × {asset.height.toLocaleString()} px</span>
+    <small><span className={largerPixels ? "similarity-value-larger" : undefined}>{(asset.width * asset.height / 1e6).toFixed(2)} MP</span> · <span className={largerFile ? "similarity-value-larger" : undefined}>{bytes(asset.size)}</span></small>
     {children}
   </div>;
 }
